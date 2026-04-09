@@ -6,6 +6,7 @@ struct ApprovalPanelView: View {
     @State private var sessionPattern: String = ""
     @State private var noteToClaudeText: String = ""
     @State private var editedCommand: String = ""
+    @State private var isRegexMode: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,8 +40,9 @@ struct ApprovalPanelView: View {
                 command: a.payload.command,
                 filePath: a.payload.filePath
             )
-            editedCommand = a.payload.command ?? ""
+            editedCommand = ApprovalCoordinator.sanitizeDashes(a.payload.command ?? "")
             noteToClaudeText = ""
+            isRegexMode = false
         }
     }
 
@@ -238,20 +240,39 @@ struct ApprovalPanelView: View {
     @ViewBuilder
     private func actionBar(_ approval: ApprovalCoordinator.PendingApproval) -> some View {
         VStack(spacing: 6) {
-            // Pattern field (shared by session and persistent rules)
+            // Pattern field with regex toggle
             HStack(spacing: 4) {
                 Text("\(approval.payload.toolName):")
                     .font(.system(.body, design: .monospaced).bold())
                     .foregroundColor(colorForTool(approval.payload.toolName))
-                TextField("pattern", text: $sessionPattern)
+
+                if isRegexMode {
+                    Text("/")
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundColor(.orange)
+                }
+                TextField(isRegexMode ? "regex pattern" : "glob pattern (* = wildcard)", text: $sessionPattern)
                     .font(.system(.body, design: .monospaced))
                     .textFieldStyle(.roundedBorder)
+                if isRegexMode {
+                    Text("/")
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundColor(.orange)
+                }
+
+                Toggle("Regex", isOn: $isRegexMode)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .tint(.orange)
             }
+
+            // Live pattern tester
+            patternTester(approval)
 
             // Persistent + session rules row
             HStack(spacing: 6) {
                 Button(action: {
-                    coordinator.handleAction(.alwaysDenyPattern(pattern: sessionPattern))
+                    coordinator.handleAction(.alwaysDenyPattern(pattern: sessionPattern, isRegex: isRegexMode))
                 }) {
                     Label("Always Deny", systemImage: "hand.raised")
                 }
@@ -260,7 +281,7 @@ struct ApprovalPanelView: View {
                 .keyboardShortcut("d", modifiers: [.command, .shift])
 
                 Button(action: {
-                    coordinator.handleAction(.alwaysAllowPattern(pattern: sessionPattern))
+                    coordinator.handleAction(.alwaysAllowPattern(pattern: sessionPattern, isRegex: isRegexMode))
                 }) {
                     Label("Always Allow", systemImage: "shield.checkered")
                 }
@@ -314,6 +335,69 @@ struct ApprovalPanelView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    // MARK: - Pattern Tester
+
+    @ViewBuilder
+    private func patternTester(_ approval: ApprovalCoordinator.PendingApproval) -> some View {
+        let currentCmd = editedCommand.isEmpty
+            ? (approval.payload.filePath ?? "")
+            : editedCommand
+        if !currentCmd.isEmpty && !sessionPattern.isEmpty {
+            let result = PersistentRule.testPattern(sessionPattern, isRegex: isRegexMode, against: currentCmd)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text("Current:")
+                        .font(.system(.body, design: .monospaced).bold())
+                        .foregroundColor(.secondary)
+                    Text(currentCmd)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundColor(.primary)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                }
+
+                if let error = result.error {
+                    Text(error)
+                        .font(.body)
+                        .foregroundColor(.red)
+                } else {
+                    HStack(spacing: 12) {
+                        HStack(spacing: 4) {
+                            Text("Always Deny:")
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(.secondary)
+                            resultBadge(
+                                text: result.matches ? "BLOCKED" : "passes through",
+                                color: result.matches ? .red : .green
+                            )
+                        }
+                        HStack(spacing: 4) {
+                            Text("Always Allow:")
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(.secondary)
+                            resultBadge(
+                                text: result.matches ? "ALLOWED" : "no effect",
+                                color: result.matches ? .green : .gray
+                            )
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func resultBadge(text: String, color: Color) -> some View {
+        Text(text)
+            .font(.body.bold())
+            .foregroundColor(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(color)
+            .cornerRadius(4)
     }
 
     /// Returns the edited command only if it differs from the original.

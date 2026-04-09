@@ -31,6 +31,12 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
     var socketServer: SocketServer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Disable macOS smart dashes/quotes — gavel needs exact ASCII for patterns
+        UserDefaults.standard.set(false, forKey: "NSAutomaticDashSubstitutionEnabled")
+        UserDefaults.standard.set(false, forKey: "NSAutomaticQuoteSubstitutionEnabled")
+        UserDefaults.standard.set(false, forKey: "NSAutomaticTextCompletionEnabled")
+
+        setupMainMenu()
         setupMenuBar()
         setupSocketServer()
         setupHookRouter()
@@ -41,6 +47,34 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         socketServer?.stop()
+    }
+
+    // MARK: - Main Menu (needed for Cmd+V/C/X/A in text fields)
+
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+
+        // App menu
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(NSMenuItem(title: "Quit Gavel", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        // Edit menu — enables standard text editing shortcuts
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
+        editMenu.addItem(NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z"))
+        editMenu.addItem(NSMenuItem.separator())
+        editMenu.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
+        NSApp.mainMenu = mainMenu
     }
 
     // MARK: - Menu Bar

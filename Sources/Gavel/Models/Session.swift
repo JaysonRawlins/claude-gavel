@@ -76,15 +76,21 @@ struct SessionRule: Identifiable {
     func matches(toolName: String, command: String?, filePath: String?) -> Bool {
         guard self.toolName == toolName || self.toolName == "*" else { return false }
 
-        let target: String
+        let raw: String
         switch toolName {
         case "Bash":
-            target = command ?? ""
+            raw = command ?? ""
         case "Edit", "MultiEdit", "Write", "Read", "Glob", "Grep":
-            target = filePath ?? command ?? ""
+            raw = filePath ?? command ?? ""
         default:
-            target = command ?? filePath ?? ""
+            raw = command ?? filePath ?? ""
         }
+
+        // Sanitize typographic dashes
+        let target = raw
+            .replacingOccurrences(of: "\u{2013}", with: "-")
+            .replacingOccurrences(of: "\u{2014}", with: "--")
+            .replacingOccurrences(of: "\u{2012}", with: "-")
 
         return globMatch(pattern: pattern, string: target)
     }

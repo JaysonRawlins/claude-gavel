@@ -90,12 +90,19 @@ final class HookRouter {
             at: timestamp
         ))
 
-        // Stage 1: Check for hard blocks (dangerous patterns, paused)
+        // Stage 1: Check engine (dangerous patterns, persistent deny/allow, pause)
         let engineDecision = approvalEngine.evaluate(payload: payload, session: session)
         if engineDecision.verdict == .block {
             session.blockCount += 1
             let badge: DecisionBadge = session.isPaused ? .paused : .block
             emitFeed(.decision(badge: badge, reason: engineDecision.reason, pid: session.pid, at: timestamp))
+            sendResponse(engineDecision, respond: respond)
+            return
+        }
+        // Persistent allow rules (have a reason) skip the dialog
+        if engineDecision.reason != nil {
+            session.allowCount += 1
+            emitFeed(.decision(badge: .allow, reason: engineDecision.reason, pid: session.pid, at: timestamp))
             sendResponse(engineDecision, respond: respond)
             return
         }

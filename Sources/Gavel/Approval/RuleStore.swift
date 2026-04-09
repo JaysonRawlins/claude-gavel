@@ -22,18 +22,18 @@ final class RuleStore: ObservableObject {
     // MARK: - Evaluation (split by verdict for priority ordering)
 
     func evaluateDeny(payload: PreToolUsePayload) -> Decision? {
-        for rule in rules where rule.verdict == .block {
-            if rule.matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
-                return Decision(verdict: .block, reason: "Always deny: \(rule.name)")
+        for i in rules.indices where rules[i].verdict == .block {
+            if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
+                return Decision(verdict: .block, reason: "Always deny: \(rules[i].name)")
             }
         }
         return nil
     }
 
     func evaluateAllow(payload: PreToolUsePayload) -> Decision? {
-        for rule in rules where rule.verdict == .allow {
-            if rule.matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
-                return Decision(verdict: .allow, reason: "Always allow: \(rule.name)")
+        for i in rules.indices where rules[i].verdict == .allow {
+            if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
+                return Decision(verdict: .allow, reason: "Always allow: \(rules[i].name)")
             }
         }
         return nil
@@ -82,45 +82,91 @@ final class RuleStore: ObservableObject {
 }
 
 /// A persistent approval rule saved to rules.json.
-/// Uses glob-style wildcards (* matches any characters).
+///
+/// Supports two pattern modes:
+/// - **Glob** (default): `*` matches any characters. E.g. `swift build*`
+/// - **Regex**: Full regex with lookaheads etc. Toggle Regex in the UI.
 struct PersistentRule: Codable, Identifiable {
     let id: UUID
     let name: String
     let toolName: String
     let pattern: String
+    let isRegex: Bool
     let verdict: DecisionVerdict
     let createdAt: Date
+
+    /// Pre-compiled regex (rebuilt on first access, not persisted).
+    private var _compiledRegex: NSRegularExpression?
+    var compiledRegex: NSRegularExpression? {
+        mutating get {
+            if _compiledRegex == nil {
+                _compiledRegex = Self.compilePattern(pattern, isRegex: isRegex)
+            }
+            return _compiledRegex
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, toolName, pattern, isRegex, verdict, createdAt
+    }
+
+    /// Backward-compatible decoding — isRegex defaults to false for old rules.json.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        toolName = try c.decode(String.self, forKey: .toolName)
+        pattern = try c.decode(String.self, forKey: .pattern)
+        isRegex = try c.decodeIfPresent(Bool.self, forKey: .isRegex) ?? false
+        verdict = try c.decode(DecisionVerdict.self, forKey: .verdict)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+    }
 
     init(
         toolName: String,
         pattern: String,
+        isRegex: Bool = false,
         verdict: DecisionVerdict
     ) {
         self.id = UUID()
-        self.name = "\(toolName): \(pattern)"
         self.toolName = toolName
         self.pattern = pattern
+        self.isRegex = isRegex
         self.verdict = verdict
         self.createdAt = Date()
+        self.name = "\(toolName): \(isRegex ? "/" : "")\(pattern)\(isRegex ? "/" : "")"
+        self._compiledRegex = Self.compilePattern(pattern, isRegex: isRegex)
     }
 
-    func matches(toolName: String, command: String?, filePath: String?) -> Bool {
+    mutating func matches(toolName: String, command: String?, filePath: String?) -> Bool {
         guard self.toolName == toolName || self.toolName == "*" else { return false }
 
-        let target: String
+        let raw: String
         switch toolName {
         case "Bash":
-            target = command ?? ""
+            raw = command ?? ""
         case "Edit", "MultiEdit", "Write", "Read", "Glob", "Grep":
-            target = filePath ?? command ?? ""
+            raw = filePath ?? command ?? ""
         default:
-            target = command ?? filePath ?? ""
+            raw = command ?? filePath ?? ""
         }
 
-        return globMatch(pattern: pattern, string: target)
+        // Sanitize typographic dashes so patterns match consistently
+        let target = raw
+            .replacingOccurrences(of: "\u{2013}", with: "-")
+            .replacingOccurrences(of: "\u{2014}", with: "--")
+            .replacingOccurrences(of: "\u{2012}", with: "-")
+
+        guard let regex = compiledRegex else { return false }
+        return regex.firstMatch(in: target, range: NSRange(target.startIndex..., in: target)) != nil
     }
 
-    private func globMatch(pattern: String, string: String) -> Bool {
+    /// Compile a pattern to regex. Glob patterns are converted; regex patterns used as-is.
+    static func compilePattern(_ pattern: String, isRegex: Bool) -> NSRegularExpression? {
+        if isRegex {
+            return try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        }
+        // Convert glob to regex
         var regex = "^"
         for ch in pattern {
             switch ch {
@@ -131,7 +177,22 @@ struct PersistentRule: Codable, Identifiable {
             }
         }
         regex += "$"
-        return (try? NSRegularExpression(pattern: regex))
-            .flatMap { $0.firstMatch(in: string, range: NSRange(string.startIndex..., in: string)) } != nil
+        return try? NSRegularExpression(pattern: regex)
+    }
+
+    /// Test a pattern against a sample string. Returns match result and any regex error.
+    static func testPattern(_ pattern: String, isRegex: Bool, against sample: String) -> (matches: Bool, error: String?) {
+        if isRegex {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+                return (false, "Invalid regex")
+            }
+            let match = regex.firstMatch(in: sample, range: NSRange(sample.startIndex..., in: sample)) != nil
+            return (match, nil)
+        }
+        guard let regex = compilePattern(pattern, isRegex: false) else {
+            return (false, "Invalid pattern")
+        }
+        let match = regex.firstMatch(in: sample, range: NSRange(sample.startIndex..., in: sample)) != nil
+        return (match, nil)
     }
 }
