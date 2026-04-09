@@ -12,8 +12,8 @@ final class ApprovalCoordinator: ObservableObject {
         case allow(context: String?, updatedCommand: String?)
         case deny(context: String?)
         case allowPatternForSession(pattern: String, context: String?, updatedCommand: String?)
-        case alwaysDenyPattern(pattern: String)
-        case alwaysAllowPattern(pattern: String)
+        case alwaysDenyPattern(pattern: String, isRegex: Bool)
+        case alwaysAllowPattern(pattern: String, isRegex: Bool)
     }
 
     /// RuleStore for persistent always-deny/always-allow rules.
@@ -110,15 +110,15 @@ final class ApprovalCoordinator: ObservableObject {
             current.session.sessionRules.append(rule)
             current.respond(Decision(verdict: .allow, reason: "User approved (\(current.payload.toolName): \(pattern))", additionalContext: ctx, updatedInput: updated))
 
-        case .alwaysDenyPattern(let pattern):
+        case .alwaysDenyPattern(let pattern, let isRegex):
             ctx = nil; updated = nil
-            let rule = PersistentRule(toolName: current.payload.toolName, pattern: pattern, verdict: .block)
+            let rule = PersistentRule(toolName: current.payload.toolName, pattern: pattern, isRegex: isRegex, verdict: .block)
             ruleStore?.addRule(rule)
             current.respond(Decision(verdict: .block, reason: "Always deny: \(current.payload.toolName): \(pattern)"))
 
-        case .alwaysAllowPattern(let pattern):
+        case .alwaysAllowPattern(let pattern, let isRegex):
             ctx = nil; updated = nil
-            let rule = PersistentRule(toolName: current.payload.toolName, pattern: pattern, verdict: .allow)
+            let rule = PersistentRule(toolName: current.payload.toolName, pattern: pattern, isRegex: isRegex, verdict: .allow)
             ruleStore?.addRule(rule)
             current.respond(Decision(verdict: .allow, reason: "Always allow: \(current.payload.toolName): \(pattern)"))
         }

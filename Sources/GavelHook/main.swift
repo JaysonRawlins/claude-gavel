@@ -8,7 +8,9 @@ import Foundation
 ///   - allow → stdout structured hookSpecificOutput JSON, exit 0
 ///   - block → stderr "reason", exit 2
 ///
-/// This replaces per-invocation Python scripts with a ~2ms binary.
+/// SECURITY: If the daemon IS reachable but returns no/unparseable response,
+/// fail CLOSED (block). Only fail open when the daemon isn't running at all,
+/// so Claude works without gavel.
 
 let socketPath = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".claude/gavel/gavel.sock").path
@@ -56,13 +58,15 @@ if var payload = stdinJson {
 }
 
 guard let envelopeData = try? JSONSerialization.data(withJSONObject: envelope) else {
-    if needsResponse { printAllow() }
-    exit(0)
+    // Can't even build envelope — fail closed
+    if needsResponse { printBlock("Gavel: failed to serialize hook envelope") }
+    exit(needsResponse ? 2 : 0)
 }
 
 // Connect to daemon socket
 let fd = socket(AF_UNIX, SOCK_STREAM, 0)
 guard fd >= 0 else {
+    // No socket — daemon not running. Fail OPEN so Claude works without gavel.
     if needsResponse { printAllow() }
     exit(0)
 }
@@ -71,8 +75,9 @@ var addr = sockaddr_un()
 addr.sun_family = sa_family_t(AF_UNIX)
 let pathBytes = socketPath.utf8CString
 guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else {
-    if needsResponse { printAllow() }
-    exit(0)
+    close(fd)
+    if needsResponse { printBlock("Gavel: socket path too long") }
+    exit(needsResponse ? 2 : 0)
 }
 withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
     ptr.withMemoryRebound(to: CChar.self, capacity: pathBytes.count) { dest in
@@ -90,6 +95,7 @@ let connectResult = withUnsafePointer(to: &addr) { ptr in
 
 guard connectResult == 0 else {
     close(fd)
+    // Can't connect — daemon not running. Fail OPEN so Claude works without gavel.
     if needsResponse { printAllow() }
     exit(0)
 }
@@ -99,7 +105,7 @@ envelopeData.withUnsafeBytes { ptr in
     _ = write(fd, ptr.baseAddress!, envelopeData.count)
 }
 
-// For PreToolUse, read response and translate to Claude's format
+// For PreToolUse/PermissionRequest, read response and translate to Claude's format
 if needsResponse {
     shutdown(fd, SHUT_WR)
 
@@ -123,8 +129,7 @@ if needsResponse {
        let verdict = json["verdict"] as? String {
         if verdict == "block" {
             let reason = (json["reason"] as? String) ?? "Blocked by Gavel"
-            let msg = reason + "\n"
-            FileHandle.standardError.write(Data(msg.utf8))
+            printBlock(reason)
             exit(2)
         }
 
@@ -144,7 +149,6 @@ if needsResponse {
         if let updated = json["updatedInput"] as? [String: Any] {
             output["updatedInput"] = updated
         }
-        // Put additionalContext at both levels — docs are ambiguous on placement
         var wrapper: [String: Any] = ["hookSpecificOutput": output]
         if let ctx = json["additionalContext"] as? String, !ctx.isEmpty {
             wrapper["additionalContext"] = ctx
@@ -156,12 +160,9 @@ if needsResponse {
         }
     }
 
-    // Fallback allow (format depends on hook type)
-    if hookType == "PermissionRequest" {
-        printPermissionAllow()
-    } else {
-        printAllow()
-    }
+    // Daemon was reachable but response was empty/unparseable — FAIL CLOSED
+    printBlock("Gavel: daemon returned invalid response")
+    exit(2)
 } else {
     close(fd)
 }
@@ -174,6 +175,10 @@ func printAllow() {
 
 func printPermissionAllow() {
     print(#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#)
+}
+
+func printBlock(_ reason: String) {
+    FileHandle.standardError.write(Data((reason + "\n").utf8))
 }
 
 // MARK: - Process tree walk (native, no subprocess)

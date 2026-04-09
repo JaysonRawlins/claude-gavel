@@ -82,26 +82,45 @@ final class RuleStore: ObservableObject {
 }
 
 /// A persistent approval rule saved to rules.json.
-/// Uses glob-style wildcards (* matches any characters).
+///
+/// Supports two pattern modes:
+/// - **Glob** (default): `*` matches any characters. E.g. `swift build*`
+/// - **Regex**: Full regex with lookaheads etc. E.g. `doppler\s+secrets\b(?!.*--only-names)`
+///   Use `/pattern/` syntax in the UI to indicate regex mode.
 struct PersistentRule: Codable, Identifiable {
     let id: UUID
     let name: String
     let toolName: String
     let pattern: String
+    let isRegex: Bool
     let verdict: DecisionVerdict
     let createdAt: Date
+
+    /// Pre-compiled regex (not persisted, rebuilt on load).
+    private var _compiledRegex: NSRegularExpression?
+    var compiledRegex: NSRegularExpression? {
+        if let r = _compiledRegex { return r }
+        return Self.compilePattern(pattern, isRegex: isRegex)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, toolName, pattern, isRegex, verdict, createdAt
+    }
 
     init(
         toolName: String,
         pattern: String,
+        isRegex: Bool = false,
         verdict: DecisionVerdict
     ) {
         self.id = UUID()
-        self.name = "\(toolName): \(pattern)"
         self.toolName = toolName
         self.pattern = pattern
+        self.isRegex = isRegex
         self.verdict = verdict
         self.createdAt = Date()
+        self.name = "\(toolName): \(isRegex ? "/" : "")\(pattern)\(isRegex ? "/" : "")"
+        self._compiledRegex = Self.compilePattern(pattern, isRegex: isRegex)
     }
 
     func matches(toolName: String, command: String?, filePath: String?) -> Bool {
@@ -117,10 +136,16 @@ struct PersistentRule: Codable, Identifiable {
             target = command ?? filePath ?? ""
         }
 
-        return globMatch(pattern: pattern, string: target)
+        guard let regex = compiledRegex else { return false }
+        return regex.firstMatch(in: target, range: NSRange(target.startIndex..., in: target)) != nil
     }
 
-    private func globMatch(pattern: String, string: String) -> Bool {
+    /// Compile a pattern to regex. Glob patterns are converted; regex patterns used as-is.
+    static func compilePattern(_ pattern: String, isRegex: Bool) -> NSRegularExpression? {
+        if isRegex {
+            return try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        }
+        // Convert glob to regex
         var regex = "^"
         for ch in pattern {
             switch ch {
@@ -131,7 +156,22 @@ struct PersistentRule: Codable, Identifiable {
             }
         }
         regex += "$"
-        return (try? NSRegularExpression(pattern: regex))
-            .flatMap { $0.firstMatch(in: string, range: NSRange(string.startIndex..., in: string)) } != nil
+        return try? NSRegularExpression(pattern: regex)
+    }
+
+    /// Test a pattern against a sample string. Returns match result and any regex error.
+    static func testPattern(_ pattern: String, isRegex: Bool, against sample: String) -> (matches: Bool, error: String?) {
+        if isRegex {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+                return (false, "Invalid regex")
+            }
+            let match = regex.firstMatch(in: sample, range: NSRange(sample.startIndex..., in: sample)) != nil
+            return (match, nil)
+        }
+        guard let regex = compilePattern(pattern, isRegex: false) else {
+            return (false, "Invalid pattern")
+        }
+        let match = regex.firstMatch(in: sample, range: NSRange(sample.startIndex..., in: sample)) != nil
+        return (match, nil)
     }
 }
