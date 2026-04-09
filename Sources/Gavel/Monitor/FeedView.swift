@@ -121,11 +121,15 @@ struct FeedDisplayEntry: Identifiable {
     let timestamp: String
     let kind: FeedEntryKind
 
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+
     init(from entry: FeedEntry) {
         self.id = UUID()
-
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
+        let formatter = Self.timeFormatter
 
         switch entry {
         case .toolCall(_, _, _, let date),

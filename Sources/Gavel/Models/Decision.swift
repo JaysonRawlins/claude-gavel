@@ -50,9 +50,12 @@ struct Decision: Codable {
             return #"{"verdict":"allow"}"#
         case .block:
             let r = reason ?? "Blocked by Gavel"
-            let escaped = r.replacingOccurrences(of: "\\", with: "\\\\")
-                           .replacingOccurrences(of: "\"", with: "\\\"")
-            return #"{"verdict":"block","reason":"\#(escaped)"}"#
+            let obj: [String: Any] = ["verdict": "block", "reason": r]
+            if let data = try? JSONSerialization.data(withJSONObject: obj),
+               let str = String(data: data, encoding: .utf8) {
+                return str
+            }
+            return #"{"verdict":"block","reason":"Blocked by Gavel"}"#
         }
     }
 }

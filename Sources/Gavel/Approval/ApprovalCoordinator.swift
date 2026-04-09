@@ -44,7 +44,7 @@ final class ApprovalCoordinator: ObservableObject {
         }
 
         let semaphore = DispatchSemaphore(value: 0)
-        var result = Decision(verdict: .allow, reason: "Approval timed out")
+        var result = Decision(verdict: .block, reason: "Approval timed out — fail closed")
 
         let pending = PendingApproval(
             payload: payload,

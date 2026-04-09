@@ -5,7 +5,7 @@ import Foundation
 /// Reads hook input from stdin, wraps it with metadata, sends it to the
 /// Gavel daemon via Unix socket, and translates the response to Claude Code's
 /// expected format:
-///   - allow → stdout `{}`, exit 0
+///   - allow → stdout structured hookSpecificOutput JSON, exit 0
 ///   - block → stderr "reason", exit 2
 ///
 /// This replaces per-invocation Python scripts with a ~2ms binary.
@@ -70,6 +70,10 @@ guard fd >= 0 else {
 var addr = sockaddr_un()
 addr.sun_family = sa_family_t(AF_UNIX)
 let pathBytes = socketPath.utf8CString
+guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else {
+    if needsResponse { printAllow() }
+    exit(0)
+}
 withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
     ptr.withMemoryRebound(to: CChar.self, capacity: pathBytes.count) { dest in
         for (i, byte) in pathBytes.enumerated() {

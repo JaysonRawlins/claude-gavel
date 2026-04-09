@@ -24,7 +24,7 @@ struct ApprovalPanelView: View {
             }
         }
         .frame(minWidth: 560, minHeight: 300)
-        .onChange(of: coordinator.currentApproval?.payload.toolName) { _ in
+        .onChange(of: coordinator.currentApproval?.timestamp) { _ in
             resetFields()
         }
         .onAppear {

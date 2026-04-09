@@ -19,7 +19,7 @@ struct GavelNotifications {
            let obj = center.perform(NSSelectorFromString("currentNotificationCenter"))?.takeUnretainedValue() {
             let sel = NSSelectorFromString("requestAuthorizationWithOptions:completionHandler:")
             // Best effort — if this fails, osascript fallback still works
-            _ = try? (obj as AnyObject).perform(sel, with: 6 as NSNumber, with: { (_: Bool, _: Error?) in } as @convention(block) (Bool, Error?) -> Void)
+            _ = (obj as AnyObject).perform(sel, with: 6 as NSNumber, with: { (_: Bool, _: Error?) in } as @convention(block) (Bool, Error?) -> Void)
         }
     }
 
