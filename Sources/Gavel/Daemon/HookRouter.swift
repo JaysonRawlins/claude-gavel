@@ -1,0 +1,196 @@
+import Foundation
+
+/// Routes incoming hook data to the appropriate handler.
+///
+/// This is the central dispatch point. Raw bytes come in from the socket,
+/// get decoded, routed to the approval engine or monitor, and (for PreToolUse)
+/// a response is sent back — either immediately (dangerous/auto) or after
+/// user interaction via the approval panel.
+final class HookRouter {
+    let sessionManager: SessionManager
+    let approvalEngine: ApprovalEngine
+    let approvalCoordinator: ApprovalCoordinator
+    var onFeedEvent: ((FeedEntry) -> Void)?
+
+    private let decoder = JSONDecoder()
+    private let encoder = JSONEncoder()
+
+    init(sessionManager: SessionManager, approvalEngine: ApprovalEngine, approvalCoordinator: ApprovalCoordinator) {
+        self.sessionManager = sessionManager
+        self.approvalEngine = approvalEngine
+        self.approvalCoordinator = approvalCoordinator
+    }
+
+    /// Handle raw data from a socket connection.
+    /// The `respond` closure is non-nil for PreToolUse (synchronous hooks).
+    func handle(data: Data, respond: ((Data) -> Void)?) {
+        guard let event = try? decoder.decode(HookEvent.self, from: data) else {
+            handleRawHookInput(data: data, respond: respond)
+            return
+        }
+
+        let session = sessionManager.session(for: event.sessionPid)
+        let ts = Date(timeIntervalSince1970: event.timestamp)
+
+        switch event.payload {
+        case .preToolUse(let payload):
+            if let sid = payload.sessionId { session.sessionId = sid }
+            if let cwd = payload.cwd { session.cwd = cwd }
+            handlePreToolUse(payload: payload, session: session, timestamp: ts, respond: respond)
+
+        case .postToolUse(let payload):
+            if let sid = payload.sessionId { session.sessionId = sid }
+            handlePostToolUse(payload: payload, session: session, timestamp: ts)
+
+        case .sessionStart(let payload):
+            if let sid = payload.sessionId { session.sessionId = sid }
+            session.cwd = payload.cwd
+            session.model = payload.model
+            let source = payload.source ?? "startup"
+            emitFeed(.system("Session \(source)", pid: session.pid, at: ts))
+
+        case .stop:
+            emitFeed(.stop(pid: session.pid, at: ts))
+
+        case .userPromptSubmit(let payload):
+            if let sid = payload.sessionId { session.sessionId = sid }
+            session.lastPrompt = payload.prompt
+            let preview = (payload.prompt ?? "").prefix(120)
+            emitFeed(.prompt(text: String(preview), pid: session.pid, at: ts))
+
+        case .notification(let payload):
+            let msg = payload.message ?? payload.title ?? "notification"
+            let kind = payload.notificationType ?? "unknown"
+            emitFeed(.system("[\(kind)] \(msg)", pid: session.pid, at: ts))
+
+        case .stopFailure(let payload):
+            let errType = payload.errorType ?? "unknown"
+            emitFeed(.system("Stop failure: \(errType)", pid: session.pid, at: ts))
+
+        case .passthrough(let eventName):
+            emitFeed(.system(eventName, pid: session.pid, at: ts))
+        }
+    }
+
+    // MARK: - PreToolUse
+
+    private func handlePreToolUse(
+        payload: PreToolUsePayload,
+        session: Session,
+        timestamp: Date,
+        respond: ((Data) -> Void)?
+    ) {
+        session.toolCallCount += 1
+
+        let summary = payload.command ?? payload.filePath ?? ""
+        emitFeed(.toolCall(
+            tool: payload.toolName,
+            summary: summary,
+            pid: session.pid,
+            at: timestamp
+        ))
+
+        // Stage 1: Check for hard blocks (dangerous patterns, paused)
+        let engineDecision = approvalEngine.evaluate(payload: payload, session: session)
+        if engineDecision.verdict == .block {
+            session.blockCount += 1
+            let badge: DecisionBadge = session.isPaused ? .paused : .block
+            emitFeed(.decision(badge: badge, reason: engineDecision.reason, pid: session.pid, at: timestamp))
+            sendResponse(engineDecision, respond: respond)
+            return
+        }
+
+        // Stage 2: Check auto-approve and session wildcard rules (skip dialog)
+        if session.isAutoApproveActive {
+            session.allowCount += 1
+            emitFeed(.decision(badge: .autoApprove, reason: engineDecision.reason, pid: session.pid, at: timestamp))
+            sendResponse(engineDecision, respond: respond)
+            return
+        }
+
+        if let rule = session.matchesSessionRule(
+            toolName: payload.toolName,
+            command: payload.command,
+            filePath: payload.filePath
+        ) {
+            session.allowCount += 1
+            emitFeed(.decision(badge: .allow, reason: "\(rule.toolName): \(rule.pattern)", pid: session.pid, at: timestamp))
+            sendResponse(engineDecision, respond: respond)
+            return
+        }
+
+        // Stage 3: Interactive approval (blocks until user responds)
+        let decision = approvalCoordinator.requestApproval(
+            payload: payload,
+            session: session,
+            timestamp: timestamp
+        )
+
+        switch decision.verdict {
+        case .allow:
+            session.allowCount += 1
+            emitFeed(.decision(badge: .allow, reason: decision.reason, pid: session.pid, at: timestamp))
+        case .block:
+            session.blockCount += 1
+            emitFeed(.decision(badge: .block, reason: decision.reason, pid: session.pid, at: timestamp))
+        }
+
+        sendResponse(decision, respond: respond)
+    }
+
+    // MARK: - PostToolUse
+
+    private func handlePostToolUse(
+        payload: PostToolUsePayload,
+        session: Session,
+        timestamp: Date
+    ) {
+        var output = ""
+        if let response = payload.toolResponse {
+            if let str = response.stringValue {
+                output = str
+            } else if let dict = response.dictValue {
+                let stdout = dict["stdout"]?.stringValue ?? ""
+                let stderr = dict["stderr"]?.stringValue ?? ""
+                output = [stdout, stderr].filter { !$0.isEmpty }.joined(separator: "\n")
+            }
+        }
+
+        if !output.isEmpty {
+            emitFeed(.toolResult(output: output, pid: session.pid, at: timestamp))
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func sendResponse(_ decision: Decision, respond: ((Data) -> Void)?) {
+        if let respond = respond,
+           let data = decision.hookResponse.data(using: .utf8) {
+            respond(data)
+        }
+    }
+
+    private func handleRawHookInput(data: Data, respond: ((Data) -> Void)?) {
+        if let respond = respond,
+           let responseData = #"{"verdict":"allow"}"#.data(using: .utf8) {
+            respond(responseData)
+        }
+    }
+
+    private func emitFeed(_ entry: FeedEntry) {
+        DispatchQueue.main.async { [weak self] in
+            self?.onFeedEvent?(entry)
+        }
+    }
+}
+
+// MARK: - Feed Entries
+
+enum FeedEntry {
+    case toolCall(tool: String, summary: String, pid: Int, at: Date)
+    case decision(badge: DecisionBadge, reason: String?, pid: Int, at: Date)
+    case toolResult(output: String, pid: Int, at: Date)
+    case prompt(text: String, pid: Int, at: Date)
+    case stop(pid: Int, at: Date)
+    case system(String, pid: Int, at: Date)
+}

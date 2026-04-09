@@ -1,0 +1,143 @@
+import AppKit
+import SwiftUI
+
+/// Gavel — Native macOS daemon for Claude Code session monitoring and approval.
+///
+/// Runs as a menu bar app. Listens on a Unix socket for hook events,
+/// evaluates approval rules, and displays a live activity monitor.
+/// In interactive mode, pops up an approval dialog for each tool call.
+
+// MARK: - App Delegate
+
+class GavelAppDelegate: NSObject, NSApplicationDelegate {
+    private var statusItem: NSStatusItem!
+    private var monitorWindow: NSWindow?
+
+    let sessionManager = SessionManager()
+    let approvalEngine = ApprovalEngine()
+    let approvalCoordinator = ApprovalCoordinator()
+    lazy var hookRouter: HookRouter = {
+        approvalCoordinator.ruleStore = approvalEngine.ruleStore
+        return HookRouter(
+            sessionManager: sessionManager,
+            approvalEngine: approvalEngine,
+            approvalCoordinator: approvalCoordinator
+        )
+    }()
+    lazy var viewModel = MonitorViewModel(
+        sessionManager: sessionManager,
+        approvalCoordinator: approvalCoordinator
+    )
+    var socketServer: SocketServer?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        setupMenuBar()
+        setupSocketServer()
+        setupHookRouter()
+        GavelNotifications.requestPermission()
+
+        NSApp.setActivationPolicy(.accessory) // Menu bar only, no dock icon
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        socketServer?.stop()
+    }
+
+    // MARK: - Menu Bar
+
+    private func setupMenuBar() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if let button = statusItem.button {
+            button.image = NSImage(systemSymbolName: "gavel.fill", accessibilityDescription: "Gavel")
+                ?? NSImage(systemSymbolName: "shield.checkered", accessibilityDescription: "Gavel")
+            button.toolTip = "Gavel — Claude Code Monitor"
+        }
+
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Show Monitor", action: #selector(showMonitor), keyEquivalent: "m"))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Toggle Auto-Approve", action: #selector(toggleAutoApprove), keyEquivalent: "a"))
+        menu.addItem(NSMenuItem(title: "Pause All Sessions", action: #selector(togglePauseAll), keyEquivalent: "p"))
+        menu.addItem(NSMenuItem(title: "Revoke Session Rules", action: #selector(revokeAll), keyEquivalent: "r"))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Quit Gavel", action: #selector(quit), keyEquivalent: "q"))
+        statusItem.menu = menu
+    }
+
+    @objc private func showMonitor() {
+        if monitorWindow == nil {
+            let contentView = MonitorWindow(viewModel: viewModel)
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 720, height: 520),
+                styleMask: [.titled, .closable, .resizable, .miniaturizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "Gavel — Claude Code Monitor"
+            window.contentView = NSHostingView(rootView: contentView)
+            window.center()
+            window.isReleasedWhenClosed = false
+            monitorWindow = window
+        }
+        monitorWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func toggleAutoApprove() {
+        // Toggle for the first active session (use monitor for per-session control)
+        guard let session = sessionManager.sessions.values.first else { return }
+        viewModel.toggleAutoApprove(for: session)
+    }
+
+    @objc private func togglePauseAll() {
+        viewModel.togglePause()
+    }
+
+    @objc private func revokeAll() {
+        viewModel.revokeAutoApprove()
+    }
+
+    @objc private func quit() {
+        socketServer?.stop()
+        NSApp.terminate(nil)
+    }
+
+    // MARK: - Socket Server
+
+    private func setupSocketServer() {
+        let socketDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/gavel")
+        try? FileManager.default.createDirectory(at: socketDir, withIntermediateDirectories: true)
+
+        let socketPath = socketDir.appendingPathComponent("gavel.sock").path
+        socketServer = SocketServer(socketPath: socketPath)
+
+        do {
+            try socketServer?.start()
+            print("Gavel listening on \(socketPath)")
+        } catch {
+            print("Failed to start socket server: \(error)")
+        }
+    }
+
+    private func setupHookRouter() {
+        hookRouter.onFeedEvent = { [weak self] entry in
+            self?.viewModel.appendFeedEntry(entry)
+
+            if case .stop = entry {
+                GavelNotifications.notify(title: "Claude Code", body: "Ready for input")
+            }
+        }
+
+        socketServer?.onEvent = { [weak self] data, respond in
+            self?.hookRouter.handle(data: data, respond: respond)
+        }
+    }
+}
+
+// MARK: - Launch
+
+let app = NSApplication.shared
+let delegate = GavelAppDelegate()
+app.delegate = delegate
+app.run()
