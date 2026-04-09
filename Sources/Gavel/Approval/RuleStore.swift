@@ -126,15 +126,21 @@ struct PersistentRule: Codable, Identifiable {
     func matches(toolName: String, command: String?, filePath: String?) -> Bool {
         guard self.toolName == toolName || self.toolName == "*" else { return false }
 
-        let target: String
+        let raw: String
         switch toolName {
         case "Bash":
-            target = command ?? ""
+            raw = command ?? ""
         case "Edit", "MultiEdit", "Write", "Read", "Glob", "Grep":
-            target = filePath ?? command ?? ""
+            raw = filePath ?? command ?? ""
         default:
-            target = command ?? filePath ?? ""
+            raw = command ?? filePath ?? ""
         }
+
+        // Sanitize typographic dashes so patterns match consistently
+        let target = raw
+            .replacingOccurrences(of: "\u{2013}", with: "-")
+            .replacingOccurrences(of: "\u{2014}", with: "--")
+            .replacingOccurrences(of: "\u{2012}", with: "-")
 
         guard let regex = compiledRegex else { return false }
         return regex.firstMatch(in: target, range: NSRange(target.startIndex..., in: target)) != nil

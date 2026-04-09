@@ -114,7 +114,7 @@ if needsResponse {
     let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: bufSize)
     defer { buf.deallocate() }
 
-    var timeout = timeval(tv_sec: 300, tv_usec: 0) // 5 min — user may be reviewing
+    var timeout = timeval(tv_sec: 86400, tv_usec: 0) // 24 hours — effectively no timeout
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
     while true {

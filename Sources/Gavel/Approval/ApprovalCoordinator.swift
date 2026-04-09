@@ -64,8 +64,8 @@ final class ApprovalCoordinator: ObservableObject {
             }
         }
 
-        // Block socket handler until user responds (5 min timeout)
-        let waitResult = semaphore.wait(timeout: .now() + 300)
+        // Block socket handler until user responds (24 hours — effectively no timeout)
+        let waitResult = semaphore.wait(timeout: .now() + 86400)
         if waitResult == .timedOut {
             DispatchQueue.main.async {
                 self.dismissCurrent()
@@ -112,13 +112,15 @@ final class ApprovalCoordinator: ObservableObject {
 
         case .alwaysDenyPattern(let pattern, let isRegex):
             ctx = nil; updated = nil
-            let rule = PersistentRule(toolName: current.payload.toolName, pattern: pattern, isRegex: isRegex, verdict: .block)
+            let sanitized = Self.sanitizeDashes(pattern)
+            let rule = PersistentRule(toolName: current.payload.toolName, pattern: sanitized, isRegex: isRegex, verdict: .block)
             ruleStore?.addRule(rule)
             current.respond(Decision(verdict: .block, reason: "Always deny: \(current.payload.toolName): \(pattern)"))
 
         case .alwaysAllowPattern(let pattern, let isRegex):
             ctx = nil; updated = nil
-            let rule = PersistentRule(toolName: current.payload.toolName, pattern: pattern, isRegex: isRegex, verdict: .allow)
+            let sanitized = Self.sanitizeDashes(pattern)
+            let rule = PersistentRule(toolName: current.payload.toolName, pattern: sanitized, isRegex: isRegex, verdict: .allow)
             ruleStore?.addRule(rule)
             current.respond(Decision(verdict: .allow, reason: "Always allow: \(current.payload.toolName): \(pattern)"))
         }
@@ -199,7 +201,7 @@ final class ApprovalCoordinator: ObservableObject {
 
         let p = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
-            styleMask: [.titled, .closable, .resizable, .utilityWindow, .nonactivatingPanel],
+            styleMask: [.titled, .closable, .resizable, .utilityWindow],
             backing: .buffered,
             defer: false
         )
@@ -210,7 +212,16 @@ final class ApprovalCoordinator: ObservableObject {
         p.level = .floating
         p.isReleasedWhenClosed = false
         p.hidesOnDeactivate = false
+        // Allow text editing operations (paste, cut, copy, select all)
+        p.acceptsMouseMovedEvents = true
         panel = p
+    }
+
+    /// Replace typographic dashes (macOS smart dashes) with ASCII hyphens.
+    static func sanitizeDashes(_ input: String) -> String {
+        input.replacingOccurrences(of: "\u{2013}", with: "-")  // en-dash
+             .replacingOccurrences(of: "\u{2014}", with: "--") // em-dash
+             .replacingOccurrences(of: "\u{2012}", with: "-")  // figure dash
     }
 
     private func closePanel() {

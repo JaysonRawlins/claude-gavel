@@ -7,7 +7,6 @@ struct ApprovalPanelView: View {
     @State private var noteToClaudeText: String = ""
     @State private var editedCommand: String = ""
     @State private var isRegexMode: Bool = false
-    @State private var testString: String = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,7 +40,7 @@ struct ApprovalPanelView: View {
                 command: a.payload.command,
                 filePath: a.payload.filePath
             )
-            editedCommand = a.payload.command ?? ""
+            editedCommand = ApprovalCoordinator.sanitizeDashes(a.payload.command ?? "")
             noteToClaudeText = ""
         }
     }
@@ -341,61 +340,63 @@ struct ApprovalPanelView: View {
 
     @ViewBuilder
     private func patternTester(_ approval: ApprovalCoordinator.PendingApproval) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
-                Image(systemName: "flask")
-                    .foregroundColor(.secondary)
-                    .font(.caption)
-                TextField("Test string (try commands here)", text: $testString)
-                    .font(.system(.caption, design: .monospaced))
-                    .textFieldStyle(.roundedBorder)
-
-                // Live match indicator
-                let result = PersistentRule.testPattern(sessionPattern, isRegex: isRegexMode, against: testString)
-                if !testString.isEmpty {
-                    if let error = result.error {
-                        Text(error)
-                            .font(.caption2)
-                            .foregroundColor(.red)
-                    } else if result.matches {
-                        Text("MATCH")
-                            .font(.caption.bold())
-                            .foregroundColor(.red)
-                            .padding(.horizontal, 4)
-                            .background(Color.red.opacity(0.15))
-                            .cornerRadius(3)
-                    } else {
-                        Text("no match")
-                            .font(.caption)
-                            .foregroundColor(.green)
-                    }
-                }
-            }
-
-            // Show current command match status
-            let currentCmd = approval.payload.command ?? approval.payload.filePath ?? ""
-            if !currentCmd.isEmpty && !sessionPattern.isEmpty {
-                let currentResult = PersistentRule.testPattern(sessionPattern, isRegex: isRegexMode, against: currentCmd)
-                HStack(spacing: 4) {
+        let currentCmd = editedCommand.isEmpty
+            ? (approval.payload.filePath ?? "")
+            : editedCommand
+        if !currentCmd.isEmpty && !sessionPattern.isEmpty {
+            let result = PersistentRule.testPattern(sessionPattern, isRegex: isRegexMode, against: currentCmd)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
                     Text("Current:")
-                        .font(.caption2)
+                        .font(.system(.body, design: .monospaced).bold())
                         .foregroundColor(.secondary)
-                    Text(String(currentCmd.prefix(60)))
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                    if currentResult.matches {
-                        Text("MATCH")
-                            .font(.caption2.bold())
-                            .foregroundColor(.red)
-                    } else {
-                        Text("no match")
-                            .font(.caption2)
-                            .foregroundColor(.green)
+                    Text(currentCmd)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundColor(.primary)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                }
+
+                if let error = result.error {
+                    Text(error)
+                        .font(.body)
+                        .foregroundColor(.red)
+                } else {
+                    HStack(spacing: 12) {
+                        HStack(spacing: 4) {
+                            Text("Always Deny:")
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(.secondary)
+                            resultBadge(
+                                text: result.matches ? "BLOCKED" : "passes through",
+                                color: result.matches ? .red : .green
+                            )
+                        }
+                        HStack(spacing: 4) {
+                            Text("Always Allow:")
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(.secondary)
+                            resultBadge(
+                                text: result.matches ? "ALLOWED" : "no effect",
+                                color: result.matches ? .green : .gray
+                            )
+                        }
                     }
                 }
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
         }
+    }
+
+    private func resultBadge(text: String, color: Color) -> some View {
+        Text(text)
+            .font(.body.bold())
+            .foregroundColor(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(color)
+            .cornerRadius(4)
     }
 
     /// Returns the edited command only if it differs from the original.
