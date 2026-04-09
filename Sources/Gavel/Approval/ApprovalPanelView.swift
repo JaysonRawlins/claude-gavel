@@ -42,6 +42,7 @@ struct ApprovalPanelView: View {
             )
             editedCommand = ApprovalCoordinator.sanitizeDashes(a.payload.command ?? "")
             noteToClaudeText = ""
+            isRegexMode = false
         }
     }
 

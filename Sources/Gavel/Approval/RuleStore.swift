@@ -22,18 +22,18 @@ final class RuleStore: ObservableObject {
     // MARK: - Evaluation (split by verdict for priority ordering)
 
     func evaluateDeny(payload: PreToolUsePayload) -> Decision? {
-        for rule in rules where rule.verdict == .block {
-            if rule.matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
-                return Decision(verdict: .block, reason: "Always deny: \(rule.name)")
+        for i in rules.indices where rules[i].verdict == .block {
+            if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
+                return Decision(verdict: .block, reason: "Always deny: \(rules[i].name)")
             }
         }
         return nil
     }
 
     func evaluateAllow(payload: PreToolUsePayload) -> Decision? {
-        for rule in rules where rule.verdict == .allow {
-            if rule.matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
-                return Decision(verdict: .allow, reason: "Always allow: \(rule.name)")
+        for i in rules.indices where rules[i].verdict == .allow {
+            if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
+                return Decision(verdict: .allow, reason: "Always allow: \(rules[i].name)")
             }
         }
         return nil
@@ -85,8 +85,7 @@ final class RuleStore: ObservableObject {
 ///
 /// Supports two pattern modes:
 /// - **Glob** (default): `*` matches any characters. E.g. `swift build*`
-/// - **Regex**: Full regex with lookaheads etc. E.g. `doppler\s+secrets\b(?!.*--only-names)`
-///   Use `/pattern/` syntax in the UI to indicate regex mode.
+/// - **Regex**: Full regex with lookaheads etc. Toggle Regex in the UI.
 struct PersistentRule: Codable, Identifiable {
     let id: UUID
     let name: String
@@ -96,15 +95,31 @@ struct PersistentRule: Codable, Identifiable {
     let verdict: DecisionVerdict
     let createdAt: Date
 
-    /// Pre-compiled regex (not persisted, rebuilt on load).
+    /// Pre-compiled regex (rebuilt on first access, not persisted).
     private var _compiledRegex: NSRegularExpression?
     var compiledRegex: NSRegularExpression? {
-        if let r = _compiledRegex { return r }
-        return Self.compilePattern(pattern, isRegex: isRegex)
+        mutating get {
+            if _compiledRegex == nil {
+                _compiledRegex = Self.compilePattern(pattern, isRegex: isRegex)
+            }
+            return _compiledRegex
+        }
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, toolName, pattern, isRegex, verdict, createdAt
+    }
+
+    /// Backward-compatible decoding — isRegex defaults to false for old rules.json.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        toolName = try c.decode(String.self, forKey: .toolName)
+        pattern = try c.decode(String.self, forKey: .pattern)
+        isRegex = try c.decodeIfPresent(Bool.self, forKey: .isRegex) ?? false
+        verdict = try c.decode(DecisionVerdict.self, forKey: .verdict)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
     }
 
     init(
@@ -123,7 +138,7 @@ struct PersistentRule: Codable, Identifiable {
         self._compiledRegex = Self.compilePattern(pattern, isRegex: isRegex)
     }
 
-    func matches(toolName: String, command: String?, filePath: String?) -> Bool {
+    mutating func matches(toolName: String, command: String?, filePath: String?) -> Bool {
         guard self.toolName == toolName || self.toolName == "*" else { return false }
 
         let raw: String
