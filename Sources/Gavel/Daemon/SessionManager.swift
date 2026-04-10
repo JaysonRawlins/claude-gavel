@@ -14,6 +14,7 @@ final class SessionManager: ObservableObject {
     /// Default settings applied to new sessions (survives daemon restarts).
     @Published var defaultAutoApprove: Bool = false
     @Published var defaultSubAgentInherit: Bool = false
+    @Published var defaultPaused: Bool = false
 
     private static var defaultsPath: String {
         FileManager.default.homeDirectoryForCurrentUser.path + "/.claude/gavel/session-defaults.json"
@@ -39,6 +40,7 @@ final class SessionManager: ObservableObject {
         let session = Session(pid: pid)
         session.isAutoApproveEnabled = defaultAutoApprove
         session.isSubAgentInheritEnabled = defaultSubAgentInherit
+        session.isPaused = defaultPaused
         sessions[pid] = session
         return session
     }
@@ -47,7 +49,8 @@ final class SessionManager: ObservableObject {
     func saveDefaults() {
         let data: [String: Bool] = [
             "autoApprove": defaultAutoApprove,
-            "subAgentInherit": defaultSubAgentInherit
+            "subAgentInherit": defaultSubAgentInherit,
+            "paused": defaultPaused
         ]
         if let json = try? JSONSerialization.data(withJSONObject: data, options: .prettyPrinted) {
             FileManager.default.createFile(atPath: Self.defaultsPath, contents: json)
@@ -59,6 +62,7 @@ final class SessionManager: ObservableObject {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Bool] else { return }
         defaultAutoApprove = json["autoApprove"] ?? false
         defaultSubAgentInherit = json["subAgentInherit"] ?? false
+        defaultPaused = json["paused"] ?? false
     }
 
     /// Remove a session (e.g., when the process exits).
