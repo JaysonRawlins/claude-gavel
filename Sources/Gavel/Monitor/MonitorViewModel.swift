@@ -44,6 +44,10 @@ final class MonitorViewModel: ObservableObject {
         } else {
             approvalCoordinator.enableAutoApprove(for: session)
         }
+        // Persist as default for new sessions / daemon restarts
+        let allAuto = sessionManager.sessions.values.allSatisfy { $0.isAutoApproveEnabled }
+        sessionManager.defaultAutoApprove = allAuto
+        sessionManager.saveDefaults()
     }
 
     func togglePause() {
@@ -55,6 +59,13 @@ final class MonitorViewModel: ObservableObject {
     func revokeAutoApprove() {
         for session in sessionManager.sessions.values {
             session.revokeAutoApprove()
+        }
+    }
+
+    func setPinned(_ pinned: Bool) {
+        // Find the monitor window and set its level
+        for window in NSApp.windows where window.title.contains("Monitor") {
+            window.level = pinned ? .floating : .normal
         }
     }
 
