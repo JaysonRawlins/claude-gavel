@@ -11,7 +11,16 @@ final class SessionManager: ObservableObject {
     private let cleanupInterval: TimeInterval = 5.0
     private var cleanupTimer: DispatchSourceTimer?
 
+    /// Default settings applied to new sessions (survives daemon restarts).
+    @Published var defaultAutoApprove: Bool = false
+    @Published var defaultSubAgentInherit: Bool = false
+
+    private static var defaultsPath: String {
+        FileManager.default.homeDirectoryForCurrentUser.path + "/.claude/gavel/session-defaults.json"
+    }
+
     init() {
+        loadDefaults()
         startCleanupTimer()
     }
 
@@ -20,6 +29,7 @@ final class SessionManager: ObservableObject {
     }
 
     /// Get or create a session for the given PID.
+    /// New sessions inherit the default Auto/Sub settings.
     func session(for pid: Int) -> Session {
         lock.lock()
         defer { lock.unlock() }
@@ -27,8 +37,28 @@ final class SessionManager: ObservableObject {
             return existing
         }
         let session = Session(pid: pid)
+        session.isAutoApproveEnabled = defaultAutoApprove
+        session.isSubAgentInheritEnabled = defaultSubAgentInherit
         sessions[pid] = session
         return session
+    }
+
+    /// Save current defaults to disk (called when user toggles).
+    func saveDefaults() {
+        let data: [String: Bool] = [
+            "autoApprove": defaultAutoApprove,
+            "subAgentInherit": defaultSubAgentInherit
+        ]
+        if let json = try? JSONSerialization.data(withJSONObject: data, options: .prettyPrinted) {
+            FileManager.default.createFile(atPath: Self.defaultsPath, contents: json)
+        }
+    }
+
+    private func loadDefaults() {
+        guard let data = FileManager.default.contents(atPath: Self.defaultsPath),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Bool] else { return }
+        defaultAutoApprove = json["autoApprove"] ?? false
+        defaultSubAgentInherit = json["subAgentInherit"] ?? false
     }
 
     /// Remove a session (e.g., when the process exits).

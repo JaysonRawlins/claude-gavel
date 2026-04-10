@@ -86,6 +86,8 @@ struct PreToolUsePayload: Codable {
     let cwd: String?
     let permissionMode: String?
     let toolUseId: String?
+    let agentId: String?
+    let agentType: String?
 
     enum CodingKeys: String, CodingKey {
         case toolName = "tool_name"
@@ -94,17 +96,24 @@ struct PreToolUsePayload: Codable {
         case cwd
         case permissionMode = "permission_mode"
         case toolUseId = "tool_use_id"
+        case agentId = "agent_id"
+        case agentType = "agent_type"
     }
+
+    var isSubAgent: Bool { agentId != nil }
 
     init(toolName: String, toolInput: [String: AnyCodable],
          sessionId: String? = nil, cwd: String? = nil,
-         permissionMode: String? = nil, toolUseId: String? = nil) {
+         permissionMode: String? = nil, toolUseId: String? = nil,
+         agentId: String? = nil, agentType: String? = nil) {
         self.toolName = toolName
         self.toolInput = toolInput
         self.sessionId = sessionId
         self.cwd = cwd
         self.permissionMode = permissionMode
         self.toolUseId = toolUseId
+        self.agentId = agentId
+        self.agentType = agentType
     }
 
     var command: String? {

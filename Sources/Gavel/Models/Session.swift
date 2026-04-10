@@ -11,6 +11,7 @@ final class Session: ObservableObject, Identifiable {
     @Published var isPaused: Bool = false
     @Published var isAlive: Bool = true
     @Published var isAutoApproveEnabled: Bool = false
+    @Published var isSubAgentInheritEnabled: Bool = false
     @Published var lastPrompt: String?
 
     // Timed auto-approve

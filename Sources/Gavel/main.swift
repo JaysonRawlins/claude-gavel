@@ -171,6 +171,38 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
 
 // MARK: - Launch
 
+// Crash logging — write last words before dying
+let logPath = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent(".claude/gavel/gavel.log").path
+
+func gavelLog(_ msg: String) {
+    let ts = ISO8601DateFormatter().string(from: Date())
+    let line = "[\(ts)] \(msg)\n"
+    if let fh = FileHandle(forWritingAtPath: logPath) {
+        fh.seekToEndOfFile()
+        fh.write(Data(line.utf8))
+        fh.closeFile()
+    } else {
+        FileManager.default.createFile(atPath: logPath, contents: Data(line.utf8))
+    }
+}
+
+// Catch uncaught exceptions
+NSSetUncaughtExceptionHandler { exception in
+    gavelLog("CRASH: \(exception.name.rawValue) — \(exception.reason ?? "no reason")")
+    gavelLog("STACK: \(exception.callStackSymbols.prefix(10).joined(separator: "\n  "))")
+}
+
+// Catch signals
+for sig: Int32 in [SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE] {
+    signal(sig) { signum in
+        gavelLog("SIGNAL: \(signum)")
+        exit(signum)
+    }
+}
+
+gavelLog("Gavel starting")
+
 let app = NSApplication.shared
 let delegate = GavelAppDelegate()
 app.delegate = delegate

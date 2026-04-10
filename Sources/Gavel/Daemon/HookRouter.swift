@@ -126,6 +126,15 @@ final class HookRouter {
             return
         }
 
+        // Stage 2.5: Sub-agent inheritance — auto-approve sub-agent calls
+        // (deny rules already checked in Stage 1, so blocks are respected)
+        if payload.isSubAgent && session.isSubAgentInheritEnabled {
+            session.allowCount += 1
+            emitFeed(.decision(badge: .autoApprove, reason: "Sub-agent: \(payload.agentType ?? "unknown")", pid: session.pid, at: timestamp))
+            sendResponse(Decision(verdict: .allow, reason: "Sub-agent inherited"), respond: respond)
+            return
+        }
+
         // Stage 3: Interactive approval (blocks until user responds)
         let decision = approvalCoordinator.requestApproval(
             payload: payload,
