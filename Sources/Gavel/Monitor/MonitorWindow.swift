@@ -130,6 +130,9 @@ struct MonitorWindow: View {
 
             Button(session.isPaused ? "Resume" : "Pause") {
                 session.isPaused.toggle()
+                let anyPaused = viewModel.sessionManager.sessions.values.contains { $0.isPaused }
+                viewModel.sessionManager.defaultPaused = anyPaused
+                viewModel.sessionManager.saveDefaults()
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
