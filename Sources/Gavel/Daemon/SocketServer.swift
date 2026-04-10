@@ -99,6 +99,10 @@ final class SocketServer {
     private func handleConnection(fd: Int32) {
         defer { close(fd) }
 
+        // Prevent SIGPIPE on this socket if client disconnects during write
+        var noSigPipe: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
+
         // Set read timeout (2 seconds)
         var timeout = timeval(tv_sec: 2, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
