@@ -193,7 +193,10 @@ NSSetUncaughtExceptionHandler { exception in
     gavelLog("STACK: \(exception.callStackSymbols.prefix(10).joined(separator: "\n  "))")
 }
 
-// Catch signals
+// Ignore SIGPIPE — clients disconnect, we don't want to die
+signal(SIGPIPE, SIG_IGN)
+
+// Catch fatal signals
 for sig: Int32 in [SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE] {
     signal(sig) { signum in
         gavelLog("SIGNAL: \(signum)")
