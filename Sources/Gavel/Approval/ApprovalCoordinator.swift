@@ -34,12 +34,14 @@ final class ApprovalCoordinator: ObservableObject {
 
     /// Request approval for a tool use. Blocks the calling thread until the user decides.
     /// Called from socket handler (background thread).
+    /// Set `forceDialog` to true to show the dialog even under auto-approve (used for MCP writes).
     func requestApproval(
         payload: PreToolUsePayload,
         session: Session,
-        timestamp: Date
+        timestamp: Date,
+        forceDialog: Bool = false
     ) -> Decision {
-        if session.isAutoApproveEnabled {
+        if !forceDialog && session.isAutoApproveEnabled {
             return Decision(verdict: .allow, reason: "Auto-approved")
         }
 

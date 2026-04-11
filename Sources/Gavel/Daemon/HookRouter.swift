@@ -112,7 +112,8 @@ final class HookRouter {
                 emitFeed(.decision(badge: .block, reason: "Needs approval: \(engineDecision.reason ?? "")", pid: session.pid, at: timestamp))
 
                 let decision = approvalCoordinator.requestApproval(
-                    payload: payload, session: session, timestamp: timestamp
+                    payload: payload, session: session, timestamp: timestamp,
+                    forceDialog: true
                 )
                 switch decision.verdict {
                 case .allow:
