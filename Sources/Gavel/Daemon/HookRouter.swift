@@ -187,8 +187,9 @@ final class HookRouter {
     }
 
     private func handleRawHookInput(data: Data, respond: ((Data) -> Void)?) {
+        // Fail CLOSED for unparseable data — don't auto-allow unknown input
         if let respond = respond,
-           let responseData = #"{"verdict":"allow"}"#.data(using: .utf8) {
+           let responseData = #"{"verdict":"block","reason":"Gavel: unparseable hook data"}"#.data(using: .utf8) {
             respond(responseData)
         }
     }
