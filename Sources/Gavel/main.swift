@@ -94,6 +94,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Pause All Sessions", action: #selector(togglePauseAll), keyEquivalent: "p"))
         menu.addItem(NSMenuItem(title: "Revoke Session Rules", action: #selector(revokeAll), keyEquivalent: "r"))
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Reload Binary", action: #selector(reloadBinary), keyEquivalent: "R"))
         menu.addItem(NSMenuItem(title: "Quit Gavel", action: #selector(quit), keyEquivalent: "q"))
         statusItem.menu = menu
     }
@@ -129,6 +130,13 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func revokeAll() {
         viewModel.revokeAutoApprove()
+    }
+
+    @objc private func reloadBinary() {
+        gavelLog("Reload requested — exiting for LaunchAgent restart")
+        socketServer?.stop()
+        // Clean exit — LaunchAgent's KeepAlive restarts us with the updated binary
+        exit(0)
     }
 
     @objc private func quit() {

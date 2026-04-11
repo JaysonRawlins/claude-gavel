@@ -1,41 +1,144 @@
 import Foundation
 
 /// Matches tool calls against dangerous patterns that should always be blocked.
+///
+/// Two categories:
+/// 1. **Bash command patterns** — regex matching against command strings
+/// 2. **Protected path patterns** — block Write/Edit to sensitive file paths
 struct PatternMatcher {
 
     /// Pre-compiled dangerous bash command patterns.
-    private let compiledPatterns: [(regex: NSRegularExpression, reason: String)]
+    private let bashPatterns: [(regex: NSRegularExpression, reason: String)]
+
+    /// Pre-compiled protected file path patterns (for Write/Edit tools).
+    private let protectedPaths: [(regex: NSRegularExpression, reason: String)]
+
+    /// Pre-compiled sensitive read patterns (for Read tool — secrets/keys only).
+    private let sensitiveReads: [(regex: NSRegularExpression, reason: String)]
 
     init() {
-        let raw: [(pattern: String, reason: String)] = [
-            // Credential exfiltration
-            ("curl.*(-d|--data).*\\b(key|token|secret|password|credential)", "Potential credential exfiltration via curl"),
-            ("wget.*\\b(key|token|secret|password|credential)", "Potential credential exfiltration via wget"),
+        let rawBash: [(pattern: String, reason: String)] = [
+            // ── Credential exfiltration (expanded) ──
+            // curl with any data-sending flag
+            ("\\bcurl\\b.*(-d|--data|--data-raw|--data-binary|--data-urlencode|-F|--form|--upload-file|-T)\\b", "Potential data exfiltration via curl"),
+            // curl with URL containing variable/subshell expansion (exfil via URL)
+            ("\\bcurl\\b.*\\$\\(", "Potential exfiltration via curl with command substitution"),
+            // wget POST
+            ("\\bwget\\b.*--post-(data|file)", "Potential data exfiltration via wget"),
+            // python/ruby/perl network exfil
+            ("\\b(python3?|ruby|perl)\\b.*\\b(urlopen|urllib|requests\\.|Net::HTTP|socket\\.connect|TCPSocket|IO\\.popen)", "Scripting language network exfiltration"),
+            // openssl data exfil
+            ("\\bopenssl\\b.*s_client.*connect", "Potential exfiltration via openssl"),
+            // scp/rsync to remote
+            ("\\b(scp|rsync)\\b.*:", "Potential file exfiltration via scp/rsync"),
+            // dns exfiltration
+            ("\\b(dig|nslookup|host)\\b.*\\$\\(", "Potential DNS exfiltration"),
 
-            // Environment variable theft
-            ("\\benv\\b.*\\|.*\\b(curl|wget|nc|ncat)", "Piping environment to network command"),
-            ("printenv.*\\|.*\\b(curl|wget|nc|ncat)", "Piping environment to network command"),
+            // ── Environment variable theft (expanded) ──
+            ("\\b(env|printenv|set)\\b.*[|].*\\b(curl|wget|nc|ncat|python|ruby|perl)", "Piping environment to network command"),
+            ("\\b(env|printenv|set)\\b.*>\\s*/tmp/", "Environment variables written to temp file"),
+            ("\\bcurl\\b.*-d.*\\$\\(\\s*(env|printenv|set)\\b", "Environment exfiltration via curl subshell"),
 
-            // Reverse shells
+            // ── Reverse shells (expanded) ──
             ("\\bbash\\s+-i\\s+>&", "Reverse shell pattern detected"),
             ("/dev/tcp/", "Reverse shell via /dev/tcp"),
-            ("\\bnc\\b.*-e\\s+/bin/(ba)?sh", "Netcat reverse shell"),
+            ("\\b(nc|ncat)\\b.*(-e|--exec|--sh-exec)\\s+/", "Netcat reverse shell"),
+            ("\\b(python3?|ruby|perl)\\b.*socket.*connect.*\\b(exec|spawn|system|dup2)\\b", "Scripting reverse shell"),
+            ("\\bsocat\\b.*exec.*tcp", "Socat reverse shell"),
+            ("\\bzsh\\s+-i\\s+>&", "Zsh reverse shell"),
+            ("\\bphp\\b.*fsockopen.*exec", "PHP reverse shell"),
 
-            // Persistence mechanisms
-            ("crontab\\s+-", "Crontab modification"),
-            ("launchctl\\s+(load|submit)", "LaunchAgent/Daemon installation"),
+            // ── Persistence mechanisms (expanded) ──
+            ("\\bcrontab\\b", "Crontab modification"),
+            ("\\blaunchctl\\b\\s+(load|unload|submit|bootstrap|bootout|enable|disable|kickstart)", "LaunchAgent/Daemon modification"),
+            ("\\bat\\b\\s+", "at job scheduling"),
 
-            // Destructive operations
-            ("rm\\s+-rf\\s+/(?!tmp)", "Recursive delete from root"),
-            ("mkfs\\b", "Filesystem format command"),
-            ("dd\\s+.*of=/dev/", "Direct disk write"),
+            // ── Destructive operations (expanded) ──
+            ("\\brm\\s+(-\\w*[rR]\\w*\\s+)*/(?!tmp\\b)", "Recursive delete from root"),
+            ("\\brm\\s+(-\\w*[rR]\\w*\\s+)*\\./", "Recursive delete from current directory"),
+            ("\\brm\\s+(-\\w*[rR]\\w*\\s+)*\\.\\./", "Recursive delete from parent directory"),
+            ("\\brm\\s+--recursive", "Recursive delete (long flag)"),
+            ("\\bmkfs\\b", "Filesystem format command"),
+            ("\\bdd\\b\\s+.*of=/dev/", "Direct disk write"),
 
-            // SSH/GPG key exfiltration
-            ("cat.*\\.ssh/(id_|authorized)", "SSH key access"),
-            ("cat.*\\.gnupg/", "GPG key access"),
+            // ── SSH/GPG key access (expanded) ──
+            ("\\b(cat|head|tail|less|more|cp|mv|base64|xxd|openssl)\\b.*\\.ssh/(id_|authorized|known_hosts)", "SSH key/config access"),
+            ("\\b(cat|head|tail|less|more|cp|mv|base64)\\b.*\\.gnupg/", "GPG key access"),
+
+            // ── Gavel self-protection ──
+            ("\\b(pkill|killall)\\b.*\\bgav", "Attempt to kill Gavel daemon"),
+            ("\\bkill\\b.*\\b(pgrep|pidof)\\b.*gav", "Attempt to kill Gavel daemon"),
+            ("\\brm\\b.*gavel\\.sock", "Attempt to remove Gavel socket"),
+            ("\\brm\\b.*\\.claude/gavel/", "Attempt to delete Gavel config"),
+            // Block killing by PID if the command discovers the PID first
+            ("\\bkill\\b.*\\$\\(.*gav", "Attempt to kill Gavel via PID lookup"),
+
+            // ── Command obfuscation ──
+            ("\\beval\\b.*\\$\\(.*\\b(base64|b64decode)\\b", "Obfuscated command via eval+base64"),
+            ("\\bbase64\\s+-[dD]\\b.*\\|.*\\b(bash|sh|zsh)\\b", "Base64 decoded pipe to shell"),
+            ("\\bbash\\s*<<", "Heredoc execution (potential obfuscation)"),
         ]
 
-        compiledPatterns = raw.compactMap { entry in
+        let rawPaths: [(pattern: String, reason: String)] = [
+            // SSH keys and config
+            ("\\.ssh/(id_|authorized_keys|config)", "Protected: SSH keys/config"),
+            // GPG keys
+            ("\\.gnupg/", "Protected: GPG keys"),
+            // Gavel's own config
+            ("\\.claude/gavel/(rules\\.json|session-defaults\\.json|hooks/|bin/)", "Protected: Gavel config"),
+            // Claude Code hooks and settings
+            ("\\.claude/(settings\\.json|settings\\.local\\.json|hooks/)", "Protected: Claude Code settings/hooks"),
+            // Shell config (persistence vector)
+            ("\\.(bash_profile|bashrc|zshrc|zprofile|profile|zshenv)$", "Protected: Shell config (persistence risk)"),
+            // LaunchAgents (persistence vector)
+            ("LaunchAgents/", "Protected: LaunchAgent (persistence risk)"),
+            ("LaunchDaemons/", "Protected: LaunchDaemon (persistence risk)"),
+            // AWS/cloud credentials
+            ("\\.aws/(credentials|config)", "Protected: AWS credentials"),
+            ("\\.kube/config", "Protected: Kubernetes config"),
+            // Environment files
+            ("\\.env$", "Protected: Environment file"),
+        ]
+
+        bashPatterns = rawBash.compactMap { entry in
+            guard let regex = try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive]) else {
+                return nil
+            }
+            return (regex, entry.reason)
+        }
+
+        protectedPaths = rawPaths.compactMap { entry in
+            guard let regex = try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive]) else {
+                return nil
+            }
+            return (regex, entry.reason)
+        }
+
+        let rawSensitiveReads: [(pattern: String, reason: String)] = [
+            // SSH private keys
+            ("\\.ssh/(id_|id_rsa|id_ed25519|id_ecdsa)", "Blocked: SSH private key read"),
+            // GPG private keys
+            ("\\.gnupg/(private-keys|secring|trustdb)", "Blocked: GPG private key read"),
+            // AWS credentials
+            ("\\.aws/credentials", "Blocked: AWS credentials read"),
+            // Kubernetes secrets
+            ("\\.kube/config", "Blocked: Kubernetes config read"),
+            // Environment files with secrets
+            ("\\.env$", "Blocked: Environment file read"),
+            ("\\.env\\.local$", "Blocked: Local environment file read"),
+            // Gavel rules (prevent reading to reverse-engineer deny patterns)
+            ("\\.claude/gavel/rules\\.json", "Blocked: Gavel rules read"),
+            // Keychain
+            ("Keychains/", "Blocked: Keychain access"),
+            // Token/credential files
+            ("\\.(token|secret|credentials|key)$", "Blocked: Credential file read"),
+            // NPM/Docker/Hub tokens
+            ("\\.npmrc$", "Blocked: NPM config (may contain tokens)"),
+            ("\\.docker/config\\.json", "Blocked: Docker config (may contain tokens)"),
+            ("\\.netrc$", "Blocked: netrc credentials"),
+        ]
+
+        sensitiveReads = rawSensitiveReads.compactMap { entry in
             guard let regex = try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive]) else {
                 return nil
             }
@@ -46,17 +149,57 @@ struct PatternMatcher {
     /// Check if a PreToolUse payload matches any dangerous pattern.
     /// Returns a reason string if dangerous, nil if safe.
     func matchDangerous(payload: PreToolUsePayload) -> String? {
-        guard payload.toolName == "Bash", let command = payload.command else {
+        switch payload.toolName {
+        case "Bash":
+            return matchBashCommand(payload.command)
+        case "Write", "Edit", "MultiEdit":
+            return matchProtectedPath(payload.filePath)
+        case "Read":
+            return matchSensitiveRead(payload.filePath)
+        default:
             return nil
         }
+    }
+
+    // MARK: - Bash command matching
+
+    private func matchBashCommand(_ command: String?) -> String? {
+        guard let command = command else { return nil }
 
         let range = NSRange(command.startIndex..., in: command)
-        for (regex, reason) in compiledPatterns {
+        for (regex, reason) in bashPatterns {
             if regex.firstMatch(in: command, range: range) != nil {
                 return reason
             }
         }
+        return nil
+    }
 
+    // MARK: - Protected path matching (Write/Edit)
+
+    private func matchProtectedPath(_ filePath: String?) -> String? {
+        guard let path = filePath else { return nil }
+
+        let range = NSRange(path.startIndex..., in: path)
+        for (regex, reason) in protectedPaths {
+            if regex.firstMatch(in: path, range: range) != nil {
+                return reason
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Sensitive read matching (Read tool)
+
+    private func matchSensitiveRead(_ filePath: String?) -> String? {
+        guard let path = filePath else { return nil }
+
+        let range = NSRange(path.startIndex..., in: path)
+        for (regex, reason) in sensitiveReads {
+            if regex.firstMatch(in: path, range: range) != nil {
+                return reason
+            }
+        }
         return nil
     }
 }
