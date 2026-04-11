@@ -90,6 +90,20 @@ final class HookRouter {
             at: timestamp
         ))
 
+        // Stage 0: Taint tracking — check if command exfiltrates tainted data
+        if payload.toolName == "Bash", let command = payload.command {
+            // Check if this command sends a tainted file over the network
+            if let taintReason = checkTaintedExfil(command: command, session: session) {
+                let decision = Decision(verdict: .block, reason: taintReason)
+                session.blockCount += 1
+                emitFeed(.decision(badge: .block, reason: taintReason, pid: session.pid, at: timestamp))
+                sendResponse(decision, respond: respond)
+                return
+            }
+            // Track new taints: commands that copy sensitive data to temp paths
+            trackTaint(command: command, session: session)
+        }
+
         // Stage 1: Check engine (dangerous patterns, persistent deny/allow, pause)
         let engineDecision = approvalEngine.evaluate(payload: payload, session: session)
         if engineDecision.verdict == .block {
@@ -174,6 +188,70 @@ final class HookRouter {
 
         if !output.isEmpty {
             emitFeed(.toolResult(output: output, pid: session.pid, at: timestamp))
+        }
+    }
+
+    // MARK: - Taint Tracking
+
+    /// Sensitive path patterns that, when read/copied, taint the destination.
+    private static let sensitiveSources = [
+        "\\.ssh/", "\\.gnupg/", "\\.aws/", "\\.kube/config",
+        "\\.env$", "\\.npmrc$", "\\.netrc$", "\\.docker/config",
+    ]
+
+    /// Network commands that could exfiltrate tainted data.
+    private static let networkCommands = [
+        "\\bcurl\\b", "\\bwget\\b", "\\bscp\\b", "\\brsync\\b",
+        "\\bpython3?\\b.*\\b(urlopen|requests|socket)",
+        "\\bnc\\b", "\\bncat\\b", "\\bopenssl\\b.*s_client",
+    ]
+
+    /// Check if a command references any tainted temp file in a network context.
+    private func checkTaintedExfil(command: String, session: Session) -> String? {
+        guard !session.taintedPaths.isEmpty else { return nil }
+
+        for taintedPath in session.taintedPaths {
+            if command.contains(taintedPath) {
+                // Check if there's a network command in the same command
+                for pattern in Self.networkCommands {
+                    if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+                       regex.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) != nil {
+                        return "Taint detected: \(taintedPath) contains sensitive data and is being sent over network"
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Track commands that copy sensitive data to temp/intermediate files.
+    /// e.g., "cat ~/.ssh/id_rsa > /tmp/key.txt" taints /tmp/key.txt
+    private func trackTaint(command: String, session: Session) {
+        // Check if any sensitive source is referenced
+        var hasSensitiveSource = false
+        for pattern in Self.sensitiveSources {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+               regex.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) != nil {
+                hasSensitiveSource = true
+                break
+            }
+        }
+        guard hasSensitiveSource else { return }
+
+        // Look for output redirection to a file: > /path or >> /path
+        if let redirectRegex = try? NSRegularExpression(pattern: #">>?\s*(/\S+)"#),
+           let match = redirectRegex.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) {
+            let pathRange = Range(match.range(at: 1), in: command)!
+            let taintedPath = String(command[pathRange])
+            session.taintedPaths.insert(taintedPath)
+        }
+
+        // Look for cp/mv destination: cp source dest
+        if let cpRegex = try? NSRegularExpression(pattern: #"\b(cp|mv)\b\s+\S+\s+(/\S+)"#),
+           let match = cpRegex.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) {
+            let pathRange = Range(match.range(at: 2), in: command)!
+            let taintedPath = String(command[pathRange])
+            session.taintedPaths.insert(taintedPath)
         }
     }
 

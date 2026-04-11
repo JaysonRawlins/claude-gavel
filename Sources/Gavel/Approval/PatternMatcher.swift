@@ -144,7 +144,32 @@ struct PatternMatcher {
             }
             return (regex, entry.reason)
         }
+
+        mcpPatterns = Self.dangerousMcpTools.compactMap { entry in
+            guard let regex = try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive]) else {
+                return nil
+            }
+            return (regex, entry.reason)
+        }
     }
+
+    /// MCP tools that can exfiltrate data — blocked unless user has an explicit allow rule.
+    private static let dangerousMcpTools: [(pattern: String, reason: String)] = [
+        // Messaging — can send secrets to channels/users
+        ("mcp__.*[Ss]lack.*send", "MCP: Slack message send (potential exfiltration)"),
+        ("mcp__.*[Ss]lack.*upload", "MCP: Slack file upload (potential exfiltration)"),
+        // Browser — can navigate to attacker URLs with data in params
+        ("mcp__.*[Pp]laywright.*navigate$", "MCP: Browser navigation (potential exfiltration)"),
+        ("mcp__.*[Pp]laywright.*evaluate", "MCP: Browser JS eval (potential exfiltration)"),
+        // Email
+        ("mcp__.*mail.*send", "MCP: Email send (potential exfiltration)"),
+        // Webhooks / HTTP
+        ("mcp__.*webhook.*send", "MCP: Webhook send (potential exfiltration)"),
+        ("mcp__.*http.*post", "MCP: HTTP POST (potential exfiltration)"),
+    ]
+
+    /// Pre-compiled MCP tool patterns (compiled once at init).
+    private let mcpPatterns: [(regex: NSRegularExpression, reason: String)]
 
     /// Check if a PreToolUse payload matches any dangerous pattern.
     /// Returns a reason string if dangerous, nil if safe.
@@ -157,6 +182,10 @@ struct PatternMatcher {
         case "Read":
             return matchSensitiveRead(payload.filePath)
         default:
+            // Check MCP tool names
+            if payload.toolName.hasPrefix("mcp__") {
+                return matchMcpTool(payload.toolName)
+            }
             return nil
         }
     }
@@ -233,6 +262,18 @@ struct PatternMatcher {
         let range = NSRange(path.startIndex..., in: path)
         for (regex, reason) in sensitiveReads {
             if regex.firstMatch(in: path, range: range) != nil {
+                return reason
+            }
+        }
+        return nil
+    }
+
+    // MARK: - MCP tool matching
+
+    private func matchMcpTool(_ toolName: String) -> String? {
+        let range = NSRange(toolName.startIndex..., in: toolName)
+        for (regex, reason) in mcpPatterns {
+            if regex.firstMatch(in: toolName, range: range) != nil {
                 return reason
             }
         }
