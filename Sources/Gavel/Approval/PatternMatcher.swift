@@ -166,13 +166,49 @@ struct PatternMatcher {
     private func matchBashCommand(_ command: String?) -> String? {
         guard let command = command else { return nil }
 
+        // Match against the full command first (catches everything)
         let range = NSRange(command.startIndex..., in: command)
         for (regex, reason) in bashPatterns {
             if regex.firstMatch(in: command, range: range) != nil {
-                return reason
+                // Verify it's not a false positive inside a quoted string.
+                // If the match disappears when we strip quoted content,
+                // it was just a string literal (commit message, echo, etc.)
+                let stripped = Self.stripQuotedContent(command)
+                let strippedRange = NSRange(stripped.startIndex..., in: stripped)
+                if regex.firstMatch(in: stripped, range: strippedRange) != nil {
+                    return reason
+                }
+                // Match was only in a quoted string — false positive
             }
         }
         return nil
+    }
+
+    /// Strip message/string-literal content to reduce false positives.
+    /// Only strips quoted args after message-like flags (-m, --message, --body).
+    /// Does NOT strip code arguments (python -c, ruby -e, perl -e).
+    /// "git commit -m 'fixed curl issue'" → "git commit -m ''"
+    /// "echo 'curl -d foo'" → "echo ''"
+    static func stripQuotedContent(_ command: String) -> String {
+        var result = command
+
+        // Strip quoted content after message flags: -m, --message, --body, --title
+        if let regex = try? NSRegularExpression(pattern: #"(-m|--message|--body|--title)\s+"([^"\\]|\\.)*""#) {
+            result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "$1 \"\"")
+        }
+        if let regex = try? NSRegularExpression(pattern: #"(-m|--message|--body|--title)\s+'[^']*'"#) {
+            result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "$1 ''")
+        }
+
+        // Strip echo/printf arguments
+        if let regex = try? NSRegularExpression(pattern: #"\b(echo|printf)\s+"([^"\\]|\\.)*""#) {
+            result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "$1 \"\"")
+        }
+        if let regex = try? NSRegularExpression(pattern: #"\b(echo|printf)\s+'[^']*'"#) {
+            result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "$1 ''")
+        }
+
+        return result
     }
 
     // MARK: - Protected path matching (Write/Edit)
