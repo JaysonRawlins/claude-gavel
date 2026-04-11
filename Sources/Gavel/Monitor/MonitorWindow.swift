@@ -1,9 +1,14 @@
 import SwiftUI
 
-/// The main monitor window showing the live feed of all Claude Code sessions.
+/// The main monitor window showing the live feed and rules editor.
 struct MonitorWindow: View {
     @ObservedObject var viewModel: MonitorViewModel
     @State private var isPinned: Bool = false
+    @State private var selectedTab: MonitorTab = .feed
+
+    enum MonitorTab {
+        case feed, rules
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,8 +32,24 @@ struct MonitorWindow: View {
 
             Divider()
 
-            // Event feed
-            FeedView(entries: viewModel.feedEntries)
+            // Tab picker
+            Picker("", selection: $selectedTab) {
+                Text("Feed").tag(MonitorTab.feed)
+                Text("Rules (\(viewModel.ruleCount))").tag(MonitorTab.rules)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+
+            Divider()
+
+            // Content
+            switch selectedTab {
+            case .feed:
+                FeedView(entries: viewModel.feedEntries)
+            case .rules:
+                RulesView(viewModel: viewModel)
+            }
 
             Divider()
 
@@ -62,11 +83,12 @@ struct MonitorWindow: View {
                 .padding(.vertical, 2)
 
             HStack {
-                Button("Revoke All Rules") {
+                Button("Clear Session Rules") {
                     viewModel.revokeAutoApprove()
                 }
                 .buttonStyle(.bordered)
                 .tint(.purple)
+                .help("Clears session-scoped patterns and disables auto-approve. Persistent rules (Rules tab) are not affected.")
 
                 Spacer()
 
@@ -98,7 +120,6 @@ struct MonitorWindow: View {
 
             Spacer()
 
-            // Sub-agent inheritance toggle
             Toggle(isOn: Binding(
                 get: { session.isSubAgentInheritEnabled },
                 set: { newVal in
@@ -116,7 +137,6 @@ struct MonitorWindow: View {
             .controlSize(.small)
             .help("Auto-approve sub-agent calls (deny rules still block)")
 
-            // Per-session auto-approve toggle
             Toggle(isOn: Binding(
                 get: { session.isAutoApproveEnabled },
                 set: { _ in viewModel.toggleAutoApprove(for: session) }
@@ -138,5 +158,75 @@ struct MonitorWindow: View {
             .controlSize(.small)
             .tint(session.isPaused ? .green : .orange)
         }
+    }
+}
+
+// MARK: - Rules View
+
+struct RulesView: View {
+    @ObservedObject var viewModel: MonitorViewModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                if viewModel.persistentRules.isEmpty {
+                    Text("No persistent rules. Use the approval panel to add Always Deny / Always Allow rules.")
+                        .foregroundColor(.secondary)
+                        .padding()
+                } else {
+                    ForEach(viewModel.persistentRules) { rule in
+                        ruleRow(rule)
+                    }
+                }
+            }
+            .padding(8)
+        }
+        .font(.system(.caption, design: .monospaced))
+        .background(Color(nsColor: .textBackgroundColor))
+    }
+
+    private func ruleRow(_ rule: PersistentRule) -> some View {
+        HStack(spacing: 6) {
+            Text(rule.verdict == .block ? "DENY" : "ALLOW")
+                .font(.caption.bold())
+                .foregroundColor(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(rule.verdict == .block ? Color.red : Color.green)
+                .cornerRadius(4)
+
+            Text(rule.toolName)
+                .foregroundColor(.orange)
+                .frame(width: 50, alignment: .leading)
+
+            HStack(spacing: 2) {
+                if rule.isRegex {
+                    Text("/")
+                        .foregroundColor(.orange)
+                }
+                Text(rule.pattern)
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                if rule.isRegex {
+                    Text("/")
+                        .foregroundColor(.orange)
+                }
+            }
+
+            Spacer()
+
+            Button(action: {
+                viewModel.deleteRule(id: rule.id)
+            }) {
+                Image(systemName: "trash")
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Delete this rule")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        .cornerRadius(4)
     }
 }
