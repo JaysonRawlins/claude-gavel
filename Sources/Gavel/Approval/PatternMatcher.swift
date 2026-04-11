@@ -153,19 +153,20 @@ struct PatternMatcher {
         }
     }
 
-    /// MCP tools that can exfiltrate data — blocked unless user has an explicit allow rule.
+    /// MCP tools that can exfiltrate or modify data — blocked unless user has an explicit allow rule.
     private static let dangerousMcpTools: [(pattern: String, reason: String)] = [
-        // Messaging — can send secrets to channels/users
-        ("mcp__.*[Ss]lack.*send", "MCP: Slack message send (potential exfiltration)"),
-        ("mcp__.*[Ss]lack.*upload", "MCP: Slack file upload (potential exfiltration)"),
+        // Messaging — send, update, delete (exfil + evidence destruction)
+        ("mcp__.*[Ss]lack.*(send|update|delete|upload)", "MCP: Slack write operation"),
         // Browser — can navigate to attacker URLs with data in params
-        ("mcp__.*[Pp]laywright.*navigate$", "MCP: Browser navigation (potential exfiltration)"),
-        ("mcp__.*[Pp]laywright.*evaluate", "MCP: Browser JS eval (potential exfiltration)"),
+        ("mcp__.*[Pp]laywright.*(navigate$|evaluate|type|fill|click|run_code)", "MCP: Browser interaction (potential exfiltration)"),
         // Email
-        ("mcp__.*mail.*send", "MCP: Email send (potential exfiltration)"),
+        ("mcp__.*mail.*(send|create|draft)", "MCP: Email write operation"),
         // Webhooks / HTTP
-        ("mcp__.*webhook.*send", "MCP: Webhook send (potential exfiltration)"),
-        ("mcp__.*http.*post", "MCP: HTTP POST (potential exfiltration)"),
+        ("mcp__.*webhook.*(send|create|trigger)", "MCP: Webhook operation"),
+        ("mcp__.*http.*(post|put|patch|delete)", "MCP: HTTP write operation"),
+        // Jira/Todoist — write operations (create, update, delete, comment)
+        ("mcp__.*[Jj]ira.*(create|update|delete|add|edit|transition|link)", "MCP: Jira write operation"),
+        ("mcp__.*[Tt]odoist.*(create|update|delete|close)", "MCP: Todoist write operation"),
     ]
 
     /// Pre-compiled MCP tool patterns (compiled once at init).
@@ -173,6 +174,10 @@ struct PatternMatcher {
 
     /// Check if a PreToolUse payload matches any dangerous pattern.
     /// Returns a reason string if dangerous, nil if safe.
+    ///
+    /// Note: MCP tools are checked separately via `matchMcpDangerous` because
+    /// they should be overridable by persistent allow rules (unlike Bash/Write
+    /// patterns which are absolute blocks).
     func matchDangerous(payload: PreToolUsePayload) -> String? {
         switch payload.toolName {
         case "Bash":
@@ -182,12 +187,15 @@ struct PatternMatcher {
         case "Read":
             return matchSensitiveRead(payload.filePath)
         default:
-            // Check MCP tool names
-            if payload.toolName.hasPrefix("mcp__") {
-                return matchMcpTool(payload.toolName)
-            }
             return nil
         }
+    }
+
+    /// Check MCP tools separately — these are overridable by persistent allow rules.
+    /// Called from ApprovalEngine AFTER allow rules are checked.
+    func matchMcpDangerous(payload: PreToolUsePayload) -> String? {
+        guard payload.toolName.hasPrefix("mcp__") else { return nil }
+        return matchMcpTool(payload.toolName)
     }
 
     // MARK: - Bash command matching

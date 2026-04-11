@@ -40,12 +40,18 @@ final class ApprovalEngine {
             return decision
         }
 
-        // 5. Timed auto-approve
+        // 5. MCP tool blocking (after allow rules, so users can override)
+        // Returns .block but with askUser flag — router shows dialog instead of hard block
+        if let reason = patternMatcher.matchMcpDangerous(payload: payload) {
+            return Decision(verdict: .block, reason: reason, askUser: true)
+        }
+
+        // 6. Timed auto-approve
         if session.isAutoApproveActive {
             return Decision(verdict: .allow, reason: "AUTO-APPROVED (timed)")
         }
 
-        // 6. Default: pass through (HookRouter decides: auto-approve, session rules, or dialog)
+        // 7. Default: pass through (HookRouter decides: auto-approve, session rules, or dialog)
         return Decision(verdict: .allow, reason: nil)
     }
 }

@@ -107,11 +107,31 @@ final class HookRouter {
         // Stage 1: Check engine (dangerous patterns, persistent deny/allow, pause)
         let engineDecision = approvalEngine.evaluate(payload: payload, session: session)
         if engineDecision.verdict == .block {
-            session.blockCount += 1
-            let badge: DecisionBadge = session.isPaused ? .paused : .block
-            emitFeed(.decision(badge: badge, reason: engineDecision.reason, pid: session.pid, at: timestamp))
-            sendResponse(engineDecision, respond: respond)
-            return
+            if engineDecision.askUser {
+                // MCP-style block: jump straight to interactive dialog
+                emitFeed(.decision(badge: .block, reason: "Needs approval: \(engineDecision.reason ?? "")", pid: session.pid, at: timestamp))
+
+                let decision = approvalCoordinator.requestApproval(
+                    payload: payload, session: session, timestamp: timestamp
+                )
+                switch decision.verdict {
+                case .allow:
+                    session.allowCount += 1
+                    emitFeed(.decision(badge: .allow, reason: decision.reason, pid: session.pid, at: timestamp))
+                case .block:
+                    session.blockCount += 1
+                    emitFeed(.decision(badge: .block, reason: decision.reason, pid: session.pid, at: timestamp))
+                }
+                sendResponse(decision, respond: respond)
+                return
+            } else {
+                // Hard block: dangerous patterns, persistent deny, pause
+                session.blockCount += 1
+                let badge: DecisionBadge = session.isPaused ? .paused : .block
+                emitFeed(.decision(badge: badge, reason: engineDecision.reason, pid: session.pid, at: timestamp))
+                sendResponse(engineDecision, respond: respond)
+                return
+            }
         }
         // Persistent allow rules (have a reason) skip the dialog
         if engineDecision.reason != nil {

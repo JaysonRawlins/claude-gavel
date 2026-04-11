@@ -320,34 +320,48 @@ final class PatternMatcherTests: XCTestCase {
 
     // MARK: - MCP tool blocking
 
+    // MCP tools use matchMcpDangerous (overridable by allow rules)
     func testSlackSendBlocked() {
         let payload = PreToolUsePayload(toolName: "mcp__SlackLocal__send_message", toolInput: [:])
-        XCTAssertNotNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNotNil(matcher.matchMcpDangerous(payload: payload))
     }
 
     func testSlackUploadBlocked() {
         let payload = PreToolUsePayload(toolName: "mcp__SlackLocal__upload_image", toolInput: [:])
-        XCTAssertNotNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNotNil(matcher.matchMcpDangerous(payload: payload))
     }
 
     func testPlaywrightNavigateBlocked() {
         let payload = PreToolUsePayload(toolName: "mcp__Playwright__browser_navigate", toolInput: [:])
-        XCTAssertNotNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNotNil(matcher.matchMcpDangerous(payload: payload))
     }
 
     func testPlaywrightEvalBlocked() {
         let payload = PreToolUsePayload(toolName: "mcp__Playwright__browser_evaluate", toolInput: [:])
-        XCTAssertNotNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNotNil(matcher.matchMcpDangerous(payload: payload))
     }
 
     func testSlackReadAllowed() {
         let payload = PreToolUsePayload(toolName: "mcp__SlackLocal__read_history", toolInput: [:])
-        XCTAssertNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNil(matcher.matchMcpDangerous(payload: payload))
     }
 
     func testEngramAllowed() {
         let payload = PreToolUsePayload(toolName: "mcp__engram__search", toolInput: [:])
-        XCTAssertNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNil(matcher.matchMcpDangerous(payload: payload))
+    }
+
+    func testMcpAllowRuleOverridesBlock() {
+        // Simulate: user adds Always Allow for Slack send
+        let store = RuleStore(configPath: "/dev/null")
+        store.addRule(PersistentRule(toolName: "mcp__SlackLocal__send_message", pattern: "*", verdict: .allow))
+        let engine = ApprovalEngine(ruleStore: store)
+        let session = Session(pid: 77777)
+        let payload = PreToolUsePayload(toolName: "mcp__SlackLocal__send_message", toolInput: [:])
+        let decision = engine.evaluate(payload: payload, session: session)
+        // Allow rule should win over MCP block
+        XCTAssertEqual(decision.verdict, .allow)
+        XCTAssertTrue(decision.reason?.contains("Always allow") ?? false)
     }
 
     // MARK: - Session rule poisoning prevention

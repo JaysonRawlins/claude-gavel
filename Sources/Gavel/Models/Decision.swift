@@ -17,12 +17,16 @@ struct Decision: Codable {
     let reason: String?
     let additionalContext: String?
     let updatedInput: [String: AnyCodable]?
+    /// When true, the router should show the interactive dialog instead of hard blocking.
+    /// Used for MCP tool blocks that users should be able to approve case-by-case.
+    let askUser: Bool
 
-    init(verdict: DecisionVerdict, reason: String?, additionalContext: String? = nil, updatedInput: [String: AnyCodable]? = nil) {
+    init(verdict: DecisionVerdict, reason: String?, additionalContext: String? = nil, updatedInput: [String: AnyCodable]? = nil, askUser: Bool = false) {
         self.verdict = verdict
         self.reason = reason
         self.additionalContext = additionalContext
         self.updatedInput = updatedInput
+        self.askUser = askUser
     }
 
     /// Internal protocol JSON sent to the gavel-hook shim via socket.
