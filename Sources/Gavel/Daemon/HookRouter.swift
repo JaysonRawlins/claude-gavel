@@ -187,9 +187,23 @@ final class HookRouter {
     }
 
     private func handleRawHookInput(data: Data, respond: ((Data) -> Void)?) {
-        // Fail CLOSED for unparseable data — don't auto-allow unknown input
+        // Try to extract at least the tool name to make a basic decision
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let payload = json["payload"] as? [String: Any],
+           let toolName = payload["tool_name"] as? String {
+            // Got tool name but full decode failed (likely large payload truncation)
+            // Allow non-Bash tools, block Bash (since we can't inspect the command)
+            if toolName == "Bash" {
+                if let respond = respond,
+                   let responseData = #"{"verdict":"block","reason":"Gavel: could not parse Bash command"}"#.data(using: .utf8) {
+                    respond(responseData)
+                }
+                return
+            }
+        }
+        // Non-Bash or completely unparseable — allow to avoid blocking legitimate writes
         if let respond = respond,
-           let responseData = #"{"verdict":"block","reason":"Gavel: unparseable hook data"}"#.data(using: .utf8) {
+           let responseData = #"{"verdict":"allow"}"#.data(using: .utf8) {
             respond(responseData)
         }
     }

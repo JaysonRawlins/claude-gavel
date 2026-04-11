@@ -69,6 +69,18 @@ final class MonitorViewModel: ObservableObject {
         }
     }
 
+    var ruleCount: Int {
+        approvalCoordinator.ruleStore?.rules.count ?? 0
+    }
+
+    var persistentRules: [PersistentRule] {
+        approvalCoordinator.ruleStore?.rules ?? []
+    }
+
+    func deleteRule(id: UUID) {
+        approvalCoordinator.ruleStore?.removeRule(id: id)
+    }
+
     func killSession() {
         guard let session = sessionManager.sessions.values.first, session.isAlive else { return }
         kill(Int32(session.pid), SIGINT)

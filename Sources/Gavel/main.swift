@@ -88,14 +88,14 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Show Monitor", action: #selector(showMonitor), keyEquivalent: "m"))
+        menu.addItem(NSMenuItem(title: "Show Monitor", action: #selector(showMonitor), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Toggle Auto-Approve", action: #selector(toggleAutoApprove), keyEquivalent: "a"))
-        menu.addItem(NSMenuItem(title: "Pause All Sessions", action: #selector(togglePauseAll), keyEquivalent: "p"))
-        menu.addItem(NSMenuItem(title: "Revoke Session Rules", action: #selector(revokeAll), keyEquivalent: "r"))
+        menu.addItem(NSMenuItem(title: "Toggle Auto-Approve", action: #selector(toggleAutoApprove), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Pause All Sessions", action: #selector(togglePauseAll), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Clear Session Rules", action: #selector(revokeAll), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Reload Binary", action: #selector(reloadBinary), keyEquivalent: "R"))
-        menu.addItem(NSMenuItem(title: "Quit Gavel", action: #selector(quit), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Reload Binary", action: #selector(reloadBinary), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Quit Gavel", action: #selector(quit), keyEquivalent: ""))
         statusItem.menu = menu
     }
 
