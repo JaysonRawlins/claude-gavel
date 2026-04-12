@@ -35,23 +35,27 @@ final class ApprovalEngine {
             return Decision(verdict: .block, reason: "Session paused via Gavel")
         }
 
-        // 4. Persistent ALLOW rules
+        // 4. Persistent PROMPT rules — force dialog even under auto-approve
+        if let decision = ruleStore.evaluatePrompt(payload: payload) {
+            return decision
+        }
+
+        // 5. Persistent ALLOW rules
         if let decision = ruleStore.evaluateAllow(payload: payload) {
             return decision
         }
 
-        // 5. MCP tool blocking (after allow rules, so users can override)
-        // Returns .block but with askUser flag — router shows dialog instead of hard block
+        // 6. MCP tool blocking (after allow rules, so users can override)
         if let reason = patternMatcher.matchMcpDangerous(payload: payload) {
             return Decision(verdict: .block, reason: reason, askUser: true)
         }
 
-        // 6. Timed auto-approve
+        // 7. Timed auto-approve
         if session.isAutoApproveActive {
             return Decision(verdict: .allow, reason: "AUTO-APPROVED (timed)")
         }
 
-        // 7. Default: pass through (HookRouter decides: auto-approve, session rules, or dialog)
+        // 8. Default: pass through (HookRouter decides: auto-approve, session rules, or dialog)
         return Decision(verdict: .allow, reason: nil)
     }
 }

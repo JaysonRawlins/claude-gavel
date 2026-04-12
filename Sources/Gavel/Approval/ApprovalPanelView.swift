@@ -289,6 +289,15 @@ struct ApprovalPanelView: View {
                 .tint(.blue)
                 .keyboardShortcut("a", modifiers: [.command, .shift])
 
+                Button(action: {
+                    coordinator.handleAction(.alwaysPromptPattern(pattern: sessionPattern, isRegex: isRegexMode))
+                }) {
+                    Label("Always Prompt", systemImage: "bell.badge")
+                }
+                .buttonStyle(.bordered)
+                .tint(.yellow)
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+
                 Spacer()
 
                 Button(action: {

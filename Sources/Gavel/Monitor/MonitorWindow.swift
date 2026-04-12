@@ -189,12 +189,12 @@ struct RulesView: View {
 
     private func ruleRow(_ rule: PersistentRule) -> some View {
         HStack(spacing: 6) {
-            Text(rule.verdict == .block ? "DENY" : "ALLOW")
+            Text(rule.verdict == .block ? "DENY" : rule.verdict == .prompt ? "PROMPT" : "ALLOW")
                 .font(.caption.bold())
                 .foregroundColor(.white)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(rule.verdict == .block ? Color.red : Color.green)
+                .background(rule.verdict == .block ? Color.red : rule.verdict == .prompt ? Color.yellow : Color.green)
                 .cornerRadius(4)
 
             Text(rule.toolName)

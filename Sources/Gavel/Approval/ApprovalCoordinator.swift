@@ -14,6 +14,7 @@ final class ApprovalCoordinator: ObservableObject {
         case allowPatternForSession(pattern: String, context: String?, updatedCommand: String?)
         case alwaysDenyPattern(pattern: String, isRegex: Bool)
         case alwaysAllowPattern(pattern: String, isRegex: Bool)
+        case alwaysPromptPattern(pattern: String, isRegex: Bool)
     }
 
     /// RuleStore for persistent always-deny/always-allow rules.
@@ -125,6 +126,14 @@ final class ApprovalCoordinator: ObservableObject {
             let rule = PersistentRule(toolName: current.payload.toolName, pattern: sanitized, isRegex: isRegex, verdict: .allow)
             ruleStore?.addRule(rule)
             current.respond(Decision(verdict: .allow, reason: "Always allow: \(current.payload.toolName): \(pattern)"))
+
+        case .alwaysPromptPattern(let pattern, let isRegex):
+            ctx = nil; updated = nil
+            let sanitized = Self.sanitizeDashes(pattern)
+            let rule = PersistentRule(toolName: current.payload.toolName, pattern: sanitized, isRegex: isRegex, verdict: .prompt)
+            ruleStore?.addRule(rule)
+            // For this invocation, still need user to decide — show as allow (they already saw the dialog)
+            current.respond(Decision(verdict: .allow, reason: "Always prompt rule saved: \(current.payload.toolName): \(pattern)"))
         }
 
         advanceQueue()

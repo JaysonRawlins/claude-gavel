@@ -39,6 +39,15 @@ final class RuleStore: ObservableObject {
         return nil
     }
 
+    func evaluatePrompt(payload: PreToolUsePayload) -> Decision? {
+        for i in rules.indices where rules[i].verdict == .prompt {
+            if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
+                return Decision(verdict: .block, reason: "Always prompt: \(rules[i].name)", askUser: true)
+            }
+        }
+        return nil
+    }
+
     // MARK: - Rule Management
 
     func addRule(_ rule: PersistentRule) {

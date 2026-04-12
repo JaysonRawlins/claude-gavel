@@ -4,6 +4,7 @@ import Foundation
 enum DecisionVerdict: String, Codable {
     case allow
     case block
+    case prompt  // Always show interactive dialog, even under auto-approve
 }
 
 /// A decision returned to the hook shim via the Unix socket.
@@ -60,6 +61,9 @@ struct Decision: Codable {
                 return str
             }
             return #"{"verdict":"block","reason":"Blocked by Gavel"}"#
+        case .prompt:
+            // Prompt rules are handled in the router (show dialog) — should never reach hookResponse
+            return #"{"verdict":"block","reason":"Requires approval"}"#
         }
     }
 }
