@@ -132,7 +132,7 @@ final class HookRouter {
                     forceDialog: true
                 )
                 switch decision.verdict {
-                case .allow:
+                case .allow, .prompt:
                     session.allowCount += 1
                     emitFeed(.decision(badge: .allow, reason: decision.reason, pid: session.pid, at: timestamp))
                 case .block:
@@ -194,7 +194,7 @@ final class HookRouter {
         )
 
         switch decision.verdict {
-        case .allow:
+        case .allow, .prompt:
             session.allowCount += 1
             emitFeed(.decision(badge: .allow, reason: decision.reason, pid: session.pid, at: timestamp))
         case .block:
