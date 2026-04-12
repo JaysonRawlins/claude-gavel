@@ -3,7 +3,6 @@ import SwiftUI
 /// The main monitor window showing the live feed and rules editor.
 struct MonitorWindow: View {
     @ObservedObject var viewModel: MonitorViewModel
-    @State private var isPinned: Bool = false
     @State private var selectedTab: MonitorTab = .feed
 
     enum MonitorTab {
@@ -12,23 +11,11 @@ struct MonitorWindow: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Status bar with pin toggle
-            HStack {
-                StatusView(viewModel: viewModel)
-                Spacer()
-                Button(action: { [vm = viewModel] in
-                    isPinned.toggle()
-                    vm.setPinned(isPinned)
-                }) {
-                    Image(systemName: isPinned ? "pin.fill" : "pin")
-                        .foregroundColor(isPinned ? .orange : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help(isPinned ? "Unpin window" : "Pin window on top")
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color(nsColor: .controlBackgroundColor))
+            // Status bar
+            StatusView(viewModel: viewModel)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color(nsColor: .controlBackgroundColor))
 
             Divider()
 

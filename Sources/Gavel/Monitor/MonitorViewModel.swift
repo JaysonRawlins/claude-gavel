@@ -61,13 +61,6 @@ final class MonitorViewModel: ObservableObject {
         }
     }
 
-    func setPinned(_ pinned: Bool) {
-        // Find the monitor window and set its level
-        for window in NSApp.windows where window.title.contains("Monitor") {
-            window.level = pinned ? .floating : .normal
-        }
-    }
-
     var ruleCount: Int {
         approvalCoordinator.ruleStore?.rules.count ?? 0
     }

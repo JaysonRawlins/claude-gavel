@@ -411,7 +411,7 @@ struct PatternMatcher {
         // Check for network/exfil code in the content
         let networkPatterns = [
             "\\b(socket|connect|send|recv|TcpStream|UdpSocket)\\b",
-            "\\b(http|https|ftp)://",
+            "\\b(https?|ftp)://\\S+",  // URL with scheme — anchored to require host after ://
             "\\b(urlopen|requests\\.|fetch|HttpClient|reqwest)\\b",
             "\\b(POST|PUT)\\b.*\\b(http|url|uri|endpoint)\\b",
             "\\b(curl|wget|nc|ncat)\\b",
