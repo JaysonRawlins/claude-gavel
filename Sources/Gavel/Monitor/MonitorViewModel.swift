@@ -44,9 +44,8 @@ final class MonitorViewModel: ObservableObject {
         } else {
             approvalCoordinator.enableAutoApprove(for: session)
         }
-        // Persist as default for new sessions / daemon restarts
-        let allAuto = sessionManager.sessions.values.allSatisfy { $0.isAutoApproveEnabled }
-        sessionManager.defaultAutoApprove = allAuto
+        // Never persist auto-approve as default — new sessions must opt in explicitly.
+        // This prevents a minimized/hidden monitor from silently auto-approving new sessions.
         sessionManager.saveDefaults()
     }
 

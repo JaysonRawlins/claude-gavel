@@ -36,6 +36,17 @@ final class HookRouter {
         case .preToolUse(let payload):
             if let sid = payload.sessionId { session.sessionId = sid }
             if let cwd = payload.cwd { session.cwd = cwd }
+
+            // AskUserQuestion and ExitPlanMode are user interaction tools —
+            // don't intercept, let Claude's built-in UI handle them
+            if ["AskUserQuestion", "ExitPlanMode"].contains(payload.toolName) {
+                if let respond = respond,
+                   let data = "{}".data(using: .utf8) {
+                    respond(data)
+                }
+                return
+            }
+
             handlePreToolUse(payload: payload, session: session, timestamp: ts, respond: respond)
 
         case .postToolUse(let payload):

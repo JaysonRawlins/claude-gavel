@@ -124,9 +124,20 @@ if needsResponse {
     }
     close(fd)
 
-    // Parse daemon response: {"verdict":"allow",...} or {"verdict":"block","reason":"..."}
-    if let json = try? JSONSerialization.jsonObject(with: response) as? [String: Any],
-       let verdict = json["verdict"] as? String {
+    // Parse daemon response: {"verdict":"allow",...} or {"verdict":"block","reason":"..."} or {} (passthrough)
+    if let json = try? JSONSerialization.jsonObject(with: response) as? [String: Any] {
+
+        // Empty {} = passthrough (daemon says "let Claude handle it")
+        if json.isEmpty {
+            print("{}")
+            exit(0)
+        }
+
+        guard let verdict = json["verdict"] as? String else {
+            // Has fields but no verdict — passthrough
+            print("{}")
+            exit(0)
+        }
         if verdict == "block" {
             let reason = (json["reason"] as? String) ?? "Blocked by Gavel"
             printBlock(reason)
