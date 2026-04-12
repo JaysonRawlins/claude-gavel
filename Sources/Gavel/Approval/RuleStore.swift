@@ -185,36 +185,11 @@ struct PersistentRule: Codable, Identifiable {
 
     /// Compile a pattern to regex. Glob patterns are converted; regex patterns used as-is.
     static func compilePattern(_ pattern: String, isRegex: Bool) -> NSRegularExpression? {
-        if isRegex {
-            return try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
-        }
-        // Convert glob to regex
-        var regex = "^"
-        for ch in pattern {
-            switch ch {
-            case "*": regex += ".*"
-            case ".","(",")","[","]","{","}","\\","^","$","|","+","?":
-                regex += "\\\(ch)"
-            default: regex += String(ch)
-            }
-        }
-        regex += "$"
-        return try? NSRegularExpression(pattern: regex)
+        PatternCompiler.compilePattern(pattern, isRegex: isRegex)
     }
 
     /// Test a pattern against a sample string. Returns match result and any regex error.
     static func testPattern(_ pattern: String, isRegex: Bool, against sample: String) -> (matches: Bool, error: String?) {
-        if isRegex {
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-                return (false, "Invalid regex")
-            }
-            let match = regex.firstMatch(in: sample, range: NSRange(sample.startIndex..., in: sample)) != nil
-            return (match, nil)
-        }
-        guard let regex = compilePattern(pattern, isRegex: false) else {
-            return (false, "Invalid pattern")
-        }
-        let match = regex.firstMatch(in: sample, range: NSRange(sample.startIndex..., in: sample)) != nil
-        return (match, nil)
+        PatternCompiler.testPattern(pattern, isRegex: isRegex, against: sample)
     }
 }

@@ -8,7 +8,6 @@ final class SessionManager: ObservableObject {
     @Published private(set) var sessions: [Int: Session] = [:]
 
     private let lock = NSLock()
-    private let cleanupInterval: TimeInterval = 5.0
     private var cleanupTimer: DispatchSourceTimer?
 
     /// Default settings applied to new sessions (survives daemon restarts).
@@ -81,7 +80,8 @@ final class SessionManager: ObservableObject {
 
     private func startCleanupTimer() {
         let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
-        timer.schedule(deadline: .now() + cleanupInterval, repeating: cleanupInterval)
+        let interval = GavelConstants.sessionCleanupInterval
+        timer.schedule(deadline: .now() + interval, repeating: interval)
         timer.setEventHandler { [weak self] in
             self?.cleanupDeadSessions()
         }
@@ -98,8 +98,7 @@ final class SessionManager: ObservableObject {
                 lock.lock()
                 sessions[pid]?.isAlive = false
                 lock.unlock()
-                // Give a grace period before removal (3 seconds)
-                DispatchQueue.global().asyncAfter(deadline: .now() + 3) { [weak self] in
+                DispatchQueue.global().asyncAfter(deadline: .now() + GavelConstants.sessionRemovalGraceSeconds) { [weak self] in
                     self?.removeSession(pid: pid)
                 }
             }

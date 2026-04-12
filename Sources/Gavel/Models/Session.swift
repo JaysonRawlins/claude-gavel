@@ -111,19 +111,8 @@ struct SessionRule: Identifiable {
 
     /// Simple glob matching: `*` matches any sequence of characters.
     private func globMatch(pattern: String, string: String) -> Bool {
-        // Convert glob to regex: escape everything except *, then * → .*
-        var regex = "^"
-        for ch in pattern {
-            switch ch {
-            case "*": regex += ".*"
-            case ".","(",")","[","]","{","}","\\","^","$","|","+","?":
-                regex += "\\\(ch)"
-            default: regex += String(ch)
-            }
-        }
-        regex += "$"
-        return (try? NSRegularExpression(pattern: regex))
-            .flatMap { $0.firstMatch(in: string, range: NSRange(string.startIndex..., in: string)) } != nil
+        guard let regex = PatternCompiler.compileGlob(pattern) else { return false }
+        return PatternCompiler.matches(regex, in: string)
     }
 
     /// Split a bash command on separators (&&, ||, ;, |) into segments.

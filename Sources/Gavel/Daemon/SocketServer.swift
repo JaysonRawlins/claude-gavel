@@ -53,7 +53,7 @@ final class SocketServer {
         // Restrict socket permissions
         chmod(socketPath, 0o600)
 
-        guard listen(fileDescriptor, 32) == 0 else {
+        guard listen(fileDescriptor, GavelConstants.socketListenBacklog) == 0 else {
             close(fileDescriptor)
             throw GavelError.listenFailed(errno: errno)
         }
@@ -103,13 +103,13 @@ final class SocketServer {
         var noSigPipe: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
 
-        // Set read timeout (2 seconds)
-        var timeout = timeval(tv_sec: 2, tv_usec: 0)
+        // Set read timeout
+        var timeout = timeval(tv_sec: GavelConstants.socketReadTimeoutSeconds, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
         // Read all data
         var data = Data()
-        let bufSize = 65536
+        let bufSize = GavelConstants.socketBufferSize
         let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: bufSize)
         defer { buf.deallocate() }
 
