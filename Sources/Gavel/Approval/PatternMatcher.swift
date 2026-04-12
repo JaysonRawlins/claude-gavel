@@ -54,9 +54,9 @@ struct PatternMatcher {
             ("\\bat\\b\\s+", "at job scheduling"),
 
             // ── Destructive operations (expanded) ──
-            ("\\brm\\s+(-\\w*[rR]\\w*\\s+)*/(?!tmp\\b)", "Recursive delete from root"),
-            ("\\brm\\s+(-\\w*[rR]\\w*\\s+)*\\./", "Recursive delete from current directory"),
-            ("\\brm\\s+(-\\w*[rR]\\w*\\s+)*\\.\\./", "Recursive delete from parent directory"),
+            ("\\brm\\s+-\\w*[rR]\\w*\\s+/(?!tmp\\b)", "Recursive delete from root"),
+            ("\\brm\\s+-\\w*[rR]\\w*\\s+\\./", "Recursive delete from current directory"),
+            ("\\brm\\s+-\\w*[rR]\\w*\\s+\\.\\./", "Recursive delete from parent directory"),
             ("\\brm\\s+--recursive", "Recursive delete (long flag)"),
             ("\\bmkfs\\b", "Filesystem format command"),
             ("\\bdd\\b\\s+.*of=/dev/", "Direct disk write"),
@@ -329,35 +329,80 @@ struct PatternMatcher {
         // Also check for generic file-read + network combo (runtime exfil wrappers)
         // e.g., C code with fopen/fread + system("curl") or socket
         if !hasCredRef {
-            // Check independently — fopen and fread can be on different lines
+            // Check for generic file-read patterns (any language)
             let fileReadKeywords = [
-                "\\bfopen\\b", "\\bfread\\b",    // C file I/O
-                "\\bopen\\b.*O_RDONLY",          // Low-level I/O
-                "\\bfs::read\\b",                // Rust
-                "\\bFile\\.read\\b",             // Ruby
-                "\\bos\\.popen\\b",              // Python
+                "\\bfopen\\b", "\\bfread\\b",              // C
+                "\\bopen\\b.*O_RDONLY",                    // C low-level
+                "\\bfs::read\\b", "\\bfs::read_to_string", // Rust
+                "\\bFile\\.read\\b",                       // Ruby
+                "\\bioutil\\.ReadFile\\b",                 // Go (old)
+                "\\bos\\.ReadFile\\b",                     // Go (new)
+                "\\bos\\.Open\\b",                         // Go
+                "\\bcontentsOfFile\\b",                    // Swift
+                "\\bcontentsOf:\\b",                       // Swift
+                "\\bFileManager\\b.*\\bcontents\\b",       // Swift
+                "\\bopen\\s*\\([^)]*['\"]",                // Python open('file')
+                "\\bPath\\s*\\(.*\\.read_text\\b",         // Python pathlib
+                "\\bfs\\.readFileSync\\b",                 // Node.js
+                "\\bfs\\.readFile\\b",                     // Node.js
+                "\\bfs\\.promises\\.readFile\\b",          // Node.js async
+                "\\bfile_get_contents\\b",                 // PHP
+                "\\bio\\.open\\b",                         // Lua
+                "\\bFiles\\.readString\\b",                // Java
+                "\\bFiles\\.readAllBytes\\b",              // Java
+                "\\bBufferedReader\\b",                    // Java
+                "\\breadFileAlloc\\b",                     // Zig
+                "\\bstd\\.fs\\b",                          // Zig
             ]
             var hasFileRead = false
-            var fileReadMatches = 0
             for pattern in fileReadKeywords {
                 if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
                    regex.firstMatch(in: content, range: range) != nil {
-                    fileReadMatches += 1
-                    if fileReadMatches >= 1 { hasFileRead = true; break }
+                    hasFileRead = true
+                    break
                 }
             }
-            // If has generic file read + system()/popen() + network command name anywhere → suspicious
+            // If has generic file read + ANY network capability → suspicious exfil wrapper
             if hasFileRead {
-                let hasSystemExec = ["\\bsystem\\s*\\(", "\\bpopen\\s*\\(", "\\bexec[lv]?p?\\s*\\("].contains {
-                    (try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]))
-                        .flatMap { $0.firstMatch(in: content, range: range) } != nil
-                }
-                let hasNetworkRef = ["\\bcurl\\b", "\\bwget\\b", "\\bnc\\b", "\\bncat\\b", "\\bhttp"].contains {
-                    (try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]))
-                        .flatMap { $0.firstMatch(in: content, range: range) } != nil
-                }
-                if hasSystemExec && hasNetworkRef {
-                    return "Blocked: file reads arbitrary files and executes network commands (potential exfil wrapper)"
+                let networkKeywords = [
+                    // C: system/popen with network tools
+                    "\\bsystem\\s*\\(", "\\bpopen\\s*\\(",
+                    // Direct network tool references
+                    "\\bcurl\\b", "\\bwget\\b", "\\bnc\\b", "\\bncat\\b",
+                    // Go network
+                    "\\bhttp\\.Post\\b", "\\bhttp\\.Get\\b", "\\bhttp\\.NewRequest\\b",
+                    "\\bnet\\.Dial\\b", "\"net/http\"",
+                    // Swift network
+                    "\\bURLSession\\b", "\\bURLRequest\\b",
+                    // Rust network
+                    "\\breqwest\\b", "\\bhyper\\b", "\\bTcpStream\\b",
+                    // Ruby network
+                    "\\bNet::HTTP\\b", "\\bTCPSocket\\b",
+                    // Perl network
+                    "\\bIO::Socket\\b", "\\bLWP::", "\\bHTTP::Request\\b",
+                    // Python network
+                    "\\burllib\\.request\\b", "\\brequests\\.", "\\burlopen\\b",
+                    // Node.js network
+                    "\\bhttps?\\.request\\b", "\\bfetch\\s*\\(",
+                    "require\\s*\\(\\s*['\"]https?['\"]\\s*\\)",
+                    // PHP network
+                    "\\bcurl_init\\b", "\\bcurl_exec\\b",
+                    "\\bfile_get_contents\\s*\\(\\s*['\"]http",
+                    // Lua network
+                    "\\bsocket\\.http\\b",
+                    // Java network
+                    "\\bHttpURLConnection\\b", "\\bHttpClient\\b",
+                    "\\bjava\\.net\\.",
+                    // Zig network
+                    "\\bstd\\.http\\.Client\\b",
+                    // Generic
+                    "\\bsocket\\b.*\\bconnect\\b",
+                ]
+                for pattern in networkKeywords {
+                    if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+                       regex.firstMatch(in: content, range: range) != nil {
+                        return "Blocked: file reads arbitrary files and has network capability (potential exfil wrapper)"
+                    }
                 }
             }
             return nil

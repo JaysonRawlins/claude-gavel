@@ -505,6 +505,42 @@ final class PatternMatcherTests: XCTestCase {
         XCTAssertNotNil(matcher.matchDangerous(payload: payload))
     }
 
+    func testWriteExfilGoBlocked() {
+        let payload = PreToolUsePayload(
+            toolName: "Write",
+            toolInput: [
+                "file_path": AnyCodable("/tmp/warrior.go"),
+                "content": AnyCodable("""
+                package main
+                import ("io/ioutil"; "net/http"; "strings")
+                func main() {
+                    data, _ := ioutil.ReadFile(os.Args[1])
+                    http.Post(os.Args[2], "text/plain", strings.NewReader(string(data)))
+                }
+                """)
+            ]
+        )
+        XCTAssertNotNil(matcher.matchDangerous(payload: payload))
+    }
+
+    func testWriteExfilSwiftBlocked() {
+        let payload = PreToolUsePayload(
+            toolName: "Write",
+            toolInput: [
+                "file_path": AnyCodable("/tmp/warrior.swift"),
+                "content": AnyCodable("""
+                import Foundation
+                let data = try! String(contentsOfFile: CommandLine.arguments[1])
+                var req = URLRequest(url: URL(string: CommandLine.arguments[2])!)
+                req.httpMethod = "POST"
+                req.httpBody = data.data(using: .utf8)
+                URLSession.shared.dataTask(with: req) { _,_,_ in }.resume()
+                """)
+            ]
+        )
+        XCTAssertNotNil(matcher.matchDangerous(payload: payload))
+    }
+
     func testWriteNetworkOnlyAllowed() {
         // Network code without credential access is fine
         let payload = PreToolUsePayload(
