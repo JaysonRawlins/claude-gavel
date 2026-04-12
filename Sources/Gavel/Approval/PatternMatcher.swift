@@ -341,7 +341,7 @@ struct PatternMatcher {
                 "\\bcontentsOfFile\\b",                    // Swift
                 "\\bcontentsOf:\\b",                       // Swift
                 "\\bFileManager\\b.*\\bcontents\\b",       // Swift
-                "\\bopen\\s*\\([^)]*['\"]",                // Python open('file')
+                "\\bopen\\s*\\(",                           // Python open()
                 "\\bPath\\s*\\(.*\\.read_text\\b",         // Python pathlib
                 "\\bfs\\.readFileSync\\b",                 // Node.js
                 "\\bfs\\.readFile\\b",                     // Node.js
