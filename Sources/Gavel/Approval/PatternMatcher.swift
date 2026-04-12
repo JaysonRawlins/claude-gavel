@@ -77,6 +77,18 @@ struct PatternMatcher {
             ("\\beval\\b.*\\$\\(.*\\b(base64|b64decode)\\b", "Obfuscated command via eval+base64"),
             ("\\bbase64\\s+-[dD]\\b.*\\|.*\\b(bash|sh|zsh)\\b", "Base64 decoded pipe to shell"),
             ("\\bbash\\s*<<", "Heredoc execution (potential obfuscation)"),
+
+            // ── Compiled/scripted exfiltration via temp files ──
+            // Compiling in temp directories
+            ("\\b(gcc|g\\+\\+|clang|clang\\+\\+|rustc|javac|swiftc)\\b.*/tmp/", "Compiling code in temp directory"),
+            ("\\b(go\\s+build|go\\s+run)\\b.*/tmp/", "Building/running Go code from temp directory"),
+            ("\\bcargo\\s+(build|run)\\b.*--manifest-path.*/tmp/", "Building Rust code from temp directory"),
+            // Executing scripts from temp directories
+            ("\\b(perl|ruby|node|swift|php|lua)\\b\\s+/tmp/", "Running script from temp directory"),
+            // Running any executable from /tmp
+            ("/tmp/[^\\s]*\\.(out|exe|bin)\\b", "Running compiled binary from temp directory"),
+            // chmod +x on temp files (making them executable)
+            ("\\bchmod\\b.*\\+x.*/tmp/", "Making temp file executable"),
         ]
 
         let rawPaths: [(pattern: String, reason: String)] = [
@@ -183,7 +195,14 @@ struct PatternMatcher {
         case "Bash":
             return matchBashCommand(payload.command)
         case "Write", "Edit", "MultiEdit":
-            return matchProtectedPath(payload.filePath)
+            if let pathBlock = matchProtectedPath(payload.filePath) {
+                return pathBlock
+            }
+            // Scan file content for exfil code (credential access + network in same file)
+            if payload.toolName == "Write" {
+                return matchDangerousContent(payload.toolInput["content"]?.stringValue)
+            }
+            return nil
         case "Read":
             return matchSensitiveRead(payload.filePath)
         default:
@@ -273,6 +292,54 @@ struct PatternMatcher {
                 return reason
             }
         }
+        return nil
+    }
+
+    // MARK: - Dangerous content scanning (Write tool)
+
+    /// Scans file content for code that both accesses credentials AND sends data over the network.
+    /// Blocks polyglot exfil scripts (Rust, C, Go, Perl, etc.) written to temp files.
+    private func matchDangerousContent(_ content: String?) -> String? {
+        guard let content = content, content.count > 50 else { return nil }
+
+        let range = NSRange(content.startIndex..., in: content)
+
+        // Check for credential/sensitive path references in the content
+        let credPatterns = [
+            "\\.ssh/", "\\.aws/", "\\.gnupg/", "\\.env\\b",
+            "\\.kube/config", "\\.npmrc", "\\.netrc", "\\.docker/config",
+            "id_rsa", "id_ed25519", "authorized_keys",
+            "credentials", "secret_key", "access_key",
+        ]
+        var hasCredRef = false
+        for pattern in credPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+               regex.firstMatch(in: content, range: range) != nil {
+                hasCredRef = true
+                break
+            }
+        }
+        guard hasCredRef else { return nil }
+
+        // Check for network/exfil code in the content
+        let networkPatterns = [
+            "\\b(socket|connect|send|recv|TcpStream|UdpSocket)\\b",
+            "\\b(http|https|ftp)://",
+            "\\b(urlopen|requests\\.|fetch|HttpClient|reqwest)\\b",
+            "\\b(POST|PUT)\\b.*\\b(http|url|uri|endpoint)\\b",
+            "\\b(curl|wget|nc|ncat)\\b",
+            "\\bIO::Socket\\b",  // Perl
+            "\\bNet::(HTTP|FTP)\\b",  // Ruby/Perl
+            "\\bnet\\.(Dial|Listen|http)\\b",  // Go
+            "\\bURLSession\\b",  // Swift
+        ]
+        for pattern in networkPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+               regex.firstMatch(in: content, range: range) != nil {
+                return "Blocked: file contains both credential access and network code (potential exfil script)"
+            }
+        }
+
         return nil
     }
 
