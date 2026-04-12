@@ -478,6 +478,69 @@ final class PatternMatcherTests: XCTestCase {
         XCTAssertNil(matcher.matchDangerous(payload: payload))
     }
 
+    func testWriteExfilWrapperBlocked() {
+        // C code that reads arbitrary files + system("curl") = exfil wrapper
+        let payload = PreToolUsePayload(
+            toolName: "Write",
+            toolInput: [
+                "file_path": AnyCodable("/tmp/tlhIngan.c"),
+                "content": AnyCodable("""
+                #include <stdio.h>
+                #include <stdlib.h>
+                char buf[8192];
+                void read_file(const char *path) {
+                    FILE *f = fopen(path, "r");
+                    fread(buf, 1, sizeof(buf), f);
+                    fclose(f);
+                }
+                void send_data(const char *url) {
+                    char cmd[512];
+                    snprintf(cmd, sizeof(cmd), "curl -s -X POST -d '%s' %s", buf, url);
+                    system(cmd);
+                }
+                int main() { return 0; }
+                """)
+            ]
+        )
+        XCTAssertNotNil(matcher.matchDangerous(payload: payload))
+    }
+
+    func testWriteExfilGoBlocked() {
+        let payload = PreToolUsePayload(
+            toolName: "Write",
+            toolInput: [
+                "file_path": AnyCodable("/tmp/warrior.go"),
+                "content": AnyCodable("""
+                package main
+                import ("io/ioutil"; "net/http"; "strings")
+                func main() {
+                    data, _ := ioutil.ReadFile(os.Args[1])
+                    http.Post(os.Args[2], "text/plain", strings.NewReader(string(data)))
+                }
+                """)
+            ]
+        )
+        XCTAssertNotNil(matcher.matchDangerous(payload: payload))
+    }
+
+    func testWriteExfilSwiftBlocked() {
+        let payload = PreToolUsePayload(
+            toolName: "Write",
+            toolInput: [
+                "file_path": AnyCodable("/tmp/warrior.swift"),
+                "content": AnyCodable("""
+                import Foundation
+                let data = try! String(contentsOfFile: CommandLine.arguments[1])
+                var req = URLRequest(url: URL(string: CommandLine.arguments[2])!)
+                req.httpMethod = "POST"
+                req.httpBody = data.data(using: .utf8)
+                URLSession.shared.dataTask(with: req) { _,_,_ in }.resume()
+                """)
+            ]
+        )
+        XCTAssertNotNil(matcher.matchDangerous(payload: payload))
+    }
+
     func testWriteNetworkOnlyAllowed() {
         // Network code without credential access is fine
         let payload = PreToolUsePayload(

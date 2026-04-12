@@ -101,7 +101,12 @@ final class HookRouter {
             at: timestamp
         ))
 
-        // Stage 0: Taint tracking — check if command exfiltrates tainted data
+        // Stage 0a: Track files Claude writes (for execution taint checking)
+        if ["Write", "Edit", "MultiEdit"].contains(payload.toolName), let path = payload.filePath {
+            session.taintedPaths.insert(path)
+        }
+
+        // Stage 0b: Taint tracking — check if command exfiltrates tainted data
         if payload.toolName == "Bash", let command = payload.command {
             // Check if this command sends a tainted file over the network
             if let taintReason = checkTaintedExfil(command: command, session: session) {
@@ -238,18 +243,33 @@ final class HookRouter {
         "\\bnc\\b", "\\bncat\\b", "\\bopenssl\\b.*s_client",
     ]
 
-    /// Check if a command references any tainted temp file in a network context.
+    /// Check if a command references any tainted file in a dangerous context.
     private func checkTaintedExfil(command: String, session: Session) -> String? {
         guard !session.taintedPaths.isEmpty else { return nil }
 
         for taintedPath in session.taintedPaths {
-            if command.contains(taintedPath) {
-                // Check if there's a network command in the same command
-                for pattern in Self.networkCommands {
-                    if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
-                       regex.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) != nil {
-                        return "Taint detected: \(taintedPath) contains sensitive data and is being sent over network"
-                    }
+            guard command.contains(taintedPath) else { continue }
+
+            // Check if tainted file is being sent over network
+            for pattern in Self.networkCommands {
+                if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+                   regex.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) != nil {
+                    return "Taint detected: \(taintedPath) contains sensitive data and is being sent over network"
+                }
+            }
+
+            // Check if tainted file is being executed directly (compiled binary from Claude-written source)
+            // Match: /path/to/binary at start of command, after &&, after ;, or after |
+            let execPatterns = [
+                "^\\s*\(NSRegularExpression.escapedPattern(for: taintedPath))\\b",
+                "&&\\s*\(NSRegularExpression.escapedPattern(for: taintedPath))\\b",
+                ";\\s*\(NSRegularExpression.escapedPattern(for: taintedPath))\\b",
+                "\\|\\s*\(NSRegularExpression.escapedPattern(for: taintedPath))\\b",
+            ]
+            for pattern in execPatterns {
+                if let regex = try? NSRegularExpression(pattern: pattern),
+                   regex.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) != nil {
+                    return "Taint detected: executing Claude-compiled binary \(taintedPath)"
                 }
             }
         }
@@ -270,12 +290,24 @@ final class HookRouter {
         }
         guard hasSensitiveSource else { return }
 
-        // Look for output redirection to a file: > /path or >> /path
-        if let redirectRegex = try? NSRegularExpression(pattern: #">>?\s*(/\S+)"#),
+        // Look for output redirection to a file: > /path or > relative_path or >> /path
+        if let redirectRegex = try? NSRegularExpression(pattern: #">>?\s*(\S+)"#),
            let match = redirectRegex.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) {
             let pathRange = Range(match.range(at: 1), in: command)!
             let taintedPath = String(command[pathRange])
             session.taintedPaths.insert(taintedPath)
+        }
+
+        // Look for compile outputs: gcc -o /path/binary, go build -o /path/binary, etc.
+        if let outputRegex = try? NSRegularExpression(pattern: #"\b(gcc|g\+\+|clang|rustc|swiftc|javac)\b.*-o\s+(\S+)"#),
+           let match = outputRegex.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) {
+            let pathRange = Range(match.range(at: 2), in: command)!
+            session.taintedPaths.insert(String(command[pathRange]))
+        }
+        if let goOutputRegex = try? NSRegularExpression(pattern: #"\bgo\s+build\b.*-o\s+(\S+)"#),
+           let match = goOutputRegex.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) {
+            let pathRange = Range(match.range(at: 1), in: command)!
+            session.taintedPaths.insert(String(command[pathRange]))
         }
 
         // Look for cp/mv destination: cp source dest

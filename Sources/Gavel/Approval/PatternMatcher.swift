@@ -54,9 +54,9 @@ struct PatternMatcher {
             ("\\bat\\b\\s+", "at job scheduling"),
 
             // ── Destructive operations (expanded) ──
-            ("\\brm\\s+(-\\w*[rR]\\w*\\s+)*/(?!tmp\\b)", "Recursive delete from root"),
-            ("\\brm\\s+(-\\w*[rR]\\w*\\s+)*\\./", "Recursive delete from current directory"),
-            ("\\brm\\s+(-\\w*[rR]\\w*\\s+)*\\.\\./", "Recursive delete from parent directory"),
+            ("\\brm\\s+-\\w*[rR]\\w*\\s+/(?!tmp\\b)", "Recursive delete from root"),
+            ("\\brm\\s+-\\w*[rR]\\w*\\s+\\./", "Recursive delete from current directory"),
+            ("\\brm\\s+-\\w*[rR]\\w*\\s+\\.\\./", "Recursive delete from parent directory"),
             ("\\brm\\s+--recursive", "Recursive delete (long flag)"),
             ("\\bmkfs\\b", "Filesystem format command"),
             ("\\bdd\\b\\s+.*of=/dev/", "Direct disk write"),
@@ -85,8 +85,13 @@ struct PatternMatcher {
             ("\\bcargo\\s+(build|run)\\b.*--manifest-path.*/tmp/", "Building Rust code from temp directory"),
             // Executing scripts from temp directories
             ("\\b(perl|ruby|node|swift|php|lua)\\b\\s+/tmp/", "Running script from temp directory"),
-            // Running any executable from /tmp
-            ("/tmp/[^\\s]*\\.(out|exe|bin)\\b", "Running compiled binary from temp directory"),
+            // Running any executable from /tmp (direct execution)
+            ("^\\s*/tmp/\\S+", "Running executable from temp directory"),
+            ("&&\\s*/tmp/\\S+", "Running executable from temp directory (chained)"),
+            ("\\|\\s*/tmp/\\S+", "Running executable from temp directory (piped)"),
+            (";\\s*/tmp/\\S+", "Running executable from temp directory (sequential)"),
+            // cd to /tmp then execute (bypass /tmp/ path check)
+            ("\\bcd\\s+/tmp\\b.*&&", "Changing to temp directory and executing"),
             // chmod +x on temp files (making them executable)
             ("\\bchmod\\b.*\\+x.*/tmp/", "Making temp file executable"),
         ]
@@ -199,8 +204,10 @@ struct PatternMatcher {
                 return pathBlock
             }
             // Scan file content for exfil code (credential access + network in same file)
-            if payload.toolName == "Write" {
-                return matchDangerousContent(payload.toolInput["content"]?.stringValue)
+            let contentToScan = payload.toolInput["content"]?.stringValue
+                ?? payload.toolInput["new_string"]?.stringValue
+            if let content = contentToScan {
+                return matchDangerousContent(content)
             }
             return nil
         case "Read":
@@ -319,12 +326,92 @@ struct PatternMatcher {
                 break
             }
         }
-        guard hasCredRef else { return nil }
+        // Also check for generic file-read + network combo (runtime exfil wrappers)
+        // e.g., C code with fopen/fread + system("curl") or socket
+        if !hasCredRef {
+            // Check for generic file-read patterns (any language)
+            let fileReadKeywords = [
+                "\\bfopen\\b", "\\bfread\\b",              // C
+                "\\bopen\\b.*O_RDONLY",                    // C low-level
+                "\\bfs::read\\b", "\\bfs::read_to_string", // Rust
+                "\\bFile\\.read\\b",                       // Ruby
+                "\\bioutil\\.ReadFile\\b",                 // Go (old)
+                "\\bos\\.ReadFile\\b",                     // Go (new)
+                "\\bos\\.Open\\b",                         // Go
+                "\\bcontentsOfFile\\b",                    // Swift
+                "\\bcontentsOf:\\b",                       // Swift
+                "\\bFileManager\\b.*\\bcontents\\b",       // Swift
+                "\\bopen\\s*\\(",                           // Python open()
+                "\\bPath\\s*\\(.*\\.read_text\\b",         // Python pathlib
+                "\\bfs\\.readFileSync\\b",                 // Node.js
+                "\\bfs\\.readFile\\b",                     // Node.js
+                "\\bfs\\.promises\\.readFile\\b",          // Node.js async
+                "\\bfile_get_contents\\b",                 // PHP
+                "\\bio\\.open\\b",                         // Lua
+                "\\bFiles\\.readString\\b",                // Java
+                "\\bFiles\\.readAllBytes\\b",              // Java
+                "\\bBufferedReader\\b",                    // Java
+                "\\breadFileAlloc\\b",                     // Zig
+                "\\bstd\\.fs\\b",                          // Zig
+            ]
+            var hasFileRead = false
+            for pattern in fileReadKeywords {
+                if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+                   regex.firstMatch(in: content, range: range) != nil {
+                    hasFileRead = true
+                    break
+                }
+            }
+            // If has generic file read + ANY network capability → suspicious exfil wrapper
+            if hasFileRead {
+                let networkKeywords = [
+                    // C: system/popen with network tools
+                    "\\bsystem\\s*\\(", "\\bpopen\\s*\\(",
+                    // Direct network tool references
+                    "\\bcurl\\b", "\\bwget\\b", "\\bnc\\b", "\\bncat\\b",
+                    // Go network
+                    "\\bhttp\\.Post\\b", "\\bhttp\\.Get\\b", "\\bhttp\\.NewRequest\\b",
+                    "\\bnet\\.Dial\\b", "\"net/http\"",
+                    // Swift network
+                    "\\bURLSession\\b", "\\bURLRequest\\b",
+                    // Rust network
+                    "\\breqwest\\b", "\\bhyper\\b", "\\bTcpStream\\b",
+                    // Ruby network
+                    "\\bNet::HTTP\\b", "\\bTCPSocket\\b",
+                    // Perl network
+                    "\\bIO::Socket\\b", "\\bLWP::", "\\bHTTP::Request\\b",
+                    // Python network
+                    "\\burllib\\.request\\b", "\\brequests\\.", "\\burlopen\\b",
+                    // Node.js network
+                    "\\bhttps?\\.request\\b", "\\bfetch\\s*\\(",
+                    "require\\s*\\(\\s*['\"]https?['\"]\\s*\\)",
+                    // PHP network
+                    "\\bcurl_init\\b", "\\bcurl_exec\\b",
+                    "\\bfile_get_contents\\s*\\(\\s*['\"]http",
+                    // Lua network
+                    "\\bsocket\\.http\\b",
+                    // Java network
+                    "\\bHttpURLConnection\\b", "\\bHttpClient\\b",
+                    "\\bjava\\.net\\.",
+                    // Zig network
+                    "\\bstd\\.http\\.Client\\b",
+                    // Generic
+                    "\\bsocket\\b.*\\bconnect\\b",
+                ]
+                for pattern in networkKeywords {
+                    if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+                       regex.firstMatch(in: content, range: range) != nil {
+                        return "Blocked: file reads arbitrary files and has network capability (potential exfil wrapper)"
+                    }
+                }
+            }
+            return nil
+        }
 
         // Check for network/exfil code in the content
         let networkPatterns = [
             "\\b(socket|connect|send|recv|TcpStream|UdpSocket)\\b",
-            "\\b(http|https|ftp)://",
+            "\\b(https?|ftp)://\\S+",  // URL with scheme — anchored to require host after ://
             "\\b(urlopen|requests\\.|fetch|HttpClient|reqwest)\\b",
             "\\b(POST|PUT)\\b.*\\b(http|url|uri|endpoint)\\b",
             "\\b(curl|wget|nc|ncat)\\b",
@@ -332,6 +419,9 @@ struct PatternMatcher {
             "\\bNet::(HTTP|FTP)\\b",  // Ruby/Perl
             "\\bnet\\.(Dial|Listen|http)\\b",  // Go
             "\\bURLSession\\b",  // Swift
+            "\\bsystem\\s*\\(.*\\b(curl|wget|nc)\\b",  // C/C++ system() with network cmd
+            "\\bexec[lv]?p?\\s*\\(.*\\b(curl|wget|nc)\\b",  // C exec family
+            "\\bpopen\\s*\\(.*\\b(curl|wget|nc)\\b",  // C popen
         ]
         for pattern in networkPatterns {
             if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),

@@ -16,9 +16,11 @@ struct MonitorWindow: View {
             HStack {
                 StatusView(viewModel: viewModel)
                 Spacer()
-                Button(action: { [vm = viewModel] in
+                Button(action: {
                     isPinned.toggle()
-                    vm.setPinned(isPinned)
+                    if let window = NSApp.windows.first(where: { $0.title.contains("Monitor") }) {
+                        window.level = isPinned ? .floating : .normal
+                    }
                 }) {
                     Image(systemName: isPinned ? "pin.fill" : "pin")
                         .foregroundColor(isPinned ? .orange : .secondary)
