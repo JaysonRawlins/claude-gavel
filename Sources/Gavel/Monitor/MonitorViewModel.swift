@@ -13,7 +13,7 @@ final class MonitorViewModel: ObservableObject {
 
     let approvalCoordinator: ApprovalCoordinator
     let sessionManager: SessionManager
-    private let maxFeedEntries = 2000
+    private let maxFeedEntries = GavelConstants.maxFeedEntries
     private let startTime = Date()
     private var cancellables = Set<AnyCancellable>()
     private var statsTimer: Timer?
