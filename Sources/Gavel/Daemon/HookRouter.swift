@@ -270,8 +270,8 @@ final class HookRouter {
         }
         guard hasSensitiveSource else { return }
 
-        // Look for output redirection to a file: > /path or >> /path
-        if let redirectRegex = try? NSRegularExpression(pattern: #">>?\s*(/\S+)"#),
+        // Look for output redirection to a file: > /path or > relative_path or >> /path
+        if let redirectRegex = try? NSRegularExpression(pattern: #">>?\s*(\S+)"#),
            let match = redirectRegex.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) {
             let pathRange = Range(match.range(at: 1), in: command)!
             let taintedPath = String(command[pathRange])

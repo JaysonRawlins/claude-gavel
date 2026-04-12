@@ -85,8 +85,13 @@ struct PatternMatcher {
             ("\\bcargo\\s+(build|run)\\b.*--manifest-path.*/tmp/", "Building Rust code from temp directory"),
             // Executing scripts from temp directories
             ("\\b(perl|ruby|node|swift|php|lua)\\b\\s+/tmp/", "Running script from temp directory"),
-            // Running any executable from /tmp
-            ("/tmp/[^\\s]*\\.(out|exe|bin)\\b", "Running compiled binary from temp directory"),
+            // Running any executable from /tmp (direct execution)
+            ("^\\s*/tmp/\\S+", "Running executable from temp directory"),
+            ("&&\\s*/tmp/\\S+", "Running executable from temp directory (chained)"),
+            ("\\|\\s*/tmp/\\S+", "Running executable from temp directory (piped)"),
+            (";\\s*/tmp/\\S+", "Running executable from temp directory (sequential)"),
+            // cd to /tmp then execute (bypass /tmp/ path check)
+            ("\\bcd\\s+/tmp\\b.*&&", "Changing to temp directory and executing"),
             // chmod +x on temp files (making them executable)
             ("\\bchmod\\b.*\\+x.*/tmp/", "Making temp file executable"),
         ]
@@ -199,8 +204,10 @@ struct PatternMatcher {
                 return pathBlock
             }
             // Scan file content for exfil code (credential access + network in same file)
-            if payload.toolName == "Write" {
-                return matchDangerousContent(payload.toolInput["content"]?.stringValue)
+            let contentToScan = payload.toolInput["content"]?.stringValue
+                ?? payload.toolInput["new_string"]?.stringValue
+            if let content = contentToScan {
+                return matchDangerousContent(content)
             }
             return nil
         case "Read":
@@ -319,7 +326,42 @@ struct PatternMatcher {
                 break
             }
         }
-        guard hasCredRef else { return nil }
+        // Also check for generic file-read + network combo (runtime exfil wrappers)
+        // e.g., C code with fopen/fread + system("curl") or socket
+        if !hasCredRef {
+            // Check independently — fopen and fread can be on different lines
+            let fileReadKeywords = [
+                "\\bfopen\\b", "\\bfread\\b",    // C file I/O
+                "\\bopen\\b.*O_RDONLY",          // Low-level I/O
+                "\\bfs::read\\b",                // Rust
+                "\\bFile\\.read\\b",             // Ruby
+                "\\bos\\.popen\\b",              // Python
+            ]
+            var hasFileRead = false
+            var fileReadMatches = 0
+            for pattern in fileReadKeywords {
+                if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+                   regex.firstMatch(in: content, range: range) != nil {
+                    fileReadMatches += 1
+                    if fileReadMatches >= 1 { hasFileRead = true; break }
+                }
+            }
+            // If has generic file read + system()/popen() + network command name anywhere → suspicious
+            if hasFileRead {
+                let hasSystemExec = ["\\bsystem\\s*\\(", "\\bpopen\\s*\\(", "\\bexec[lv]?p?\\s*\\("].contains {
+                    (try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]))
+                        .flatMap { $0.firstMatch(in: content, range: range) } != nil
+                }
+                let hasNetworkRef = ["\\bcurl\\b", "\\bwget\\b", "\\bnc\\b", "\\bncat\\b", "\\bhttp"].contains {
+                    (try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]))
+                        .flatMap { $0.firstMatch(in: content, range: range) } != nil
+                }
+                if hasSystemExec && hasNetworkRef {
+                    return "Blocked: file reads arbitrary files and executes network commands (potential exfil wrapper)"
+                }
+            }
+            return nil
+        }
 
         // Check for network/exfil code in the content
         let networkPatterns = [
@@ -332,6 +374,9 @@ struct PatternMatcher {
             "\\bNet::(HTTP|FTP)\\b",  // Ruby/Perl
             "\\bnet\\.(Dial|Listen|http)\\b",  // Go
             "\\bURLSession\\b",  // Swift
+            "\\bsystem\\s*\\(.*\\b(curl|wget|nc)\\b",  // C/C++ system() with network cmd
+            "\\bexec[lv]?p?\\s*\\(.*\\b(curl|wget|nc)\\b",  // C exec family
+            "\\bpopen\\s*\\(.*\\b(curl|wget|nc)\\b",  // C popen
         ]
         for pattern in networkPatterns {
             if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),

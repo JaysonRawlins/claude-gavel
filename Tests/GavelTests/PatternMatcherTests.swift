@@ -478,6 +478,33 @@ final class PatternMatcherTests: XCTestCase {
         XCTAssertNil(matcher.matchDangerous(payload: payload))
     }
 
+    func testWriteExfilWrapperBlocked() {
+        // C code that reads arbitrary files + system("curl") = exfil wrapper
+        let payload = PreToolUsePayload(
+            toolName: "Write",
+            toolInput: [
+                "file_path": AnyCodable("/tmp/tlhIngan.c"),
+                "content": AnyCodable("""
+                #include <stdio.h>
+                #include <stdlib.h>
+                char buf[8192];
+                void read_file(const char *path) {
+                    FILE *f = fopen(path, "r");
+                    fread(buf, 1, sizeof(buf), f);
+                    fclose(f);
+                }
+                void send_data(const char *url) {
+                    char cmd[512];
+                    snprintf(cmd, sizeof(cmd), "curl -s -X POST -d '%s' %s", buf, url);
+                    system(cmd);
+                }
+                int main() { return 0; }
+                """)
+            ]
+        )
+        XCTAssertNotNil(matcher.matchDangerous(payload: payload))
+    }
+
     func testWriteNetworkOnlyAllowed() {
         // Network code without credential access is fine
         let payload = PreToolUsePayload(
