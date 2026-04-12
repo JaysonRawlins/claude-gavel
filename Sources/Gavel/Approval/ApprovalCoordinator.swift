@@ -66,8 +66,7 @@ final class ApprovalCoordinator: ObservableObject {
             }
         }
 
-        // Block socket handler until user responds (24 hours — effectively no timeout)
-        let waitResult = semaphore.wait(timeout: .now() + 86400)
+        let waitResult = semaphore.wait(timeout: .now() + GavelConstants.approvalTimeoutSeconds)
         if waitResult == .timedOut {
             DispatchQueue.main.async {
                 self.dismissCurrent()
@@ -202,7 +201,7 @@ final class ApprovalCoordinator: ObservableObject {
         let hostingView = NSHostingView(rootView: contentView)
 
         let p = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            contentRect: NSRect(x: 0, y: 0, width: GavelConstants.panelWidth, height: GavelConstants.panelHeight),
             styleMask: [.titled, .closable, .resizable, .utilityWindow],
             backing: .buffered,
             defer: false
