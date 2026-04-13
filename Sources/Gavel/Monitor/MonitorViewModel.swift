@@ -69,8 +69,32 @@ final class MonitorViewModel: ObservableObject {
         approvalCoordinator.ruleStore?.rules ?? []
     }
 
+    func addRule(_ rule: PersistentRule) {
+        approvalCoordinator.ruleStore?.addRule(rule)
+    }
+
     func deleteRule(id: UUID) {
         approvalCoordinator.ruleStore?.removeRule(id: id)
+    }
+
+    func exportRules(to url: URL) throws {
+        guard let rules = approvalCoordinator.ruleStore?.rules else { return }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(rules)
+        try data.write(to: url)
+    }
+
+    /// Import rules from a JSON file. Returns the number of rules imported.
+    @discardableResult
+    func importRules(from url: URL) throws -> Int {
+        let data = try Data(contentsOf: url)
+        let rules = try JSONDecoder().decode([PersistentRule].self, from: data)
+        guard !rules.isEmpty else { return 0 }
+        for rule in rules {
+            approvalCoordinator.ruleStore?.addRule(rule)
+        }
+        return rules.count
     }
 
     func killSession() {
