@@ -116,9 +116,16 @@ struct ApprovalPanelView: View {
                 .font(.caption.bold())
                 .foregroundColor(.secondary)
 
+            // Size editor to content: ~18pt per line, min 3 lines, max 20 lines.
+            // Wrapping estimate: assume ~80 chars per line at monospaced body size.
+            let newlineCount = editedCommand.components(separatedBy: .newlines).count
+            let wrapEstimate = max(1, editedCommand.count / 80)
+            let lineCount = max(3, max(newlineCount, wrapEstimate) + 1)
+            let height = CGFloat(min(lineCount, 20)) * 18
+
             TextEditor(text: $editedCommand)
                 .font(.system(.body, design: .monospaced))
-                .frame(minHeight: 40, maxHeight: 120)
+                .frame(height: height)
                 .padding(4)
                 .background(Color.orange.opacity(0.08))
                 .cornerRadius(6)
