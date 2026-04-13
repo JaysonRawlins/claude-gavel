@@ -203,11 +203,14 @@ struct PatternMatcher {
             if let pathBlock = matchProtectedPath(payload.filePath) {
                 return pathBlock
             }
-            // Scan file content for exfil code (credential access + network in same file)
-            let contentToScan = payload.toolInput["content"]?.stringValue
-                ?? payload.toolInput["new_string"]?.stringValue
-            if let content = contentToScan {
-                return matchDangerousContent(content)
+            // Only scan content for files in temp directories — project source files
+            // contain pattern strings as literals that trigger false positives
+            if let path = payload.filePath, Self.isTempPath(path) {
+                let contentToScan = payload.toolInput["content"]?.stringValue
+                    ?? payload.toolInput["new_string"]?.stringValue
+                if let content = contentToScan {
+                    return matchDangerousContent(content)
+                }
             }
             return nil
         case "Read":
@@ -307,7 +310,7 @@ struct PatternMatcher {
     /// Scans file content for code that both accesses credentials AND sends data over the network.
     /// Blocks polyglot exfil scripts (Rust, C, Go, Perl, etc.) written to temp files.
     private func matchDangerousContent(_ content: String?) -> String? {
-        guard let content = content, content.count > 50 else { return nil }
+        guard let content = content, content.count > GavelConstants.minContentScanLength else { return nil }
 
         let range = NSRange(content.startIndex..., in: content)
 
@@ -431,6 +434,14 @@ struct PatternMatcher {
         }
 
         return nil
+    }
+
+    // MARK: - Temp path detection
+
+    /// Returns true if the path is in a temp-like directory where exfil scripts get dropped.
+    /// Project source files are excluded to avoid false positives from pattern string literals.
+    static func isTempPath(_ path: String) -> Bool {
+        GavelConstants.tempDirectoryPrefixes.contains { path.hasPrefix($0) }
     }
 
     // MARK: - MCP tool matching
