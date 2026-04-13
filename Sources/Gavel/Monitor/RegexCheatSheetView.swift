@@ -59,16 +59,16 @@ struct RegexCheatSheetView: View {
                     row("Sources/*", "Matches any path under Sources/")
                 }
 
-                section("Common Gavel Patterns") {
-                    example("Block git push to main",
-                            "git\\s+push\\b.*\\b(main|master)\\b")
-                    example("Allow git but not push",
-                            "git\\s+(?!push)\\w+")
-                    example("Block secrets except --only-names",
-                            "doppler\\s+secrets\\b(?!.*--only-names)")
-                    example("Allow npm/yarn commands",
-                            "(npm|yarn)\\s+\\w+")
-                }
+                Divider()
+
+                bashExamples
+                editExamples
+                writeExamples
+                readExamples
+                globGrepExamples
+                agentExamples
+                mcpExamples
+                wildcardExamples
             }
             .padding(12)
         }
@@ -113,6 +113,118 @@ struct RegexCheatSheetView: View {
                 .padding(.vertical, 2)
                 .background(Color.green.opacity(0.1))
                 .cornerRadius(3)
+        }
+    }
+
+    private func toolNote(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .italic()
+    }
+
+    // MARK: - Tool-Specific Example Sections
+
+    private var bashExamples: some View {
+        section("Bash Examples") {
+            example("Block push to main/master",
+                    "git\\s+push\\b.*\\b(main|master)\\b")
+            example("Block force push anywhere",
+                    "git\\s+push\\b.*(-f|--force)\\b")
+            example("Block git reset --hard",
+                    "git\\s+reset\\s+--hard")
+            example("Allow git (except push)",
+                    "git\\s+(?!push)\\w+")
+            example("Allow npm/yarn commands",
+                    "(npm|yarn)\\s+\\w+")
+            example("Allow swift build/test only",
+                    "swift\\s+(build|test)\\b")
+            example("Block rm -rf outside /tmp",
+                    "rm\\s+-\\w*r\\w*\\s+/(?!tmp)")
+            example("Block secrets except safe flags",
+                    "doppler\\s+secrets\\b(?!.*--only-names)")
+            example("Block docker push",
+                    "docker\\s+push\\b")
+        }
+    }
+
+    private var editExamples: some View {
+        section("Edit / MultiEdit Examples") {
+            toolNote("Pattern matches against the file path")
+            example("Allow edits under Sources/",
+                    "Sources/.*")
+            example("Block edits to config files",
+                    "\\.(json|yaml|yml|toml)$")
+            example("Allow edits to Swift files only",
+                    ".*\\.swift$")
+            example("Block edits to dotfiles",
+                    "/Users/.*/\\.\\w+")
+        }
+    }
+
+    private var writeExamples: some View {
+        section("Write Examples") {
+            toolNote("Pattern matches against the file path")
+            example("Allow writes under src/",
+                    "src/.*")
+            example("Block writes to /tmp",
+                    "/tmp/.*")
+            example("Block writes to hidden dirs",
+                    "/Users/.*/\\.\\w+/")
+        }
+    }
+
+    private var readExamples: some View {
+        section("Read Examples") {
+            toolNote("Pattern matches against the file path")
+            example("Allow reading any file",
+                    "*")
+            example("Block reading env files",
+                    "\\.env(\\.local)?$")
+        }
+    }
+
+    private var globGrepExamples: some View {
+        section("Glob / Grep Examples") {
+            toolNote("Pattern matches against the search path or pattern")
+            example("Allow glob in project dirs",
+                    "src/*")
+            example("Allow grep in current project",
+                    "/Users/.*/project/.*")
+        }
+    }
+
+    private var agentExamples: some View {
+        section("Agent Examples") {
+            toolNote("Pattern matches against tool input fields")
+            example("Allow all agent calls",
+                    "*")
+            example("Block agents with worktree type",
+                    ".*worktree.*")
+        }
+    }
+
+    private var mcpExamples: some View {
+        section("MCP Tool Examples") {
+            toolNote("Use tool * with regex, or set tool picker to the full MCP tool name")
+            example("Block all Slack writes",
+                    "mcp__.*[Ss]lack.*(send|update|delete)")
+            example("Allow Slack reads",
+                    "mcp__.*[Ss]lack.*(read|list|search)")
+            example("Block all Jira writes",
+                    "mcp__.*[Jj]ira.*(create|update|delete)")
+            example("Block Playwright navigation",
+                    "mcp__.*[Pp]laywright.*navigate$")
+        }
+    }
+
+    private var wildcardExamples: some View {
+        section("Wildcard (*) Tool Examples") {
+            toolNote("Setting tool to * matches all tool types")
+            example("Block anything touching .env",
+                    "\\.env\\b")
+            example("Ask before any destructive op",
+                    "(rm|delete|drop|truncate)\\b")
         }
     }
 }
