@@ -24,6 +24,7 @@ final class ApprovalCoordinator: ObservableObject {
         let payload: PreToolUsePayload
         let session: Session
         let timestamp: Date
+        let forceDialog: Bool
         let respond: (Decision) -> Void
     }
 
@@ -52,7 +53,8 @@ final class ApprovalCoordinator: ObservableObject {
         let pending = PendingApproval(
             payload: payload,
             session: session,
-            timestamp: timestamp
+            timestamp: timestamp,
+            forceDialog: forceDialog
         ) { decision in
             result = decision
             semaphore.signal()
@@ -140,16 +142,17 @@ final class ApprovalCoordinator: ObservableObject {
     }
 
     /// Enable auto-approve for a session and flush its pending approvals.
+    /// Forced dialogs (from prompt rules / MCP blocks) are NOT flushed — they require explicit action.
     func enableAutoApprove(for session: Session) {
         session.isAutoApproveEnabled = true
 
-        // Flush current if it belongs to this session
-        if let current = currentApproval, current.session.pid == session.pid {
+        // Flush current if it belongs to this session — but not if forced
+        if let current = currentApproval, current.session.pid == session.pid, !current.forceDialog {
             current.respond(Decision(verdict: .allow, reason: "Auto-approved"))
             currentApproval = nil
         }
-        // Flush queued items for this session
-        let (forSession, remaining) = pendingQueue.partitioned { $0.session.pid == session.pid }
+        // Flush queued items for this session — but not forced ones
+        let (forSession, remaining) = pendingQueue.partitioned { $0.session.pid == session.pid && !$0.forceDialog }
         for pending in forSession {
             pending.respond(Decision(verdict: .allow, reason: "Auto-approved"))
         }

@@ -104,4 +104,37 @@ final class PersistentRuleTests: XCTestCase {
         XCTAssertEqual(decision.verdict, .allow)
         XCTAssertNotNil(decision.reason) // non-nil reason = skip dialog in HookRouter
     }
+
+    // MARK: - Wildcard rules match MCP tool names
+
+    func testWildcardRuleMatchesMcpToolName() {
+        var rule = PersistentRule(toolName: "*", pattern: "mcp__LinkedIn__(linkedin_create|linkedin_post)", isRegex: true, verdict: .prompt)
+        // MCP tools have no command/filePath — pattern should match against the tool name
+        XCTAssertTrue(rule.matches(toolName: "mcp__LinkedIn__linkedin_create_post", command: nil, filePath: nil))
+    }
+
+    func testWildcardRuleNoFalsePositiveOnToolName() {
+        var rule = PersistentRule(toolName: "*", pattern: "mcp__LinkedIn__linkedin_create", isRegex: true, verdict: .prompt)
+        // Should not match a different tool
+        XCTAssertFalse(rule.matches(toolName: "mcp__engram__search", command: nil, filePath: nil))
+    }
+
+    func testWildcardPromptRuleForcesDialogInEngine() {
+        let store = RuleStore(configPath: "/dev/null")
+        store.addRule(PersistentRule(toolName: "*", pattern: "mcp__LinkedIn__(linkedin_create|linkedin_post)", isRegex: true, verdict: .prompt))
+
+        let engine = ApprovalEngine(ruleStore: store)
+        let session = Session(pid: 99999)
+        let payload = PreToolUsePayload(toolName: "mcp__LinkedIn__linkedin_create_post", toolInput: [:])
+
+        let decision = engine.evaluate(payload: payload, session: session)
+        XCTAssertEqual(decision.verdict, .block)
+        XCTAssertTrue(decision.askUser) // askUser = forceDialog in HookRouter
+    }
+
+    func testNonWildcardRuleDoesNotMatchToolName() {
+        // When toolName is specific (not *), it should NOT fall back to tool name matching
+        var rule = PersistentRule(toolName: "Bash", pattern: "mcp__LinkedIn__linkedin_create", isRegex: true, verdict: .prompt)
+        XCTAssertFalse(rule.matches(toolName: "mcp__LinkedIn__linkedin_create_post", command: nil, filePath: nil))
+    }
 }
