@@ -11,6 +11,11 @@ final class MonitorViewModel: ObservableObject {
     @Published var statsText: String = "Tools: 0 | Allow: 0 | Block: 0"
     @Published var uptimeText: String = "0m"
 
+    // Regex tester state (persists across tab switches)
+    @Published var testerPattern: String = ""
+    @Published var testerTestString: String = ""
+    @Published var testerIsRegex: Bool = true
+
     let approvalCoordinator: ApprovalCoordinator
     let sessionManager: SessionManager
     private let maxFeedEntries = GavelConstants.maxFeedEntries

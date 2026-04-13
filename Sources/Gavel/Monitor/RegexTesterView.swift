@@ -2,9 +2,7 @@ import SwiftUI
 
 /// Interactive regex/glob tester with match highlighting.
 struct RegexTesterView: View {
-    @State private var pattern: String = ""
-    @State private var testString: String = ""
-    @State private var isRegexMode: Bool = true
+    @ObservedObject var viewModel: MonitorViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -15,20 +13,20 @@ struct RegexTesterView: View {
                         .font(.caption.bold())
                         .foregroundColor(.secondary)
                     Spacer()
-                    Toggle("Regex", isOn: $isRegexMode)
+                    Toggle("Regex", isOn: $viewModel.testerIsRegex)
                         .toggleStyle(.switch)
                         .controlSize(.small)
                         .tint(.orange)
                 }
 
                 HStack(spacing: 2) {
-                    if isRegexMode {
+                    if viewModel.testerIsRegex {
                         Text("/").font(.system(.body, design: .monospaced)).foregroundColor(.orange)
                     }
-                    TextField(isRegexMode ? "regex pattern" : "glob pattern (* = wildcard)", text: $pattern)
+                    TextField(viewModel.testerIsRegex ? "regex pattern" : "glob pattern (* = wildcard)", text: $viewModel.testerPattern)
                         .font(.system(.body, design: .monospaced))
                         .textFieldStyle(.roundedBorder)
-                    if isRegexMode {
+                    if viewModel.testerIsRegex {
                         Text("/i").font(.system(.body, design: .monospaced)).foregroundColor(.orange)
                     }
                 }
@@ -40,7 +38,7 @@ struct RegexTesterView: View {
                     .font(.caption.bold())
                     .foregroundColor(.secondary)
 
-                TextEditor(text: $testString)
+                TextEditor(text: $viewModel.testerTestString)
                     .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 60, maxHeight: 120)
                     .padding(4)
@@ -55,7 +53,7 @@ struct RegexTesterView: View {
             Divider()
 
             // Results
-            if !pattern.isEmpty && !testString.isEmpty {
+            if !viewModel.testerPattern.isEmpty && !viewModel.testerTestString.isEmpty {
                 matchResults
             } else {
                 Text("Enter a pattern and test string to see results.")
@@ -84,7 +82,7 @@ struct RegexTesterView: View {
             }
 
         case .success(let regex):
-            let matches = findMatches(regex: regex, in: testString)
+            let matches = findMatches(regex: regex, in: viewModel.testerTestString)
 
             // Match/No Match badge
             HStack(spacing: 8) {
@@ -108,7 +106,7 @@ struct RegexTesterView: View {
                         .font(.caption.bold())
                         .foregroundColor(.secondary)
 
-                    highlightedText(testString, matches: matches)
+                    highlightedText(viewModel.testerTestString, matches: matches)
                         .padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color(nsColor: .controlBackgroundColor))
@@ -147,15 +145,15 @@ struct RegexTesterView: View {
     }
 
     private func compilePattern() -> CompileResult {
-        if isRegexMode {
+        if viewModel.testerIsRegex {
             do {
-                let regex = try NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+                let regex = try NSRegularExpression(pattern: viewModel.testerPattern, options: [.caseInsensitive])
                 return .success(regex)
             } catch {
                 return .failure("Invalid regex: \(error.localizedDescription)")
             }
         } else {
-            if let regex = PersistentRule.compilePattern(pattern, isRegex: false) {
+            if let regex = PersistentRule.compilePattern(viewModel.testerPattern, isRegex: false) {
                 return .success(regex)
             }
             return .failure("Invalid glob pattern")

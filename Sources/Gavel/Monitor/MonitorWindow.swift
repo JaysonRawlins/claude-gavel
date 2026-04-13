@@ -54,7 +54,7 @@ struct MonitorWindow: View {
             case .rules:
                 RulesView(viewModel: viewModel)
             case .tester:
-                RegexTesterView()
+                RegexTesterView(viewModel: viewModel)
             case .reference:
                 RegexCheatSheetView()
             }
@@ -322,6 +322,8 @@ struct RulesView: View {
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = "gavel-rules.json"
         panel.title = "Export Gavel Rules"
+        panel.canCreateDirectories = true
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 

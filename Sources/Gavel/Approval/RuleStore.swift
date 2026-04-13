@@ -167,7 +167,20 @@ struct PersistentRule: Codable, Identifiable {
             .replacingOccurrences(of: "\u{2012}", with: "-")
 
         guard let regex = compiledRegex else { return false }
-        return regex.firstMatch(in: target, range: NSRange(target.startIndex..., in: target)) != nil
+
+        // Match against command/filePath first
+        if regex.firstMatch(in: target, range: NSRange(target.startIndex..., in: target)) != nil {
+            return true
+        }
+
+        // For wildcard rules, also match against the tool name itself.
+        // MCP tools carry their identity in the name (e.g. mcp__LinkedIn__linkedin_create_post)
+        // and typically have no command or filePath.
+        if self.toolName == "*" {
+            return regex.firstMatch(in: toolName, range: NSRange(toolName.startIndex..., in: toolName)) != nil
+        }
+
+        return false
     }
 
     /// Compile a pattern to regex. Glob patterns are converted; regex patterns used as-is.
