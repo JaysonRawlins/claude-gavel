@@ -120,6 +120,19 @@ final class HookRouter {
         let engineDecision = approvalEngine.evaluate(payload: payload, session: session)
         if engineDecision.verdict == .block {
             if engineDecision.askUser {
+                // Before forcing dialog, check if a session rule already covers this.
+                // Session Allow from a previous dialog should skip re-prompting.
+                if let rule = session.matchesSessionRule(
+                    toolName: payload.toolName,
+                    command: payload.command,
+                    filePath: payload.filePath
+                ) {
+                    session.allowCount += 1
+                    emitFeed(.decision(badge: .allow, reason: "Session rule: \(rule.toolName): \(rule.pattern)", pid: session.pid, at: timestamp))
+                    sendResponse(Decision(verdict: .allow, reason: "Session rule: \(rule.pattern)"), respond: respond)
+                    return
+                }
+
                 // MCP-style block: jump straight to interactive dialog
                 emitFeed(.decision(badge: .block, reason: "Needs approval: \(engineDecision.reason ?? "")", pid: session.pid, at: timestamp))
 
