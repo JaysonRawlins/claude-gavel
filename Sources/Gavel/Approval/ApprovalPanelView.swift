@@ -279,7 +279,7 @@ struct ApprovalPanelView: View {
             // Persistent + session rules row
             HStack(spacing: 6) {
                 Button(action: {
-                    coordinator.handleAction(.alwaysDenyPattern(pattern: sessionPattern, isRegex: isRegexMode))
+                    coordinator.handleAction(.alwaysDenyPattern(pattern: sessionPattern, isRegex: isRegexMode, explanation: noteToClaudeText.isEmpty ? nil : noteToClaudeText))
                 }) {
                     Label("Always Deny", systemImage: "hand.raised")
                 }

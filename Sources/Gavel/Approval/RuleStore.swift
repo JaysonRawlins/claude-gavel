@@ -24,7 +24,11 @@ final class RuleStore: ObservableObject {
     func evaluateDeny(payload: PreToolUsePayload) -> Decision? {
         for i in rules.indices where rules[i].verdict == .block {
             if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
-                return Decision(verdict: .block, reason: "Always deny: \(rules[i].name)")
+                var reason = "Always deny: \(rules[i].name)"
+                if let explanation = rules[i].explanation, !explanation.isEmpty {
+                    reason += " — \(explanation)"
+                }
+                return Decision(verdict: .block, reason: reason)
             }
         }
         return nil
@@ -103,6 +107,8 @@ struct PersistentRule: Codable, Identifiable {
     let isRegex: Bool
     let verdict: DecisionVerdict
     let createdAt: Date
+    /// Explanation shown to Claude when a deny rule fires (e.g. "use --only-names flag instead").
+    let explanation: String?
 
     /// Pre-compiled regex (rebuilt on first access, not persisted).
     private var _compiledRegex: NSRegularExpression?
@@ -116,10 +122,10 @@ struct PersistentRule: Codable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, toolName, pattern, isRegex, verdict, createdAt
+        case id, name, toolName, pattern, isRegex, verdict, createdAt, explanation
     }
 
-    /// Backward-compatible decoding — isRegex defaults to false for old rules.json.
+    /// Backward-compatible decoding — isRegex and explanation default for old rules.json.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -129,13 +135,15 @@ struct PersistentRule: Codable, Identifiable {
         isRegex = try c.decodeIfPresent(Bool.self, forKey: .isRegex) ?? false
         verdict = try c.decode(DecisionVerdict.self, forKey: .verdict)
         createdAt = try c.decode(Date.self, forKey: .createdAt)
+        explanation = try c.decodeIfPresent(String.self, forKey: .explanation)
     }
 
     init(
         toolName: String,
         pattern: String,
         isRegex: Bool = false,
-        verdict: DecisionVerdict
+        verdict: DecisionVerdict,
+        explanation: String? = nil
     ) {
         self.id = UUID()
         self.toolName = toolName
@@ -144,6 +152,7 @@ struct PersistentRule: Codable, Identifiable {
         self.verdict = verdict
         self.createdAt = Date()
         self.name = "\(toolName): \(isRegex ? "/" : "")\(pattern)\(isRegex ? "/" : "")"
+        self.explanation = explanation
         self._compiledRegex = Self.compilePattern(pattern, isRegex: isRegex)
     }
 

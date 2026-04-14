@@ -12,7 +12,7 @@ final class ApprovalCoordinator: ObservableObject {
         case allow(context: String?, updatedCommand: String?)
         case deny(context: String?)
         case allowPatternForSession(pattern: String, context: String?, updatedCommand: String?)
-        case alwaysDenyPattern(pattern: String, isRegex: Bool)
+        case alwaysDenyPattern(pattern: String, isRegex: Bool, explanation: String?)
         case alwaysAllowPattern(pattern: String, isRegex: Bool)
         case alwaysPromptPattern(pattern: String, isRegex: Bool)
     }
@@ -114,12 +114,15 @@ final class ApprovalCoordinator: ObservableObject {
             current.session.sessionRules.append(rule)
             current.respond(Decision(verdict: .allow, reason: "User approved (\(current.payload.toolName): \(pattern))", additionalContext: ctx, updatedInput: updated))
 
-        case .alwaysDenyPattern(let pattern, let isRegex):
+        case .alwaysDenyPattern(let pattern, let isRegex, let explanation):
             ctx = nil; updated = nil
             let sanitized = Self.sanitizeDashes(pattern)
-            let rule = PersistentRule(toolName: current.payload.toolName, pattern: sanitized, isRegex: isRegex, verdict: .block)
+            let explText = (explanation?.isEmpty == false) ? explanation : nil
+            let rule = PersistentRule(toolName: current.payload.toolName, pattern: sanitized, isRegex: isRegex, verdict: .block, explanation: explText)
             ruleStore?.addRule(rule)
-            current.respond(Decision(verdict: .block, reason: "Always deny: \(current.payload.toolName): \(pattern)"))
+            var reason = "Always deny: \(current.payload.toolName): \(pattern)"
+            if let e = explText { reason += " — \(e)" }
+            current.respond(Decision(verdict: .block, reason: reason))
 
         case .alwaysAllowPattern(let pattern, let isRegex):
             ctx = nil; updated = nil
