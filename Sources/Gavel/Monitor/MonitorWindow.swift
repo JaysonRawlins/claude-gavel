@@ -177,6 +177,7 @@ struct RulesView: View {
     @State private var newToolName: String = "*"
     @State private var newIsRegex: Bool = false
     @State private var newVerdict: DecisionVerdict = .block
+    @State private var newExplanation: String = ""
     @State private var importError: String?
 
     private let toolOptions = ["*", "Bash", "Edit", "MultiEdit", "Write", "Read", "Glob", "Grep", "Agent"]
@@ -257,7 +258,7 @@ struct RulesView: View {
             HStack(spacing: 8) {
                 // Verdict picker
                 Picker("", selection: $newVerdict) {
-                    Text("Always Block").tag(DecisionVerdict.block)
+                    Text("Always Deny").tag(DecisionVerdict.block)
                     Text("Always Allow").tag(DecisionVerdict.allow)
                     Text("Always Ask").tag(DecisionVerdict.prompt)
                 }
@@ -270,20 +271,50 @@ struct RulesView: View {
                 .tint(verdictColor(newVerdict))
                 .disabled(newPattern.isEmpty)
             }
+
+            // Explanation field for deny rules — Claude sees this when blocked
+            if newVerdict == .block {
+                TextEditor(text: $newExplanation)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(height: 54)
+                    .padding(4)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .cornerRadius(6)
+                    .overlay(
+                        Group {
+                            if newExplanation.isEmpty {
+                                Text("Explanation for Claude — shown when this rule blocks a tool call")
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundColor(.secondary.opacity(0.5))
+                                    .padding(.leading, 8)
+                                    .padding(.top, 8)
+                                    .allowsHitTesting(false)
+                            }
+                        },
+                        alignment: .topLeading
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                    )
+            }
         }
     }
 
     private func addRule() {
         guard !newPattern.isEmpty else { return }
         let sanitized = ApprovalCoordinator.sanitizeDashes(newPattern)
+        let explText = (newVerdict == .block && !newExplanation.isEmpty) ? newExplanation : nil
         let rule = PersistentRule(
             toolName: newToolName,
             pattern: sanitized,
             isRegex: newIsRegex,
-            verdict: newVerdict
+            verdict: newVerdict,
+            explanation: explText
         )
         viewModel.addRule(rule)
         newPattern = ""
+        newExplanation = ""
     }
 
     // MARK: - Import/Export
@@ -371,15 +402,24 @@ struct RulesView: View {
                 .foregroundColor(.orange)
                 .frame(width: 60, alignment: .leading)
 
-            HStack(spacing: 2) {
-                if rule.isRegex {
-                    Text("/").foregroundColor(.orange)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 2) {
+                    if rule.isRegex {
+                        Text("/").foregroundColor(.orange)
+                    }
+                    Text(rule.pattern)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    if rule.isRegex {
+                        Text("/").foregroundColor(.orange)
+                    }
                 }
-                Text(rule.pattern)
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
-                if rule.isRegex {
-                    Text("/").foregroundColor(.orange)
+
+                if let explanation = rule.explanation, !explanation.isEmpty {
+                    Text(explanation)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
             }
 
