@@ -10,8 +10,11 @@ struct PatternMatcher {
     /// Pre-compiled dangerous bash command patterns.
     private let bashPatterns: [(regex: NSRegularExpression, reason: String)]
 
-    /// Pre-compiled protected file path patterns (for Write/Edit tools).
+    /// Pre-compiled protected file path patterns — hard block (credentials, persistence).
     private let protectedPaths: [(regex: NSRegularExpression, reason: String)]
+
+    /// Pre-compiled protected file path patterns — force dialog (config, hooks, shell).
+    private let askUserPaths: [(regex: NSRegularExpression, reason: String)]
 
     /// Pre-compiled sensitive read patterns (for Read tool — secrets/keys only).
     private let sensitiveReads: [(regex: NSRegularExpression, reason: String)]
@@ -96,17 +99,12 @@ struct PatternMatcher {
             ("\\bchmod\\b.*\\+x.*/tmp/", "Making temp file executable"),
         ]
 
+        // Hard block — credentials and persistence vectors that should never be written
         let rawPaths: [(pattern: String, reason: String)] = [
             // SSH keys and config
             ("\\.ssh/(id_|authorized_keys|config)", "Protected: SSH keys/config"),
             // GPG keys
             ("\\.gnupg/", "Protected: GPG keys"),
-            // Gavel's own config
-            ("\\.claude/gavel/(rules\\.json|session-defaults\\.json|hooks/|bin/)", "Protected: Gavel config"),
-            // Claude Code hooks and settings
-            ("\\.claude/(settings\\.json|settings\\.local\\.json|hooks/)", "Protected: Claude Code settings/hooks"),
-            // Shell config (persistence vector)
-            ("\\.(bash_profile|bashrc|zshrc|zprofile|profile|zshenv)$", "Protected: Shell config (persistence risk)"),
             // LaunchAgents (persistence vector)
             ("LaunchAgents/", "Protected: LaunchAgent (persistence risk)"),
             ("LaunchDaemons/", "Protected: LaunchDaemon (persistence risk)"),
@@ -117,6 +115,16 @@ struct PatternMatcher {
             ("\\.env$", "Protected: Environment file"),
         ]
 
+        // Ask user — config and tools that may legitimately need editing
+        let rawAskUserPaths: [(pattern: String, reason: String)] = [
+            // Gavel's own config
+            ("\\.claude/gavel/(rules\\.json|session-defaults\\.json|hooks/|bin/)", "Sensitive: Gavel config"),
+            // Claude Code hooks and settings
+            ("\\.claude/(settings\\.json|settings\\.local\\.json|hooks/)", "Sensitive: Claude Code settings/hooks"),
+            // Shell config
+            ("\\.(bash_profile|bashrc|zshrc|zprofile|profile|zshenv)$", "Sensitive: Shell config"),
+        ]
+
         bashPatterns = rawBash.compactMap { entry in
             guard let regex = try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive]) else {
                 return nil
@@ -125,6 +133,13 @@ struct PatternMatcher {
         }
 
         protectedPaths = rawPaths.compactMap { entry in
+            guard let regex = try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive]) else {
+                return nil
+            }
+            return (regex, entry.reason)
+        }
+
+        askUserPaths = rawAskUserPaths.compactMap { entry in
             guard let regex = try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive]) else {
                 return nil
             }
@@ -218,6 +233,21 @@ struct PatternMatcher {
         default:
             return nil
         }
+    }
+
+    /// Check sensitive paths that require user confirmation (gavel config, hooks, shell config).
+    /// Called from ApprovalEngine AFTER allow rules — returns askUser decision.
+    func matchSensitivePath(payload: PreToolUsePayload) -> String? {
+        guard ["Write", "Edit", "MultiEdit"].contains(payload.toolName) else { return nil }
+        guard let path = payload.filePath else { return nil }
+
+        let range = NSRange(path.startIndex..., in: path)
+        for (regex, reason) in askUserPaths {
+            if regex.firstMatch(in: path, range: range) != nil {
+                return reason
+            }
+        }
+        return nil
     }
 
     /// Check MCP tools separately — these are overridable by persistent allow rules.

@@ -9,9 +9,9 @@ import SwiftUI
 final class ApprovalCoordinator: ObservableObject {
 
     enum Action {
-        case allow(context: String?, updatedCommand: String?)
+        case allow(context: String?, updatedCommand: String?, updatedInput: [String: AnyCodable]?)
         case deny(context: String?)
-        case allowPatternForSession(pattern: String, context: String?, updatedCommand: String?)
+        case allowPatternForSession(pattern: String, context: String?, updatedCommand: String?, updatedInput: [String: AnyCodable]?)
         case alwaysDenyPattern(pattern: String, isRegex: Bool, explanation: String?)
         case alwaysAllowPattern(pattern: String, isRegex: Bool)
         case alwaysPromptPattern(pattern: String, isRegex: Bool)
@@ -94,9 +94,9 @@ final class ApprovalCoordinator: ObservableObject {
         let updated: [String: AnyCodable]?
 
         switch action {
-        case .allow(let context, let updatedCommand):
+        case .allow(let context, let updatedCommand, let fieldUpdates):
             ctx = context
-            updated = buildUpdatedInput(updatedCommand)
+            updated = fieldUpdates ?? buildUpdatedInput(updatedCommand)
             current.respond(Decision(verdict: .allow, reason: "User approved", additionalContext: ctx, updatedInput: updated))
         case .deny(let context):
             let reason: String
@@ -107,9 +107,9 @@ final class ApprovalCoordinator: ObservableObject {
             }
             current.respond(Decision(verdict: .block, reason: reason))
             ctx = nil; updated = nil
-        case .allowPatternForSession(let pattern, let context, let updatedCommand):
+        case .allowPatternForSession(let pattern, let context, let updatedCommand, let fieldUpdates):
             ctx = context
-            updated = buildUpdatedInput(updatedCommand)
+            updated = fieldUpdates ?? buildUpdatedInput(updatedCommand)
             let rule = SessionRule(toolName: current.payload.toolName, pattern: pattern)
             current.session.sessionRules.append(rule)
             current.respond(Decision(verdict: .allow, reason: "User approved (\(current.payload.toolName): \(pattern))", additionalContext: ctx, updatedInput: updated))
