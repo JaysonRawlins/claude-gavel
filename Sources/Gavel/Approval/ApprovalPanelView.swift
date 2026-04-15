@@ -6,6 +6,7 @@ struct ApprovalPanelView: View {
     @State private var sessionPattern: String = ""
     @State private var noteToClaudeText: String = ""
     @State private var editedCommand: String = ""
+    @State private var editedFields: [String: String] = [:]
     @State private var isRegexMode: Bool = false
 
     var body: some View {
@@ -41,6 +42,7 @@ struct ApprovalPanelView: View {
                 filePath: a.payload.filePath
             )
             editedCommand = ApprovalCoordinator.sanitizeDashes(a.payload.command ?? "")
+            editedFields = [:]
             noteToClaudeText = ""
             isRegexMode = false
         }
@@ -215,12 +217,52 @@ struct ApprovalPanelView: View {
         }
     }
 
+    /// Keys whose values are editable in the approval panel (message content, post text, etc.)
+    private static let editableKeys: Set<String> = [
+        "text", "message", "body", "content", "description", "comment", "prompt", "query"
+    ]
+
     private func genericDetails(_ payload: PreToolUsePayload) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(payload.toolInput.keys.sorted()), id: \.self) { key in
                 if let value = payload.toolInput[key]?.stringValue {
-                    labeledField(key, value: value)
+                    if Self.editableKeys.contains(key) {
+                        editableField(key, original: value)
+                    } else {
+                        labeledField(key, value: value)
+                    }
                 }
+            }
+        }
+    }
+
+    private func editableField(_ key: String, original: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(key) (editable)")
+                .font(.caption.bold())
+                .foregroundColor(.secondary)
+
+            let binding = Binding<String>(
+                get: { editedFields[key] ?? original },
+                set: { editedFields[key] = $0 }
+            )
+            let isModified = (editedFields[key] ?? original) != original
+
+            TextEditor(text: binding)
+                .font(.system(.body, design: .monospaced))
+                .frame(minHeight: 60, maxHeight: 200)
+                .padding(4)
+                .background(Color.blue.opacity(0.08))
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(isModified ? Color.orange : Color.blue.opacity(0.2), lineWidth: isModified ? 2 : 1)
+                )
+
+            if isModified {
+                Text("Modified — original will be replaced")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
             }
         }
     }
@@ -311,7 +353,8 @@ struct ApprovalPanelView: View {
                     coordinator.handleAction(.allowPatternForSession(
                         pattern: sessionPattern,
                         context: noteToClaudeText.isEmpty ? nil : noteToClaudeText,
-                        updatedCommand: cmdIfModified
+                        updatedCommand: cmdIfModified,
+                        updatedInput: updatedInputIfModified
                     ))
                 }) {
                     Label("Session Allow", systemImage: "checkmark.shield")
@@ -339,7 +382,8 @@ struct ApprovalPanelView: View {
                 Button(action: {
                     coordinator.handleAction(.allow(
                         context: noteToClaudeText.isEmpty ? nil : noteToClaudeText,
-                        updatedCommand: cmdIfModified
+                        updatedCommand: cmdIfModified,
+                        updatedInput: updatedInputIfModified
                     ))
                 }) {
                     Label("Allow Once", systemImage: "checkmark.circle")
@@ -420,6 +464,20 @@ struct ApprovalPanelView: View {
     private var cmdIfModified: String? {
         guard let original = coordinator.currentApproval?.payload.command else { return nil }
         return editedCommand != original ? editedCommand : nil
+    }
+
+    /// Returns updated toolInput if any editable fields were modified.
+    private var updatedInputIfModified: [String: AnyCodable]? {
+        guard let payload = coordinator.currentApproval?.payload else { return nil }
+        let changes = editedFields.filter { key, value in
+            value != (payload.toolInput[key]?.stringValue ?? "")
+        }
+        guard !changes.isEmpty else { return nil }
+        var input = payload.toolInput
+        for (key, value) in changes {
+            input[key] = AnyCodable(value)
+        }
+        return input
     }
 
     // MARK: - Helpers

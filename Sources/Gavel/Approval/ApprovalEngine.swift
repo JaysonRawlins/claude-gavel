@@ -5,9 +5,11 @@ import Foundation
 /// 1. Hard-blocked dangerous patterns (always block, not overridable)
 /// 2. Persistent DENY rules from RuleStore (block even under auto-approve)
 /// 3. Session pause state
-/// 4. Persistent ALLOW rules from RuleStore
-/// 5. Timed auto-approve
-/// 6. Default: pass through to interactive approval
+/// 4. Persistent PROMPT rules (force dialog even under auto-approve)
+/// 5. Persistent ALLOW rules from RuleStore
+/// 6. Sensitive paths — gavel config, hooks, shell (force dialog)
+/// 7. MCP tool blocking (force dialog, overridable by allow rules)
+/// 8. Default: pass through to interactive approval
 ///
 /// Key invariant: deny rules ALWAYS win over auto-approve.
 final class ApprovalEngine {
@@ -45,7 +47,12 @@ final class ApprovalEngine {
             return decision
         }
 
-        // 6. MCP tool blocking (after allow rules, so users can override)
+        // 6. Sensitive paths — gavel config, hooks, shell config (force dialog)
+        if let reason = patternMatcher.matchSensitivePath(payload: payload) {
+            return Decision(verdict: .block, reason: reason, askUser: true)
+        }
+
+        // 7. MCP tool blocking (after allow rules, so users can override)
         if let reason = patternMatcher.matchMcpDangerous(payload: payload) {
             return Decision(verdict: .block, reason: reason, askUser: true)
         }

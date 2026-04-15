@@ -7,7 +7,7 @@ struct MonitorWindow: View {
     @State private var selectedTab: MonitorTab = .feed
 
     enum MonitorTab {
-        case feed, rules, tester, reference
+        case feed, rules, sessions, tester, reference
     }
 
     var body: some View {
@@ -38,6 +38,7 @@ struct MonitorWindow: View {
             Picker("", selection: $selectedTab) {
                 Text("Feed").tag(MonitorTab.feed)
                 Text("Rules (\(viewModel.ruleCount))").tag(MonitorTab.rules)
+                Text("Sessions").tag(MonitorTab.sessions)
                 Text("Tester").tag(MonitorTab.tester)
                 Text("Reference").tag(MonitorTab.reference)
             }
@@ -53,6 +54,8 @@ struct MonitorWindow: View {
                 FeedView(entries: viewModel.feedEntries)
             case .rules:
                 RulesView(viewModel: viewModel)
+            case .sessions:
+                SessionRulesView(viewModel: viewModel)
             case .tester:
                 RegexTesterView(viewModel: viewModel)
             case .reference:
@@ -456,5 +459,149 @@ struct RulesView: View {
         case .allow: return .green
         case .prompt: return .yellow
         }
+    }
+}
+
+// MARK: - Session Rules View
+
+struct SessionRulesView: View {
+    @ObservedObject var viewModel: MonitorViewModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                let sessions = Array(viewModel.sessionManager.sessions.values)
+                    .sorted { $0.pid < $1.pid }
+
+                if sessions.isEmpty {
+                    Text("No active sessions.")
+                        .foregroundColor(.secondary)
+                        .padding()
+                } else {
+                    ForEach(sessions, id: \.pid) { session in
+                        sessionSection(session)
+                    }
+                }
+            }
+            .padding(8)
+        }
+        .font(.system(.caption, design: .monospaced))
+        .background(Color(nsColor: .textBackgroundColor))
+    }
+
+    private func sessionSection(_ session: Session) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Session header
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(session.isAlive ? .green : .gray)
+                    .frame(width: 8, height: 8)
+
+                Text("PID \(session.pid)")
+                    .font(.system(.body, design: .monospaced).bold())
+
+                if let cwd = session.cwd {
+                    Text(cwd.split(separator: "/").suffix(3).joined(separator: "/"))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                HStack(spacing: 4) {
+                    if session.isAutoApproveEnabled {
+                        badge("AUTO", color: .green)
+                    }
+                    if session.isSubAgentInheritEnabled {
+                        badge("SUB", color: .cyan)
+                    }
+                    if session.isPaused {
+                        badge("PAUSED", color: .orange)
+                    }
+                }
+            }
+
+            // Session info
+            HStack(spacing: 16) {
+                Text("Tools: \(session.toolCallCount)")
+                    .foregroundColor(.secondary)
+                Text("Allow: \(session.allowCount)")
+                    .foregroundColor(.green)
+                Text("Block: \(session.blockCount)")
+                    .foregroundColor(.red)
+                Text("Rules: \(session.sessionRules.count)")
+                    .foregroundColor(.purple)
+                Text("Tainted: \(session.taintedPaths.count)")
+                    .foregroundColor(.orange)
+            }
+            .font(.caption2)
+
+            // Session rules
+            if session.sessionRules.isEmpty {
+                Text("No session rules")
+                    .foregroundColor(.secondary)
+                    .font(.caption)
+                    .padding(.leading, 16)
+            } else {
+                ForEach(session.sessionRules) { rule in
+                    HStack(spacing: 6) {
+                        Text("ALLOW")
+                            .font(.caption2.bold())
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.purple)
+                            .cornerRadius(3)
+
+                        Text(rule.toolName)
+                            .foregroundColor(.orange)
+
+                        Text(rule.pattern)
+                            .foregroundColor(.primary)
+
+                        Spacer()
+
+                        Button(action: {
+                            session.sessionRules.removeAll { $0.id == rule.id }
+                        }) {
+                            Image(systemName: "trash")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.leading, 16)
+                }
+            }
+
+            // Tainted paths (if any)
+            if !session.taintedPaths.isEmpty {
+                Text("Tainted paths:")
+                    .font(.caption2.bold())
+                    .foregroundColor(.orange)
+                    .padding(.leading, 16)
+                    .padding(.top, 2)
+
+                ForEach(Array(session.taintedPaths.sorted()), id: \.self) { path in
+                    Text(path)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 24)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(10)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        .cornerRadius(6)
+    }
+
+    private func badge(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.caption2.bold())
+            .foregroundColor(.white)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(color)
+            .cornerRadius(3)
     }
 }
