@@ -145,12 +145,9 @@ struct SessionRule: Identifiable {
         switch toolName {
         case "Bash":
             guard let cmd = command, !cmd.isEmpty else { return "*" }
-            let parts = cmd.split(separator: " ", maxSplits: 2)
-            if parts.count >= 2 {
-                // "swift build -c release" → "swift build*"
-                return "\(parts[0]) \(parts[1])*"
-            }
-            return "\(parts[0]) *"
+            // Use the full command so Session Allow matches exactly this command.
+            // User can edit the pattern to broaden it (e.g. add * wildcard).
+            return cmd
 
         case "Edit", "MultiEdit", "Write":
             guard let path = filePath else { return "*" }

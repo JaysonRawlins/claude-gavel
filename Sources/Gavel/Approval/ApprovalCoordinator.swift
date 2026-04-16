@@ -3,9 +3,9 @@ import SwiftUI
 
 /// Coordinates interactive approval dialogs for PreToolUse events.
 ///
-/// When auto-approve is off, queues incoming requests and shows a floating
-/// panel for each one. The socket handler blocks (via semaphore) until
-/// the user responds.
+/// Each session (PID) gets its own floating panel so approvals from
+/// different projects don't block each other. The socket handler blocks
+/// (via semaphore) until the user responds on that session's panel.
 final class ApprovalCoordinator: ObservableObject {
 
     enum Action {
@@ -28,15 +28,33 @@ final class ApprovalCoordinator: ObservableObject {
         let respond: (Decision) -> Void
     }
 
-    @Published var currentApproval: PendingApproval?
-    @Published var queueCount: Int = 0
+    /// Per-session approval state. Each session gets its own panel and queue.
+    final class SessionPanel: ObservableObject {
+        let pid: Int
+        @Published var currentApproval: PendingApproval?
+        @Published var queueCount: Int = 0
+        var pendingQueue: [PendingApproval] = []
+        var panel: NSPanel?
 
-    private var pendingQueue: [PendingApproval] = []
-    private var panel: NSPanel?
+        init(pid: Int) { self.pid = pid }
+    }
+
+    /// Active session panels, keyed by PID.
+    private var sessionPanels: [Int: SessionPanel] = [:]
+
+    /// Currently focused session panel (for compatibility with single-panel callers).
+    @Published var activeSessionPanel: SessionPanel?
+
+    /// Get or create a SessionPanel for a PID.
+    private func sessionPanel(for pid: Int) -> SessionPanel {
+        if let existing = sessionPanels[pid] { return existing }
+        let sp = SessionPanel(pid: pid)
+        sessionPanels[pid] = sp
+        return sp
+    }
 
     /// Request approval for a tool use. Blocks the calling thread until the user decides.
     /// Called from socket handler (background thread).
-    /// Set `forceDialog` to true to show the dialog even under auto-approve (used for MCP writes).
     func requestApproval(
         payload: PreToolUsePayload,
         session: Session,
@@ -61,26 +79,28 @@ final class ApprovalCoordinator: ObservableObject {
         }
 
         DispatchQueue.main.async {
-            if self.currentApproval == nil {
-                self.showApproval(pending)
+            let sp = self.sessionPanel(for: session.pid)
+            if sp.currentApproval == nil {
+                self.showApproval(pending, on: sp)
             } else {
-                self.pendingQueue.append(pending)
-                self.queueCount = self.pendingQueue.count
+                sp.pendingQueue.append(pending)
+                sp.queueCount = sp.pendingQueue.count
             }
         }
 
         let waitResult = semaphore.wait(timeout: .now() + GavelConstants.approvalTimeoutSeconds)
         if waitResult == .timedOut {
             DispatchQueue.main.async {
-                self.dismissCurrent()
+                let sp = self.sessionPanel(for: session.pid)
+                self.dismissCurrent(on: sp)
             }
         }
         return result
     }
 
     /// Handle the user's decision from the approval panel.
-    func handleAction(_ action: Action) {
-        guard let current = currentApproval else { return }
+    func handleAction(_ action: Action, on sessionPanel: SessionPanel) {
+        guard let current = sessionPanel.currentApproval else { return }
 
         // Build updatedInput if user modified the command
         func buildUpdatedInput(_ updatedCommand: String?) -> [String: AnyCodable]? {
@@ -136,37 +156,44 @@ final class ApprovalCoordinator: ObservableObject {
             let sanitized = Self.sanitizeDashes(pattern)
             let rule = PersistentRule(toolName: current.payload.toolName, pattern: sanitized, isRegex: isRegex, verdict: .prompt)
             ruleStore?.addRule(rule)
-            // For this invocation, still need user to decide — show as allow (they already saw the dialog)
             current.respond(Decision(verdict: .allow, reason: "Always prompt rule saved: \(current.payload.toolName): \(pattern)"))
         }
 
-        advanceQueue()
+        advanceQueue(on: sessionPanel)
+    }
+
+    /// Backward-compatible handleAction for callers that don't specify a session panel.
+    func handleAction(_ action: Action) {
+        guard let sp = activeSessionPanel else { return }
+        handleAction(action, on: sp)
     }
 
     /// Enable auto-approve for a session and flush its pending approvals.
-    /// Forced dialogs (from prompt rules / MCP blocks) are NOT flushed — they require explicit action.
+    /// Forced dialogs (from prompt rules / MCP blocks) are NOT flushed.
     func enableAutoApprove(for session: Session) {
         session.isAutoApproveEnabled = true
 
-        // Flush current if it belongs to this session — but not if forced
-        if let current = currentApproval, current.session.pid == session.pid, !current.forceDialog {
+        guard let sp = sessionPanels[session.pid] else { return }
+
+        // Flush current if not forced
+        if let current = sp.currentApproval, !current.forceDialog {
             current.respond(Decision(verdict: .allow, reason: "Auto-approved"))
-            currentApproval = nil
+            sp.currentApproval = nil
         }
-        // Flush queued items for this session — but not forced ones
-        let (forSession, remaining) = pendingQueue.partitioned { $0.session.pid == session.pid && !$0.forceDialog }
-        for pending in forSession {
+        // Flush queued items — but not forced ones
+        let (flushable, remaining) = sp.pendingQueue.partitioned { !$0.forceDialog }
+        for pending in flushable {
             pending.respond(Decision(verdict: .allow, reason: "Auto-approved"))
         }
-        pendingQueue = remaining
-        queueCount = pendingQueue.count
+        sp.pendingQueue = remaining
+        sp.queueCount = sp.pendingQueue.count
 
-        if currentApproval == nil {
-            if pendingQueue.isEmpty {
-                closePanel()
+        if sp.currentApproval == nil {
+            if sp.pendingQueue.isEmpty {
+                closePanel(on: sp)
             } else {
-                showApproval(pendingQueue.removeFirst())
-                queueCount = pendingQueue.count
+                showApproval(sp.pendingQueue.removeFirst(), on: sp)
+                sp.queueCount = sp.pendingQueue.count
             }
         }
     }
@@ -175,44 +202,50 @@ final class ApprovalCoordinator: ObservableObject {
         session.isAutoApproveEnabled = false
     }
 
-    // MARK: - Panel Management
+    // MARK: - Per-Session Panel Management
 
-    private func showApproval(_ approval: PendingApproval) {
-        currentApproval = approval
+    private func showApproval(_ approval: PendingApproval, on sp: SessionPanel) {
+        sp.currentApproval = approval
+        activeSessionPanel = sp
 
-        if panel == nil {
-            createPanel()
+        if sp.panel == nil {
+            createPanel(for: sp)
         }
 
-        panel?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        // Update title with project context
+        let cwdSuffix = approval.session.cwd.map { cwd in
+            let parts = cwd.split(separator: "/").suffix(2).joined(separator: "/")
+            return " — \(parts)"
+        } ?? ""
+        sp.panel?.title = "Gavel — PID \(sp.pid)\(cwdSuffix)"
 
-        // Play a sound to get attention
+        sp.panel?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
         NSSound(named: "Tink")?.play()
     }
 
-    private func advanceQueue() {
-        currentApproval = nil
-        if pendingQueue.isEmpty {
-            closePanel()
+    private func advanceQueue(on sp: SessionPanel) {
+        sp.currentApproval = nil
+        if sp.pendingQueue.isEmpty {
+            closePanel(on: sp)
         } else {
-            let next = pendingQueue.removeFirst()
-            queueCount = pendingQueue.count
-            showApproval(next)
+            let next = sp.pendingQueue.removeFirst()
+            sp.queueCount = sp.pendingQueue.count
+            showApproval(next, on: sp)
         }
     }
 
-    private func dismissCurrent() {
-        currentApproval = nil
-        if pendingQueue.isEmpty {
-            closePanel()
+    private func dismissCurrent(on sp: SessionPanel) {
+        sp.currentApproval = nil
+        if sp.pendingQueue.isEmpty {
+            closePanel(on: sp)
         } else {
-            advanceQueue()
+            advanceQueue(on: sp)
         }
     }
 
-    private func createPanel() {
-        let contentView = ApprovalPanelView(coordinator: self)
+    private func createPanel(for sp: SessionPanel) {
+        let contentView = ApprovalPanelView(coordinator: self, sessionPanel: sp)
         let hostingView = NSHostingView(rootView: contentView)
 
         let p = NSPanel(
@@ -221,16 +254,25 @@ final class ApprovalCoordinator: ObservableObject {
             backing: .buffered,
             defer: false
         )
-        p.title = "Gavel — Approve Tool Use"
+        p.title = "Gavel — PID \(sp.pid)"
         p.contentView = hostingView
         p.center()
         p.isFloatingPanel = true
         p.level = .floating
         p.isReleasedWhenClosed = false
         p.hidesOnDeactivate = false
-        // Allow text editing operations (paste, cut, copy, select all)
         p.acceptsMouseMovedEvents = true
-        panel = p
+
+        // Offset each session's panel so they don't stack on top of each other
+        let offset = CGFloat(sessionPanels.count - 1) * 30
+        if let frame = p.screen?.visibleFrame {
+            p.setFrameOrigin(NSPoint(
+                x: frame.midX - GavelConstants.panelWidth / 2 + offset,
+                y: frame.midY - GavelConstants.panelHeight / 2 - offset
+            ))
+        }
+
+        sp.panel = p
     }
 
     /// Replace typographic dashes (macOS smart dashes) with ASCII hyphens.
@@ -240,8 +282,8 @@ final class ApprovalCoordinator: ObservableObject {
              .replacingOccurrences(of: "\u{2012}", with: "-")  // figure dash
     }
 
-    private func closePanel() {
-        panel?.orderOut(nil)
+    private func closePanel(on sp: SessionPanel) {
+        sp.panel?.orderOut(nil)
     }
 }
 

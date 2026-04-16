@@ -7,8 +7,11 @@ import Foundation
 /// 2. **Protected path patterns** — block Write/Edit to sensitive file paths
 struct PatternMatcher {
 
-    /// Pre-compiled dangerous bash command patterns.
+    /// Pre-compiled dangerous bash command patterns — hard block.
     private let bashPatterns: [(regex: NSRegularExpression, reason: String)]
+
+    /// Pre-compiled bash patterns that force dialog — destructive but sometimes legitimate.
+    private let askUserBashPatterns: [(regex: NSRegularExpression, reason: String)]
 
     /// Pre-compiled protected file path patterns — hard block (credentials, persistence).
     private let protectedPaths: [(regex: NSRegularExpression, reason: String)]
@@ -16,8 +19,11 @@ struct PatternMatcher {
     /// Pre-compiled protected file path patterns — force dialog (config, hooks, shell).
     private let askUserPaths: [(regex: NSRegularExpression, reason: String)]
 
-    /// Pre-compiled sensitive read patterns (for Read tool — secrets/keys only).
+    /// Pre-compiled sensitive read patterns — hard block (actual secrets).
     private let sensitiveReads: [(regex: NSRegularExpression, reason: String)]
+
+    /// Pre-compiled sensitive read patterns — force dialog (configuration).
+    private let askUserReads: [(regex: NSRegularExpression, reason: String)]
 
     init() {
         let rawBash: [(pattern: String, reason: String)] = [
@@ -56,11 +62,7 @@ struct PatternMatcher {
             ("\\blaunchctl\\b\\s+(load|unload|submit|bootstrap|bootout|enable|disable|kickstart)", "LaunchAgent/Daemon modification"),
             ("\\bat\\b\\s+", "at job scheduling"),
 
-            // ── Destructive operations (expanded) ──
-            ("\\brm\\s+-\\w*[rR]\\w*\\s+/(?!tmp\\b)", "Recursive delete from root"),
-            ("\\brm\\s+-\\w*[rR]\\w*\\s+\\./", "Recursive delete from current directory"),
-            ("\\brm\\s+-\\w*[rR]\\w*\\s+\\.\\./", "Recursive delete from parent directory"),
-            ("\\brm\\s+--recursive", "Recursive delete (long flag)"),
+            // ── Destructive operations (catastrophic, non-recoverable) ──
             ("\\bmkfs\\b", "Filesystem format command"),
             ("\\bdd\\b\\s+.*of=/dev/", "Direct disk write"),
 
@@ -99,6 +101,19 @@ struct PatternMatcher {
             ("\\bchmod\\b.*\\+x.*/tmp/", "Making temp file executable"),
         ]
 
+        // Destructive/sensitive bash commands — force dialog instead of hard block
+        let rawAskUserBash: [(pattern: String, reason: String)] = [
+            // Recursive delete
+            ("\\brm\\s+-\\w*[rR]\\w*\\s+/(?!tmp\\b)", "Recursive delete from root path"),
+            ("\\brm\\s+-\\w*[rR]\\w*\\s+\\./", "Recursive delete from current directory"),
+            ("\\brm\\s+-\\w*[rR]\\w*\\s+\\.\\./", "Recursive delete from parent directory"),
+            ("\\brm\\s+--recursive", "Recursive delete (long flag)"),
+            // Cloud CLI write operations
+            ("\\baz\\s+.*\\b(update|create|delete|set|add|remove|start|stop|restart)\\b", "Azure CLI write operation"),
+            ("\\baws\\s+.*\\b(create|delete|update|put|remove|terminate|stop|start|modify|run)\\b(?!.*--dry-run)", "AWS CLI write operation"),
+            ("\\bgcloud\\s+.*\\b(create|delete|update|add|remove|start|stop|deploy)\\b", "GCloud CLI write operation"),
+        ]
+
         // Hard block — credentials and persistence vectors that should never be written
         let rawPaths: [(pattern: String, reason: String)] = [
             // SSH keys and config
@@ -132,6 +147,13 @@ struct PatternMatcher {
             return (regex, entry.reason)
         }
 
+        askUserBashPatterns = rawAskUserBash.compactMap { entry in
+            guard let regex = try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive]) else {
+                return nil
+            }
+            return (regex, entry.reason)
+        }
+
         protectedPaths = rawPaths.compactMap { entry in
             guard let regex = try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive]) else {
                 return nil
@@ -146,6 +168,7 @@ struct PatternMatcher {
             return (regex, entry.reason)
         }
 
+        // Hard block — actual secrets that should never be read
         let rawSensitiveReads: [(pattern: String, reason: String)] = [
             // SSH private keys
             ("\\.ssh/(id_|id_rsa|id_ed25519|id_ecdsa)", "Blocked: SSH private key read"),
@@ -158,8 +181,6 @@ struct PatternMatcher {
             // Environment files with secrets
             ("\\.env$", "Blocked: Environment file read"),
             ("\\.env\\.local$", "Blocked: Local environment file read"),
-            // Gavel rules (prevent reading to reverse-engineer deny patterns)
-            ("\\.claude/gavel/rules\\.json", "Blocked: Gavel rules read"),
             // Keychain
             ("Keychains/", "Blocked: Keychain access"),
             // Token/credential files
@@ -170,7 +191,20 @@ struct PatternMatcher {
             ("\\.netrc$", "Blocked: netrc credentials"),
         ]
 
+        // Ask user — configuration that may need reading for self-mutation
+        let rawAskUserReads: [(pattern: String, reason: String)] = [
+            ("\\.claude/gavel/rules\\.json", "Sensitive: Gavel rules read"),
+            ("\\.claude/gavel/session-defaults\\.json", "Sensitive: Gavel defaults read"),
+        ]
+
         sensitiveReads = rawSensitiveReads.compactMap { entry in
+            guard let regex = try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive]) else {
+                return nil
+            }
+            return (regex, entry.reason)
+        }
+
+        askUserReads = rawAskUserReads.compactMap { entry in
             guard let regex = try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive]) else {
                 return nil
             }
@@ -238,15 +272,38 @@ struct PatternMatcher {
     /// Check sensitive paths that require user confirmation (gavel config, hooks, shell config).
     /// Called from ApprovalEngine AFTER allow rules — returns askUser decision.
     func matchSensitivePath(payload: PreToolUsePayload) -> String? {
-        guard ["Write", "Edit", "MultiEdit"].contains(payload.toolName) else { return nil }
-        guard let path = payload.filePath else { return nil }
-
-        let range = NSRange(path.startIndex..., in: path)
-        for (regex, reason) in askUserPaths {
-            if regex.firstMatch(in: path, range: range) != nil {
-                return reason
+        // Bash: check askUser destructive patterns (rm -rf etc.)
+        if payload.toolName == "Bash", let command = payload.command {
+            let stripped = Self.stripQuotedContent(command)
+            let range = NSRange(stripped.startIndex..., in: stripped)
+            for (regex, reason) in askUserBashPatterns {
+                if regex.firstMatch(in: stripped, range: range) != nil {
+                    return reason
+                }
             }
         }
+
+        guard let path = payload.filePath else { return nil }
+        let range = NSRange(path.startIndex..., in: path)
+
+        // Write/Edit: check askUser write paths
+        if ["Write", "Edit", "MultiEdit"].contains(payload.toolName) {
+            for (regex, reason) in askUserPaths {
+                if regex.firstMatch(in: path, range: range) != nil {
+                    return reason
+                }
+            }
+        }
+
+        // Read: check askUser read paths (config files needed for self-mutation)
+        if payload.toolName == "Read" {
+            for (regex, reason) in askUserReads {
+                if regex.firstMatch(in: path, range: range) != nil {
+                    return reason
+                }
+            }
+        }
+
         return nil
     }
 

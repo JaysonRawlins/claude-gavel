@@ -1,8 +1,10 @@
 import SwiftUI
 
 /// The interactive approval dialog shown for each PreToolUse event.
+/// Each session gets its own panel via SessionPanel.
 struct ApprovalPanelView: View {
     @ObservedObject var coordinator: ApprovalCoordinator
+    @ObservedObject var sessionPanel: ApprovalCoordinator.SessionPanel
     @State private var sessionPattern: String = ""
     @State private var noteToClaudeText: String = ""
     @State private var editedCommand: String = ""
@@ -11,7 +13,7 @@ struct ApprovalPanelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let approval = coordinator.currentApproval {
+            if let approval = sessionPanel.currentApproval {
                 toolHeader(approval)
                 Divider()
                 toolDetails(approval)
@@ -26,7 +28,7 @@ struct ApprovalPanelView: View {
             }
         }
         .frame(minWidth: 560, minHeight: 300)
-        .onChange(of: coordinator.currentApproval?.timestamp) { _ in
+        .onChange(of: sessionPanel.currentApproval?.timestamp) { _ in
             resetFields()
         }
         .onAppear {
@@ -35,7 +37,7 @@ struct ApprovalPanelView: View {
     }
 
     private func resetFields() {
-        if let a = coordinator.currentApproval {
+        if let a = sessionPanel.currentApproval {
             sessionPattern = SessionRule.suggestPattern(
                 toolName: a.payload.toolName,
                 command: a.payload.command,
@@ -63,8 +65,8 @@ struct ApprovalPanelView: View {
 
             Spacer()
 
-            if coordinator.queueCount > 0 {
-                Text("+\(coordinator.queueCount) queued")
+            if sessionPanel.queueCount > 0 {
+                Text("+\(sessionPanel.queueCount) queued")
                     .font(.caption)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -290,29 +292,42 @@ struct ApprovalPanelView: View {
     private func actionBar(_ approval: ApprovalCoordinator.PendingApproval) -> some View {
         VStack(spacing: 6) {
             // Pattern field with regex toggle
-            HStack(spacing: 4) {
-                Text("\(approval.payload.toolName):")
-                    .font(.system(.body, design: .monospaced).bold())
-                    .foregroundColor(colorForTool(approval.payload.toolName))
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 4) {
+                    Text("\(approval.payload.toolName):")
+                        .font(.system(.body, design: .monospaced).bold())
+                        .foregroundColor(colorForTool(approval.payload.toolName))
 
-                if isRegexMode {
-                    Text("/")
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundColor(.orange)
-                }
-                TextField(isRegexMode ? "regex pattern" : "glob pattern (* = wildcard)", text: $sessionPattern)
-                    .font(.system(.body, design: .monospaced))
-                    .textFieldStyle(.roundedBorder)
-                if isRegexMode {
-                    Text("/")
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundColor(.orange)
-                }
+                    if isRegexMode {
+                        Text("/")
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundColor(.orange)
+                    }
 
-                Toggle("Regex", isOn: $isRegexMode)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
+                    Spacer()
+
+                    if isRegexMode {
+                        Text("/")
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundColor(.orange)
+                    }
+
+                    Toggle("Regex", isOn: $isRegexMode)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
                     .tint(.orange)
+                }
+
+                TextEditor(text: $sessionPattern)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(height: 54)
+                    .padding(4)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                    )
             }
 
             // Live pattern tester
@@ -321,7 +336,7 @@ struct ApprovalPanelView: View {
             // Persistent + session rules row
             HStack(spacing: 6) {
                 Button(action: {
-                    coordinator.handleAction(.alwaysDenyPattern(pattern: sessionPattern, isRegex: isRegexMode, explanation: noteToClaudeText.isEmpty ? nil : noteToClaudeText))
+                    coordinator.handleAction(.alwaysDenyPattern(pattern: sessionPattern, isRegex: isRegexMode, explanation: noteToClaudeText.isEmpty ? nil : noteToClaudeText), on: sessionPanel)
                 }) {
                     Label("Always Deny", systemImage: "hand.raised")
                 }
@@ -330,7 +345,7 @@ struct ApprovalPanelView: View {
                 .keyboardShortcut("d", modifiers: [.command, .shift])
 
                 Button(action: {
-                    coordinator.handleAction(.alwaysAllowPattern(pattern: sessionPattern, isRegex: isRegexMode))
+                    coordinator.handleAction(.alwaysAllowPattern(pattern: sessionPattern, isRegex: isRegexMode), on: sessionPanel)
                 }) {
                     Label("Always Allow", systemImage: "shield.checkered")
                 }
@@ -339,7 +354,7 @@ struct ApprovalPanelView: View {
                 .keyboardShortcut("a", modifiers: [.command, .shift])
 
                 Button(action: {
-                    coordinator.handleAction(.alwaysPromptPattern(pattern: sessionPattern, isRegex: isRegexMode))
+                    coordinator.handleAction(.alwaysPromptPattern(pattern: sessionPattern, isRegex: isRegexMode), on: sessionPanel)
                 }) {
                     Label("Always Prompt", systemImage: "bell.badge")
                 }
@@ -355,7 +370,7 @@ struct ApprovalPanelView: View {
                         context: noteToClaudeText.isEmpty ? nil : noteToClaudeText,
                         updatedCommand: cmdIfModified,
                         updatedInput: updatedInputIfModified
-                    ))
+                    ), on: sessionPanel)
                 }) {
                     Label("Session Allow", systemImage: "checkmark.shield")
                 }
@@ -369,7 +384,7 @@ struct ApprovalPanelView: View {
                 Button(action: {
                     coordinator.handleAction(.deny(
                         context: noteToClaudeText.isEmpty ? nil : noteToClaudeText
-                    ))
+                    ), on: sessionPanel)
                 }) {
                     Label("Deny", systemImage: "xmark.circle")
                 }
@@ -384,7 +399,7 @@ struct ApprovalPanelView: View {
                         context: noteToClaudeText.isEmpty ? nil : noteToClaudeText,
                         updatedCommand: cmdIfModified,
                         updatedInput: updatedInputIfModified
-                    ))
+                    ), on: sessionPanel)
                 }) {
                     Label("Allow Once", systemImage: "checkmark.circle")
                 }
@@ -462,13 +477,13 @@ struct ApprovalPanelView: View {
 
     /// Returns the edited command only if it differs from the original.
     private var cmdIfModified: String? {
-        guard let original = coordinator.currentApproval?.payload.command else { return nil }
+        guard let original = sessionPanel.currentApproval?.payload.command else { return nil }
         return editedCommand != original ? editedCommand : nil
     }
 
     /// Returns updated toolInput if any editable fields were modified.
     private var updatedInputIfModified: [String: AnyCodable]? {
-        guard let payload = coordinator.currentApproval?.payload else { return nil }
+        guard let payload = sessionPanel.currentApproval?.payload else { return nil }
         let changes = editedFields.filter { key, value in
             value != (payload.toolInput[key]?.stringValue ?? "")
         }
