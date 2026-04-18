@@ -318,50 +318,73 @@ final class PatternMatcherTests: XCTestCase {
         XCTAssertNil(matcher.matchDangerous(payload: payload))
     }
 
-    // MARK: - MCP tool blocking
+    // MARK: - Seeded MCP rules (now persistent rules, not hardcoded patterns)
 
-    // MCP tools use matchMcpDangerous (overridable by allow rules)
-    func testSlackSendBlocked() {
+    func testSeededSlackRulePrompts() {
+        // Seeded defaults include Slack write pattern
+        let store = RuleStore(configPath: "/dev/null")
+        let engine = ApprovalEngine(ruleStore: store)
+        let session = Session(pid: 77777)
         let payload = PreToolUsePayload(toolName: "mcp__SlackLocal__send_message", toolInput: [:])
-        XCTAssertNotNil(matcher.matchMcpDangerous(payload: payload))
+        let decision = engine.evaluate(payload: payload, session: session)
+        XCTAssertEqual(decision.verdict, .block)
+        XCTAssertTrue(decision.askUser)
+        XCTAssertTrue(decision.reason?.contains("Default rule") ?? false)
     }
 
-    func testSlackUploadBlocked() {
-        let payload = PreToolUsePayload(toolName: "mcp__SlackLocal__upload_image", toolInput: [:])
-        XCTAssertNotNil(matcher.matchMcpDangerous(payload: payload))
-    }
-
-    func testPlaywrightNavigateBlocked() {
+    func testSeededPlaywrightRulePrompts() {
+        let store = RuleStore(configPath: "/dev/null")
+        let engine = ApprovalEngine(ruleStore: store)
+        let session = Session(pid: 77777)
         let payload = PreToolUsePayload(toolName: "mcp__Playwright__browser_navigate", toolInput: [:])
-        XCTAssertNotNil(matcher.matchMcpDangerous(payload: payload))
+        let decision = engine.evaluate(payload: payload, session: session)
+        XCTAssertEqual(decision.verdict, .block)
+        XCTAssertTrue(decision.askUser)
     }
 
-    func testPlaywrightEvalBlocked() {
-        let payload = PreToolUsePayload(toolName: "mcp__Playwright__browser_evaluate", toolInput: [:])
-        XCTAssertNotNil(matcher.matchMcpDangerous(payload: payload))
-    }
-
-    func testSlackReadAllowed() {
-        let payload = PreToolUsePayload(toolName: "mcp__SlackLocal__read_history", toolInput: [:])
-        XCTAssertNil(matcher.matchMcpDangerous(payload: payload))
-    }
-
-    func testEngramAllowed() {
+    func testSeededRuleAllowsNonExfilMcp() {
+        // Todoist, engram etc. should NOT be blocked
+        let store = RuleStore(configPath: "/dev/null")
+        let engine = ApprovalEngine(ruleStore: store)
+        let session = Session(pid: 77777)
         let payload = PreToolUsePayload(toolName: "mcp__engram__search", toolInput: [:])
-        XCTAssertNil(matcher.matchMcpDangerous(payload: payload))
+        let decision = engine.evaluate(payload: payload, session: session)
+        XCTAssertEqual(decision.verdict, .allow)
     }
 
-    func testMcpAllowRuleOverridesBlock() {
-        // Simulate: user adds Always Allow for Slack send
+    func testSeededRuleAllowsTodoist() {
+        let store = RuleStore(configPath: "/dev/null")
+        let engine = ApprovalEngine(ruleStore: store)
+        let session = Session(pid: 77777)
+        let payload = PreToolUsePayload(toolName: "mcp__Todoist__todoist_create_task", toolInput: [:])
+        let decision = engine.evaluate(payload: payload, session: session)
+        XCTAssertEqual(decision.verdict, .allow)
+    }
+
+    func testAllowRuleOverridesSeededPrompt() {
+        // User adds explicit allow → overrides built-in prompt (allow is Stage 5, built-in prompt is Stage 6)
         let store = RuleStore(configPath: "/dev/null")
         store.addRule(PersistentRule(toolName: "mcp__SlackLocal__send_message", pattern: "*", verdict: .allow))
         let engine = ApprovalEngine(ruleStore: store)
         let session = Session(pid: 77777)
         let payload = PreToolUsePayload(toolName: "mcp__SlackLocal__send_message", toolInput: [:])
         let decision = engine.evaluate(payload: payload, session: session)
-        // Allow rule should win over MCP block
         XCTAssertEqual(decision.verdict, .allow)
         XCTAssertTrue(decision.reason?.contains("Always allow") ?? false)
+    }
+
+    func testUserPromptNotOverriddenByAllow() {
+        // User prompt (builtIn=false) at Stage 4 beats allow at Stage 5
+        let store = RuleStore(configPath: "/dev/null")
+        store.addRule(PersistentRule(toolName: "*", pattern: "mcp__.*deploy.*", isRegex: true, verdict: .prompt))
+        store.addRule(PersistentRule(toolName: "*", pattern: "*", verdict: .allow))
+        let engine = ApprovalEngine(ruleStore: store)
+        let session = Session(pid: 77777)
+        let payload = PreToolUsePayload(toolName: "mcp__deploy__run", toolInput: [:])
+        let decision = engine.evaluate(payload: payload, session: session)
+        XCTAssertEqual(decision.verdict, .block)
+        XCTAssertTrue(decision.askUser)
+        XCTAssertTrue(decision.reason?.contains("Always prompt") ?? false)
     }
 
     // MARK: - Session rule poisoning prevention

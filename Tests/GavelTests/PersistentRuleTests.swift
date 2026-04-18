@@ -137,4 +137,142 @@ final class PersistentRuleTests: XCTestCase {
         var rule = PersistentRule(toolName: "Bash", pattern: "mcp__LinkedIn__linkedin_create", isRegex: true, verdict: .prompt)
         XCTAssertFalse(rule.matches(toolName: "mcp__LinkedIn__linkedin_create_post", command: nil, filePath: nil))
     }
+
+    // MARK: - Built-in flag
+
+    func testBuiltInDefaultsFalse() {
+        let rule = PersistentRule(toolName: "Bash", pattern: "git *", verdict: .allow)
+        XCTAssertFalse(rule.builtIn)
+    }
+
+    func testBuiltInFlagBackwardCompat() throws {
+        // Old rules.json without builtIn field should decode as false
+        let json = """
+        {
+            "id": "22222222-2222-2222-2222-222222222222",
+            "name": "Bash: git*",
+            "toolName": "Bash",
+            "pattern": "git*",
+            "verdict": "allow",
+            "createdAt": 797440000.0
+        }
+        """
+        let rule = try JSONDecoder().decode(PersistentRule.self, from: json.data(using: .utf8)!)
+        XCTAssertFalse(rule.builtIn)
+    }
+
+    func testBuiltInFlagDecodesWhenPresent() throws {
+        let json = """
+        {
+            "id": "33333333-3333-3333-3333-333333333333",
+            "name": "*: /mcp__.*slack.*/",
+            "toolName": "*",
+            "pattern": "mcp__.*slack.*send",
+            "isRegex": true,
+            "verdict": "prompt",
+            "createdAt": 797440000.0,
+            "builtIn": true
+        }
+        """
+        let rule = try JSONDecoder().decode(PersistentRule.self, from: json.data(using: .utf8)!)
+        XCTAssertTrue(rule.builtIn)
+        XCTAssertTrue(rule.isRegex)
+    }
+
+    // MARK: - Seeding
+
+    func testSeededDefaultsArePresent() {
+        let store = RuleStore(configPath: "/dev/null")
+        let builtInRules = store.rules.filter { $0.builtIn }
+        XCTAssertEqual(builtInRules.count, RuleStore.seededDefaults.count)
+        // v2: 5 MCP exfil + 3 self-protection = 8
+        XCTAssertEqual(builtInRules.count, 8)
+    }
+
+    func testSeededRulesArePromptVerdict() {
+        let store = RuleStore(configPath: "/dev/null")
+        let builtInRules = store.rules.filter { $0.builtIn }
+        for rule in builtInRules {
+            XCTAssertEqual(rule.verdict, .prompt)
+        }
+    }
+
+    // MARK: - Split prompt evaluation
+
+    func testEvaluateUserPromptSkipsBuiltIn() {
+        let store = RuleStore(configPath: "/dev/null")
+        // All seeded rules are builtIn — evaluateUserPrompt should skip them
+        let payload = PreToolUsePayload(toolName: "mcp__SlackLocal__send_message", toolInput: [:])
+        XCTAssertNil(store.evaluateUserPrompt(payload: payload))
+    }
+
+    func testEvaluateBuiltInPromptMatchesSeeded() {
+        let store = RuleStore(configPath: "/dev/null")
+        let payload = PreToolUsePayload(toolName: "mcp__SlackLocal__send_message", toolInput: [:])
+        let decision = store.evaluateBuiltInPrompt(payload: payload)
+        XCTAssertNotNil(decision)
+        XCTAssertEqual(decision?.verdict, .block)
+        XCTAssertTrue(decision?.askUser ?? false)
+    }
+
+    func testEvaluateBuiltInPromptSkipsUserRules() {
+        let store = RuleStore(configPath: "/dev/null")
+        store.addRule(PersistentRule(toolName: "*", pattern: "mcp__custom__deploy", isRegex: true, verdict: .prompt))
+        let payload = PreToolUsePayload(toolName: "mcp__custom__deploy", toolInput: [:])
+        // evaluateBuiltInPrompt should NOT match user-created prompt rule
+        XCTAssertNil(store.evaluateBuiltInPrompt(payload: payload))
+        // evaluateUserPrompt SHOULD match it
+        XCTAssertNotNil(store.evaluateUserPrompt(payload: payload))
+    }
+
+    // MARK: - Self-protection built-in rules
+
+    func testCatOnGavelRulesPrompts() {
+        let store = RuleStore(configPath: "/dev/null")
+        let engine = ApprovalEngine(ruleStore: store)
+        let session = Session(pid: 88888)
+        let payload = PreToolUsePayload(toolName: "Bash", toolInput: ["command": AnyCodable("cat ~/.claude/gavel/rules.json")])
+        let decision = engine.evaluate(payload: payload, session: session)
+        XCTAssertEqual(decision.verdict, .block)
+        XCTAssertTrue(decision.askUser)
+    }
+
+    func testCatOnClaudeSettingsPrompts() {
+        let store = RuleStore(configPath: "/dev/null")
+        let engine = ApprovalEngine(ruleStore: store)
+        let session = Session(pid: 88888)
+        let payload = PreToolUsePayload(toolName: "Bash", toolInput: ["command": AnyCodable("cat ~/.claude/settings.json")])
+        let decision = engine.evaluate(payload: payload, session: session)
+        XCTAssertEqual(decision.verdict, .block)
+        XCTAssertTrue(decision.askUser)
+    }
+
+    func testEchoRedirectToRulesPrompts() {
+        let store = RuleStore(configPath: "/dev/null")
+        let engine = ApprovalEngine(ruleStore: store)
+        let session = Session(pid: 88888)
+        let payload = PreToolUsePayload(toolName: "Bash", toolInput: ["command": AnyCodable("echo '[]' > ~/.claude/gavel/rules.json")])
+        let decision = engine.evaluate(payload: payload, session: session)
+        XCTAssertEqual(decision.verdict, .block)
+        XCTAssertTrue(decision.askUser)
+    }
+
+    func testChmodOnGavelHooksPrompts() {
+        let store = RuleStore(configPath: "/dev/null")
+        let engine = ApprovalEngine(ruleStore: store)
+        let session = Session(pid: 88888)
+        let payload = PreToolUsePayload(toolName: "Bash", toolInput: ["command": AnyCodable("chmod 000 ~/.claude/gavel/hooks/pre_tool_use.sh")])
+        let decision = engine.evaluate(payload: payload, session: session)
+        XCTAssertEqual(decision.verdict, .block)
+        XCTAssertTrue(decision.askUser)
+    }
+
+    func testNormalBashNotCaughtBySelfProtection() {
+        let store = RuleStore(configPath: "/dev/null")
+        let engine = ApprovalEngine(ruleStore: store)
+        let session = Session(pid: 88888)
+        let payload = PreToolUsePayload(toolName: "Bash", toolInput: ["command": AnyCodable("cat README.md")])
+        let decision = engine.evaluate(payload: payload, session: session)
+        XCTAssertEqual(decision.verdict, .allow)
+    }
 }

@@ -82,6 +82,10 @@ final class MonitorViewModel: ObservableObject {
         approvalCoordinator.ruleStore?.removeRule(id: id)
     }
 
+    func updateRule(id: UUID, pattern: String, isRegex: Bool, verdict: DecisionVerdict, explanation: String?) {
+        approvalCoordinator.ruleStore?.updateRule(id: id, pattern: pattern, isRegex: isRegex, verdict: verdict, explanation: explanation)
+    }
+
     func exportRules(to url: URL) throws {
         guard let rules = approvalCoordinator.ruleStore?.rules else { return }
         let encoder = JSONEncoder()
@@ -125,20 +129,31 @@ final class MonitorViewModel: ObservableObject {
         var totalTools = 0
         var totalAllow = 0
         var totalBlock = 0
-        var ruleCount = 0
+        var allowRuleCount = 0
+        var denyRuleCount = 0
         var autoCount = 0
 
         for session in sessionManager.sessions.values {
             totalTools += session.toolCallCount
             totalAllow += session.allowCount
             totalBlock += session.blockCount
-            ruleCount += session.sessionRules.count
+            allowRuleCount += session.sessionRules.filter { $0.verdict == .allow }.count
+            denyRuleCount += session.sessionRules.filter { $0.verdict == .block }.count
             if session.isAutoApproveEnabled { autoCount += 1 }
         }
 
+        let totalRules = allowRuleCount + denyRuleCount
         let sessionCount = sessionManager.sessions.count
         statsText = "Tools: \(totalTools) | Allow: \(totalAllow) | Block: \(totalBlock)"
-        sessionRulesText = ruleCount == 0 ? "Session rules: none" : "Session rules: \(ruleCount) patterns"
+        if totalRules == 0 {
+            sessionRulesText = "Session rules: none"
+        } else if denyRuleCount == 0 {
+            sessionRulesText = "Session rules: \(totalRules) allow"
+        } else if allowRuleCount == 0 {
+            sessionRulesText = "Session rules: \(totalRules) deny"
+        } else {
+            sessionRulesText = "Session rules: \(allowRuleCount) allow, \(denyRuleCount) deny"
+        }
         if sessionCount == 0 {
             autoApproveText = "No active sessions"
         } else if autoCount == sessionCount {

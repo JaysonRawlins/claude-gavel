@@ -40,4 +40,22 @@ enum PatternCompiler {
     static func matches(_ regex: NSRegularExpression, in string: String) -> Bool {
         regex.firstMatch(in: string, range: NSRange(string.startIndex..., in: string)) != nil
     }
+
+    /// Detect if a pattern contains regex-specific syntax that would be escaped (and broken) as a glob.
+    /// Used to auto-enable the regex toggle when users paste regex patterns.
+    static func looksLikeRegex(_ pattern: String) -> Bool {
+        // Character class escapes: \s, \w, \d, \b, \S, \W, \D, \B
+        if pattern.range(of: #"\\[swdbSWDB]"#, options: .regularExpression) != nil { return true }
+        // Grouping or alternation: ( ) |
+        if pattern.contains("(") || pattern.contains("|") { return true }
+        // Quantifiers: + or ? (glob only has *)
+        if pattern.contains("+") || pattern.contains("?") { return true }
+        // Character classes: [ ]
+        if pattern.contains("[") { return true }
+        // Anchors: ^ or $ (glob adds these automatically)
+        if pattern.hasPrefix("^") || pattern.hasSuffix("$") { return true }
+        // Repetition: {n} or {n,m}
+        if pattern.range(of: #"\{\d"#, options: .regularExpression) != nil { return true }
+        return false
+    }
 }

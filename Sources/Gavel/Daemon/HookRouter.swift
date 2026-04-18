@@ -116,6 +116,19 @@ final class HookRouter {
             TaintTracker.recordTaints(command: command, into: &session.taintedPaths)
         }
 
+        // Stage 0.5: Session deny rules — checked early so they block even under auto-approve
+        if let rule = session.matchesSessionDeny(
+            toolName: payload.toolName,
+            command: payload.command,
+            filePath: payload.filePath
+        ) {
+            session.blockCount += 1
+            let reason = "Session deny: \(rule.toolName): \(rule.pattern)"
+            emitFeed(.decision(badge: .block, reason: reason, pid: session.pid, at: timestamp))
+            sendResponse(Decision(verdict: .block, reason: reason, additionalContext: rule.explanation), respond: respond)
+            return
+        }
+
         // Stage 1: Check engine (dangerous patterns, persistent deny/allow, pause)
         let engineDecision = approvalEngine.evaluate(payload: payload, session: session)
         if engineDecision.verdict == .block {

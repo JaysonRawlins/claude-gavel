@@ -211,39 +211,16 @@ struct PatternMatcher {
             return (regex, entry.reason)
         }
 
-        mcpPatterns = Self.dangerousMcpTools.compactMap { entry in
-            guard let regex = try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive]) else {
-                return nil
-            }
-            return (regex, entry.reason)
-        }
     }
 
-    /// MCP tools that can exfiltrate or modify data — blocked unless user has an explicit allow rule.
-    private static let dangerousMcpTools: [(pattern: String, reason: String)] = [
-        // Messaging — send, update, delete (exfil + evidence destruction)
-        ("mcp__.*[Ss]lack.*(send|update|delete|upload)", "MCP: Slack write operation"),
-        // Browser — can navigate to attacker URLs with data in params
-        ("mcp__.*[Pp]laywright.*(navigate$|evaluate|type|fill|click|run_code)", "MCP: Browser interaction (potential exfiltration)"),
-        // Email
-        ("mcp__.*mail.*(send|create|draft)", "MCP: Email write operation"),
-        // Webhooks / HTTP
-        ("mcp__.*webhook.*(send|create|trigger)", "MCP: Webhook operation"),
-        ("mcp__.*http.*(post|put|patch|delete)", "MCP: HTTP write operation"),
-        // Jira/Todoist — write operations (create, update, delete, comment)
-        ("mcp__.*[Jj]ira.*(create|update|delete|add|edit|transition|link)", "MCP: Jira write operation"),
-        ("mcp__.*[Tt]odoist.*(create|update|delete|close)", "MCP: Todoist write operation"),
-    ]
-
-    /// Pre-compiled MCP tool patterns (compiled once at init).
-    private let mcpPatterns: [(regex: NSRegularExpression, reason: String)]
+    // MCP exfiltration patterns are now seeded as persistent rules in RuleStore.
+    // See RuleStore.seededDefaults for the patterns (Slack, Playwright, Email, Webhooks, HTTP).
 
     /// Check if a PreToolUse payload matches any dangerous pattern.
     /// Returns a reason string if dangerous, nil if safe.
     ///
-    /// Note: MCP tools are checked separately via `matchMcpDangerous` because
-    /// they should be overridable by persistent allow rules (unlike Bash/Write
-    /// patterns which are absolute blocks).
+    /// MCP exfiltration patterns are handled separately as seeded persistent rules
+    /// in RuleStore (visible in the Rules tab, overridable by allow rules).
     func matchDangerous(payload: PreToolUsePayload) -> String? {
         switch payload.toolName {
         case "Bash":
@@ -307,12 +284,6 @@ struct PatternMatcher {
         return nil
     }
 
-    /// Check MCP tools separately — these are overridable by persistent allow rules.
-    /// Called from ApprovalEngine AFTER allow rules are checked.
-    func matchMcpDangerous(payload: PreToolUsePayload) -> String? {
-        guard payload.toolName.hasPrefix("mcp__") else { return nil }
-        return matchMcpTool(payload.toolName)
-    }
 
     // MARK: - Bash command matching
 
@@ -531,15 +502,4 @@ struct PatternMatcher {
         GavelConstants.tempDirectoryPrefixes.contains { path.hasPrefix($0) }
     }
 
-    // MARK: - MCP tool matching
-
-    private func matchMcpTool(_ toolName: String) -> String? {
-        let range = NSRange(toolName.startIndex..., in: toolName)
-        for (regex, reason) in mcpPatterns {
-            if regex.firstMatch(in: toolName, range: range) != nil {
-                return reason
-            }
-        }
-        return nil
-    }
 }
