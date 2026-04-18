@@ -103,11 +103,20 @@ struct MonitorWindow: View {
 
                 Spacer()
 
-                Button("Kill Session") {
-                    viewModel.killSession()
+                Toggle(isOn: Binding(
+                    get: { viewModel.sessionManager.defaultAutoApprove },
+                    set: { newVal in
+                        viewModel.sessionManager.defaultAutoApprove = newVal
+                        viewModel.sessionManager.saveDefaults()
+                    }
+                )) {
+                    Text("Default Auto")
+                        .font(.caption)
                 }
-                .buttonStyle(.bordered)
-                .tint(.red)
+                .toggleStyle(.switch)
+                .tint(.green)
+                .controlSize(.small)
+                .help("New sessions start with auto-approve enabled. Deny rules, prompt rules, and sensitive paths still force dialogs.")
             }
         }
     }
@@ -168,6 +177,14 @@ struct MonitorWindow: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
             .tint(session.isPaused ? .green : .orange)
+
+            Button("Kill") {
+                kill(Int32(session.pid), SIGINT)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(.red)
+            .help("Send SIGINT to this session's Claude Code process")
         }
     }
 }

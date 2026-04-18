@@ -355,6 +355,21 @@ struct PersistentRule: Codable, Identifiable {
             return true
         }
 
+        // For Bash: expand inline variables and re-check.
+        // Catches: D="doppler"; $D secrets → doppler secrets
+        if toolName == "Bash" && !raw.isEmpty {
+            let expanded = PatternMatcher.expandInlineVariables(raw)
+            if expanded != raw {
+                let expandedTarget = expanded
+                    .replacingOccurrences(of: "\u{2013}", with: "-")
+                    .replacingOccurrences(of: "\u{2014}", with: "--")
+                    .replacingOccurrences(of: "\u{2012}", with: "-")
+                if regex.firstMatch(in: expandedTarget, range: NSRange(expandedTarget.startIndex..., in: expandedTarget)) != nil {
+                    return true
+                }
+            }
+        }
+
         // For wildcard rules, also match against the tool name itself.
         // MCP tools carry their identity in the name (e.g. mcp__LinkedIn__linkedin_create_post)
         // and typically have no command or filePath.

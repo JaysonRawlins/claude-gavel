@@ -6,15 +6,17 @@ import Foundation
 /// 2. Persistent DENY rules from RuleStore (block even under auto-approve)
 /// 3. Session pause state
 /// 4. User PROMPT rules (force dialog even under auto-approve)
-/// 5. Persistent ALLOW rules from RuleStore
-/// 6. Built-in PROMPT rules (seeded MCP exfil defaults, overridable by allow rules)
-/// 7. Sensitive paths — gavel config, hooks, shell (force dialog)
+/// 5. Sensitive paths — gavel config, hooks, shell config (force dialog, not overridable)
+/// 6. Persistent ALLOW rules from RuleStore
+/// 7. Built-in PROMPT rules (seeded MCP exfil defaults, overridable by allow rules)
 /// 8. Timed auto-approve
 /// 9. Default: pass through to interactive approval
 ///
-/// Key invariant: deny rules ALWAYS win over auto-approve.
-/// Built-in prompt rules are overridable by user allow rules (Stage 5 beats Stage 6).
-/// User prompt rules are NOT overridable by allow rules (Stage 4 beats Stage 5).
+/// Key invariants:
+/// - Deny rules ALWAYS win over auto-approve.
+/// - Sensitive paths ALWAYS force a dialog — even with a broad allow rule like `Read: *`.
+/// - Built-in prompt rules are overridable by user allow rules (Stage 6 beats Stage 7).
+/// - User prompt rules are NOT overridable by allow rules (Stage 4 beats Stage 6).
 final class ApprovalEngine {
     let patternMatcher: PatternMatcher
     let ruleStore: RuleStore
@@ -45,19 +47,20 @@ final class ApprovalEngine {
             return decision
         }
 
-        // 5. Persistent ALLOW rules
+        // 5. Sensitive paths — gavel config, hooks, shell config (force dialog)
+        //    Checked BEFORE allow rules so broad rules like `Read: *` can't bypass self-protection.
+        if let reason = patternMatcher.matchSensitivePath(payload: payload) {
+            return Decision(verdict: .block, reason: reason, askUser: true)
+        }
+
+        // 6. Persistent ALLOW rules
         if let decision = ruleStore.evaluateAllow(payload: payload) {
             return decision
         }
 
-        // 6. Built-in PROMPT rules (builtIn=true) — overridable by allow rules above
+        // 7. Built-in PROMPT rules (builtIn=true) — overridable by allow rules above
         if let decision = ruleStore.evaluateBuiltInPrompt(payload: payload) {
             return decision
-        }
-
-        // 7. Sensitive paths — gavel config, hooks, shell config (force dialog)
-        if let reason = patternMatcher.matchSensitivePath(payload: payload) {
-            return Decision(verdict: .block, reason: reason, askUser: true)
         }
 
         // 8. Timed auto-approve

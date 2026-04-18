@@ -81,6 +81,8 @@ struct PatternMatcher {
             // ── Command obfuscation ──
             ("\\beval\\b.*\\$\\(.*\\b(base64|b64decode)\\b", "Obfuscated command via eval+base64"),
             ("\\bbase64\\s+-[dD]\\b.*\\|.*\\b(bash|sh|zsh)\\b", "Base64 decoded pipe to shell"),
+            ("\\$\\(.*\\bbase64\\s+-[dD]\\b", "Base64 decode in subshell (command obfuscation)"),
+            ("\\$\\(.*\\bbase64\\b.*--decode", "Base64 decode in subshell (command obfuscation)"),
             ("\\bbash\\s*<<", "Heredoc execution (potential obfuscation)"),
 
             // ── Compiled/scripted exfiltration via temp files ──
@@ -251,12 +253,10 @@ struct PatternMatcher {
     func matchSensitivePath(payload: PreToolUsePayload) -> String? {
         // Bash: check askUser destructive patterns (rm -rf etc.)
         if payload.toolName == "Bash", let command = payload.command {
-            let stripped = Self.stripQuotedContent(command)
-            let range = NSRange(stripped.startIndex..., in: stripped)
-            for (regex, reason) in askUserBashPatterns {
-                if regex.firstMatch(in: stripped, range: range) != nil {
-                    return reason
-                }
+            if let reason = checkAskUserBash(command) { return reason }
+            let expanded = Self.expandInlineVariables(command)
+            if expanded != command, let reason = checkAskUserBash(expanded) {
+                return reason + " (variable expansion detected)"
             }
         }
 
@@ -284,25 +284,43 @@ struct PatternMatcher {
         return nil
     }
 
+    private func checkAskUserBash(_ command: String) -> String? {
+        let stripped = Self.stripQuotedContent(command)
+        let range = NSRange(stripped.startIndex..., in: stripped)
+        for (regex, reason) in askUserBashPatterns {
+            if regex.firstMatch(in: stripped, range: range) != nil {
+                return reason
+            }
+        }
+        return nil
+    }
 
     // MARK: - Bash command matching
 
     private func matchBashCommand(_ command: String?) -> String? {
         guard let command = command else { return nil }
 
-        // Match against the full command first (catches everything)
+        if let reason = checkBashPatterns(command) { return reason }
+
+        // Fallback: expand inline variables and re-check.
+        // Catches: D="doppler"; S="secrets"; $D $S → doppler secrets
+        let expanded = Self.expandInlineVariables(command)
+        if expanded != command, let reason = checkBashPatterns(expanded) {
+            return reason + " (variable expansion detected)"
+        }
+
+        return nil
+    }
+
+    private func checkBashPatterns(_ command: String) -> String? {
         let range = NSRange(command.startIndex..., in: command)
         for (regex, reason) in bashPatterns {
             if regex.firstMatch(in: command, range: range) != nil {
-                // Verify it's not a false positive inside a quoted string.
-                // If the match disappears when we strip quoted content,
-                // it was just a string literal (commit message, echo, etc.)
                 let stripped = Self.stripQuotedContent(command)
                 let strippedRange = NSRange(stripped.startIndex..., in: stripped)
                 if regex.firstMatch(in: stripped, range: strippedRange) != nil {
                     return reason
                 }
-                // Match was only in a quoted string — false positive
             }
         }
         return nil
@@ -502,4 +520,53 @@ struct PatternMatcher {
         GavelConstants.tempDirectoryPrefixes.contains { path.hasPrefix($0) }
     }
 
+    // MARK: - Shell variable expansion
+
+    /// Expand inline shell variable assignments in a command string.
+    /// Catches the indirection bypass where variables hide sensitive keywords from regex matching.
+    ///
+    ///     "D=\"doppler\"; S=\"secrets\"; $D $S -p test"
+    ///     → "D=\"doppler\"; S=\"secrets\"; doppler secrets -p test"
+    ///
+    /// Only expands variables assigned within the same command string (not env vars).
+    /// Subshell assignments like `VAR=$(...)` are skipped (can't evaluate).
+    static func expandInlineVariables(_ command: String) -> String {
+        var vars: [String: String] = [:]
+        let range = NSRange(command.startIndex..., in: command)
+
+        // Match: VAR="value", VAR='value', VAR=value (with optional export/local prefix)
+        let patterns: [(String, Int, Int)] = [
+            (#"(?:^|[;&\s])(?:export\s+|local\s+)?([A-Za-z_]\w*)="([^"]*)""#, 1, 2),
+            (#"(?:^|[;&\s])(?:export\s+|local\s+)?([A-Za-z_]\w*)='([^']*)'"#, 1, 2),
+            (#"(?:^|[;&\s])(?:export\s+|local\s+)?([A-Za-z_]\w*)=([^\s;"'$][^\s;"']*)"#, 1, 2),
+        ]
+
+        for (pattern, nameGroup, valueGroup) in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            for match in regex.matches(in: command, range: range) {
+                guard let nameRange = Range(match.range(at: nameGroup), in: command),
+                      let valueRange = Range(match.range(at: valueGroup), in: command) else { continue }
+                vars[String(command[nameRange])] = String(command[valueRange])
+            }
+        }
+
+        guard !vars.isEmpty else { return command }
+
+        // Substitute $VAR and ${VAR} references
+        var result = command
+        for (name, value) in vars {
+            result = result.replacingOccurrences(of: "${\(name)}", with: value)
+            if let regex = try? NSRegularExpression(
+                pattern: "\\$\(NSRegularExpression.escapedPattern(for: name))(?![A-Za-z_0-9])"
+            ) {
+                result = regex.stringByReplacingMatches(
+                    in: result,
+                    range: NSRange(result.startIndex..., in: result),
+                    withTemplate: NSRegularExpression.escapedTemplate(for: value)
+                )
+            }
+        }
+
+        return result
+    }
 }

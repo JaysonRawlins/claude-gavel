@@ -90,11 +90,10 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Show Monitor", action: #selector(showMonitor), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Toggle Auto-Approve", action: #selector(toggleAutoApprove), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Pause All Sessions", action: #selector(togglePauseAll), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Clear Session Rules", action: #selector(revokeAll), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Reload Binary", action: #selector(reloadBinary), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Restart Gavel", action: #selector(reloadBinary), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Quit Gavel", action: #selector(quit), keyEquivalent: ""))
         statusItem.menu = menu
     }
@@ -116,12 +115,6 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         }
         monitorWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-    }
-
-    @objc private func toggleAutoApprove() {
-        // Toggle for the first active session (use monitor for per-session control)
-        guard let session = sessionManager.sessions.values.first else { return }
-        viewModel.toggleAutoApprove(for: session)
     }
 
     @objc private func togglePauseAll() {
