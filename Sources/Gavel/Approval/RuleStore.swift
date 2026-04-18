@@ -350,9 +350,16 @@ struct PersistentRule: Codable, Identifiable {
 
         guard let regex = compiledRegex else { return false }
 
-        // Match against command/filePath first
-        if regex.firstMatch(in: target, range: NSRange(target.startIndex..., in: target)) != nil {
-            return true
+        // Match against command/filePath
+        if matchesRegex(regex, in: target) {
+            // For Bash: verify it's not a false positive inside a heredoc or quoted string
+            if toolName == "Bash" {
+                let stripped = PatternMatcher.stripQuotedContent(target)
+                if !matchesRegex(regex, in: stripped) { /* false positive */ }
+                else { return true }
+            } else {
+                return true
+            }
         }
 
         // For Bash: expand inline variables and re-check.
@@ -364,7 +371,8 @@ struct PersistentRule: Codable, Identifiable {
                     .replacingOccurrences(of: "\u{2013}", with: "-")
                     .replacingOccurrences(of: "\u{2014}", with: "--")
                     .replacingOccurrences(of: "\u{2012}", with: "-")
-                if regex.firstMatch(in: expandedTarget, range: NSRange(expandedTarget.startIndex..., in: expandedTarget)) != nil {
+                let strippedExpanded = PatternMatcher.stripQuotedContent(expandedTarget)
+                if matchesRegex(regex, in: strippedExpanded) {
                     return true
                 }
             }
@@ -378,6 +386,10 @@ struct PersistentRule: Codable, Identifiable {
         }
 
         return false
+    }
+
+    private func matchesRegex(_ regex: NSRegularExpression, in string: String) -> Bool {
+        regex.firstMatch(in: string, range: NSRange(string.startIndex..., in: string)) != nil
     }
 
     /// Compile a pattern to regex. Glob patterns are converted; regex patterns used as-is.

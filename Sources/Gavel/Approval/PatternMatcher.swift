@@ -327,12 +327,24 @@ struct PatternMatcher {
     }
 
     /// Strip message/string-literal content to reduce false positives.
-    /// Only strips quoted args after message-like flags (-m, --message, --body).
+    /// Strips heredoc content, quoted args after message flags, and echo/printf args.
     /// Does NOT strip code arguments (python -c, ruby -e, perl -e).
-    /// "git commit -m 'fixed curl issue'" → "git commit -m ''"
-    /// "echo 'curl -d foo'" → "echo ''"
+    ///
+    ///     "git commit -m 'fixed curl issue'" → "git commit -m ''"
+    ///     "echo 'curl -d foo'" → "echo ''"
+    ///     "git commit -m \"$(cat <<'EOF'\ndoppler secrets\nEOF\n)\"" → heredoc content removed
     static func stripQuotedContent(_ command: String) -> String {
         var result = command
+
+        // Strip heredoc content: <<'EOF'\n...\nEOF → <<'EOF'\nEOF
+        // Heredocs are string literals (commit messages, PR bodies) — not executable.
+        // Note: `bash <<EOF` (heredoc execution) is caught by a separate pattern BEFORE stripping.
+        if let regex = try? NSRegularExpression(
+            pattern: #"<<-?'?"?(\w+)"?'?\s*\n.*?\n\s*\1"#,
+            options: [.dotMatchesLineSeparators]
+        ) {
+            result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "<<$1\n$1")
+        }
 
         // Strip quoted content after message flags: -m, --message, --body, --title
         if let regex = try? NSRegularExpression(pattern: #"(-m|--message|--body|--title)\s+"([^"\\]|\\.)*""#) {
