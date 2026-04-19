@@ -65,6 +65,14 @@ for f in hooks/*.sh; do
     chmod +x "$HOOKS_DIR/$(basename "$f")"
 done
 
+CONTEXT_FILE="$HOME/.claude/gavel/session-context.md"
+if [[ ! -f "$CONTEXT_FILE" ]]; then
+    echo "Seeding session context with default performance tuning..."
+    cp defaults/session-context.md "$CONTEXT_FILE"
+else
+    echo "Session context already exists, skipping seed (edit via menu bar)"
+fi
+
 echo "Installing LaunchAgent..."
 mkdir -p "$PLIST_DIR"
 cat > "$PLIST" <<PLIST

@@ -7,7 +7,7 @@ struct MonitorWindow: View {
     @State private var selectedTab: MonitorTab = .feed
 
     enum MonitorTab {
-        case feed, rules, sessions, tester, reference
+        case feed, rules, sessions, context, tester, reference
     }
 
     var body: some View {
@@ -39,6 +39,7 @@ struct MonitorWindow: View {
                 Text("Feed").tag(MonitorTab.feed)
                 Text("Rules (\(viewModel.ruleCount))").tag(MonitorTab.rules)
                 Text("Sessions").tag(MonitorTab.sessions)
+                Text("Context").tag(MonitorTab.context)
                 Text("Tester").tag(MonitorTab.tester)
                 Text("Reference").tag(MonitorTab.reference)
             }
@@ -56,6 +57,8 @@ struct MonitorWindow: View {
                 RulesView(viewModel: viewModel)
             case .sessions:
                 SessionRulesView(viewModel: viewModel)
+            case .context:
+                SessionContextView()
             case .tester:
                 RegexTesterView(viewModel: viewModel)
             case .reference:
