@@ -124,7 +124,7 @@ struct ApprovalPanelView: View {
             // Wrapping estimate: assume ~80 chars per line at monospaced body size.
             let newlineCount = editedCommand.components(separatedBy: .newlines).count
             let wrapEstimate = max(1, editedCommand.count / 80)
-            let lineCount = max(3, max(newlineCount, wrapEstimate) + 1)
+            let lineCount = max(6, max(newlineCount, wrapEstimate) + 1)
             let height = CGFloat(min(lineCount, 20)) * 18
 
             TextEditor(text: $editedCommand)

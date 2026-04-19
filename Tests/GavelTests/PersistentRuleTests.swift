@@ -185,8 +185,8 @@ final class PersistentRuleTests: XCTestCase {
         let store = RuleStore(configPath: "/dev/null")
         let builtInRules = store.rules.filter { $0.builtIn }
         XCTAssertEqual(builtInRules.count, RuleStore.seededDefaults.count)
-        // v4: 5 MCP exfil + 3 self-protection + 1 scripting + 3 sandbox escape = 12
-        XCTAssertEqual(builtInRules.count, 12)
+        // v4: 5 MCP exfil + 1 self-protection + 1 scripting + 3 sandbox escape = 10
+        XCTAssertEqual(builtInRules.count, 10)
     }
 
     func testSeededRulesArePromptVerdict() {
@@ -291,6 +291,36 @@ final class PersistentRuleTests: XCTestCase {
         let engine = ApprovalEngine(ruleStore: store)
         let session = Session(pid: 88888)
         let payload = PreToolUsePayload(toolName: "Bash", toolInput: ["command": AnyCodable("chmod 000 ~/.claude/gavel/hooks/pre_tool_use.sh")])
+        let decision = engine.evaluate(payload: payload, session: session)
+        XCTAssertEqual(decision.verdict, .block)
+        XCTAssertTrue(decision.askUser)
+    }
+
+    func testSedOnGavelConfigPrompts() {
+        let store = RuleStore(configPath: "/dev/null")
+        let engine = ApprovalEngine(ruleStore: store)
+        let session = Session(pid: 88888)
+        let payload = PreToolUsePayload(toolName: "Bash", toolInput: ["command": AnyCodable("sed -n '1,5p' ~/.claude/gavel/rules.json")])
+        let decision = engine.evaluate(payload: payload, session: session)
+        XCTAssertEqual(decision.verdict, .block)
+        XCTAssertTrue(decision.askUser)
+    }
+
+    func testJqOnGavelConfigPrompts() {
+        let store = RuleStore(configPath: "/dev/null")
+        let engine = ApprovalEngine(ruleStore: store)
+        let session = Session(pid: 88888)
+        let payload = PreToolUsePayload(toolName: "Bash", toolInput: ["command": AnyCodable("jq '.rules | length' ~/.claude/gavel/rules.json")])
+        let decision = engine.evaluate(payload: payload, session: session)
+        XCTAssertEqual(decision.verdict, .block)
+        XCTAssertTrue(decision.askUser)
+    }
+
+    func testSymlinkToGavelConfigPrompts() {
+        let store = RuleStore(configPath: "/dev/null")
+        let engine = ApprovalEngine(ruleStore: store)
+        let session = Session(pid: 88888)
+        let payload = PreToolUsePayload(toolName: "Bash", toolInput: ["command": AnyCodable("ln -s ~/.claude/gavel/rules.json /tmp/link")])
         let decision = engine.evaluate(payload: payload, session: session)
         XCTAssertEqual(decision.verdict, .block)
         XCTAssertTrue(decision.askUser)

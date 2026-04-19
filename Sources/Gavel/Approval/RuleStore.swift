@@ -15,7 +15,7 @@ final class RuleStore: ObservableObject {
     private let configPath: String
 
     /// Current seed version — bump when adding new default rules.
-    private static let seedVersion = 4
+    private static let seedVersion = 5
 
     init(configPath: String? = nil) {
         self.configPath = configPath ?? Self.defaultConfigPath
@@ -151,33 +151,13 @@ final class RuleStore: ObservableObject {
             builtIn: true
         ),
 
-        // ── Gavel/Claude self-protection: config reads via Bash ──
+        // ── Gavel/Claude self-protection: any Bash command referencing config paths ──
         PersistentRule(
             toolName: "Bash",
-            pattern: "\\b(cat|head|tail|less|more|bat|strings|xxd|hexdump)\\b.*\\.claude/(gavel/|settings|hooks/)",
+            pattern: "\\.claude/(gavel/|settings|hooks/)",
             isRegex: true,
             verdict: .prompt,
-            explanation: "Reading Gavel/Claude config — attacker could study rules to craft bypasses",
-            builtIn: true
-        ),
-
-        // ── Gavel/Claude self-protection: config writes via Bash ──
-        PersistentRule(
-            toolName: "Bash",
-            pattern: "(>|>>|\\bcp\\b|\\bmv\\b|\\btee\\b).*\\.claude/(gavel/|settings|hooks/)",
-            isRegex: true,
-            verdict: .prompt,
-            explanation: "Writing to Gavel/Claude config — could disable security rules or hooks",
-            builtIn: true
-        ),
-
-        // ── Gavel/Claude self-protection: permission tampering ──
-        PersistentRule(
-            toolName: "Bash",
-            pattern: "\\b(chmod|chown|chgrp)\\b.*\\.claude/(gavel/|hooks/)",
-            isRegex: true,
-            verdict: .prompt,
-            explanation: "Changing permissions on Gavel/Claude hooks — could disable security",
+            explanation: "Bash command references Gavel/Claude config — session allow for legitimate use",
             builtIn: true
         ),
 
