@@ -36,10 +36,9 @@ jobs:
           security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
 
       - name: Sign binaries
-        env:
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          IDENTITY="Developer ID Application: ($APPLE_TEAM_ID)"
+          IDENTITY=$(security find-identity -v -p codesigning "$RUNNER_TEMP/signing.keychain-db" | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Signing with: $IDENTITY"
           codesign --force --options runtime --sign "$IDENTITY" .build/release/gavel
           codesign --force --options runtime --sign "$IDENTITY" .build/release/gavel-hook
           codesign --verify --verbose .build/release/gavel
