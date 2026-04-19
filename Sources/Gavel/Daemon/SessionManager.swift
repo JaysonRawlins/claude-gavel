@@ -45,9 +45,9 @@ final class SessionManager: ObservableObject {
     }
 
     /// Save current defaults to disk (called when user toggles).
-    /// Auto-approve is intentionally NOT persisted — new sessions must opt in.
     func saveDefaults() {
         let data: [String: Bool] = [
+            "autoApprove": defaultAutoApprove,
             "subAgentInherit": defaultSubAgentInherit,
             "paused": defaultPaused
         ]
@@ -59,7 +59,7 @@ final class SessionManager: ObservableObject {
     private func loadDefaults() {
         guard let data = FileManager.default.contents(atPath: Self.defaultsPath),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Bool] else { return }
-        // Auto-approve is never loaded from disk — always starts OFF (opt-in per session)
+        defaultAutoApprove = json["autoApprove"] ?? false
         defaultSubAgentInherit = json["subAgentInherit"] ?? false
         defaultPaused = json["paused"] ?? false
     }

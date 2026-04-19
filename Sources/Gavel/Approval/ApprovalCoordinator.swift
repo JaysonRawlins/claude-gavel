@@ -12,6 +12,7 @@ final class ApprovalCoordinator: ObservableObject {
         case allow(context: String?, updatedCommand: String?, updatedInput: [String: AnyCodable]?)
         case deny(context: String?)
         case allowPatternForSession(pattern: String, context: String?, updatedCommand: String?, updatedInput: [String: AnyCodable]?)
+        case denyPatternForSession(pattern: String, explanation: String?)
         case alwaysDenyPattern(pattern: String, isRegex: Bool, explanation: String?)
         case alwaysAllowPattern(pattern: String, isRegex: Bool)
         case alwaysPromptPattern(pattern: String, isRegex: Bool)
@@ -133,6 +134,15 @@ final class ApprovalCoordinator: ObservableObject {
             let rule = SessionRule(toolName: current.payload.toolName, pattern: pattern)
             current.session.sessionRules.append(rule)
             current.respond(Decision(verdict: .allow, reason: "User approved (\(current.payload.toolName): \(pattern))", additionalContext: ctx, updatedInput: updated))
+
+        case .denyPatternForSession(let pattern, let explanation):
+            ctx = nil; updated = nil
+            let explText = (explanation?.isEmpty == false) ? explanation : nil
+            let rule = SessionRule(toolName: current.payload.toolName, pattern: pattern, verdict: .block, explanation: explText)
+            current.session.sessionRules.append(rule)
+            var reason = "Session deny: \(current.payload.toolName): \(pattern)"
+            if let e = explText { reason += " — \(e)" }
+            current.respond(Decision(verdict: .block, reason: reason, additionalContext: explText))
 
         case .alwaysDenyPattern(let pattern, let isRegex, let explanation):
             ctx = nil; updated = nil

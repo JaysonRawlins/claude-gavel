@@ -121,7 +121,7 @@ struct PreToolUsePayload: Codable {
     }
 
     var filePath: String? {
-        toolInput["file_path"]?.stringValue
+        toolInput["file_path"]?.stringValue ?? toolInput["path"]?.stringValue
     }
 }
 

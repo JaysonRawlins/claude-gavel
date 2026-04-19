@@ -17,7 +17,7 @@ final class Session: ObservableObject, Identifiable {
     // Timed auto-approve
     @Published var autoApproveUntil: Date?
 
-    // Session rules — wildcard patterns for auto-approval
+    // Session rules — wildcard patterns for approval or denial
     @Published var sessionRules: [SessionRule] = []
 
     // Taint tracking — temp files that contain sensitive data
@@ -53,28 +53,37 @@ final class Session: ObservableObject, Identifiable {
         sessionRules.removeAll()
     }
 
-    /// Check if a tool call matches any session rule.
+    /// Check if a tool call matches any session allow rule.
     func matchesSessionRule(toolName: String, command: String?, filePath: String?) -> SessionRule? {
-        for rule in sessionRules {
-            if rule.matches(toolName: toolName, command: command, filePath: filePath) {
-                return rule
-            }
-        }
-        return nil
+        sessionRules.first { $0.verdict == .allow && $0.matches(toolName: toolName, command: command, filePath: filePath) }
+    }
+
+    /// Check if a tool call matches any session deny rule.
+    func matchesSessionDeny(toolName: String, command: String?, filePath: String?) -> SessionRule? {
+        sessionRules.first { $0.verdict == .block && $0.matches(toolName: toolName, command: command, filePath: filePath) }
     }
 }
 
-/// A wildcard pattern rule for session-scoped auto-approval.
+/// A wildcard pattern rule for session-scoped approval or denial.
 ///
 /// Examples:
-///   - `Bash: swift build*`  — matches any swift build command
-///   - `Bash: git *`         — matches any git command
-///   - `Edit: Sources/*`     — matches edits to files under Sources/
-///   - `Read: *`             — matches all reads
+///   - `Bash: swift build*`  (allow) — matches any swift build command
+///   - `Bash: git *`         (allow) — matches any git command
+///   - `Edit: */production.yml` (block) — blocks edits to production config
+///   - `Read: *`             (allow) — matches all reads
 struct SessionRule: Identifiable {
     let id = UUID()
     let toolName: String
     let pattern: String
+    let verdict: DecisionVerdict
+    let explanation: String?
+
+    init(toolName: String, pattern: String, verdict: DecisionVerdict = .allow, explanation: String? = nil) {
+        self.toolName = toolName
+        self.pattern = pattern
+        self.verdict = verdict
+        self.explanation = explanation
+    }
 
     /// Match using simple glob-style wildcards (* only).
     /// For Bash commands, splits on command separators (&&, ||, ;, |) and

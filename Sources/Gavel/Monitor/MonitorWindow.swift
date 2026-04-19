@@ -103,11 +103,20 @@ struct MonitorWindow: View {
 
                 Spacer()
 
-                Button("Kill Session") {
-                    viewModel.killSession()
+                Toggle(isOn: Binding(
+                    get: { viewModel.sessionManager.defaultAutoApprove },
+                    set: { newVal in
+                        viewModel.sessionManager.defaultAutoApprove = newVal
+                        viewModel.sessionManager.saveDefaults()
+                    }
+                )) {
+                    Text("Default Auto")
+                        .font(.caption)
                 }
-                .buttonStyle(.bordered)
-                .tint(.red)
+                .toggleStyle(.switch)
+                .tint(.green)
+                .controlSize(.small)
+                .help("New sessions start with auto-approve enabled. Deny rules, prompt rules, and sensitive paths still force dialogs.")
             }
         }
     }
@@ -168,6 +177,14 @@ struct MonitorWindow: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
             .tint(session.isPaused ? .green : .orange)
+
+            Button("Kill") {
+                kill(Int32(session.pid), SIGINT)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(.red)
+            .help("Send SIGINT to this session's Claude Code process")
         }
     }
 }
@@ -182,8 +199,25 @@ struct RulesView: View {
     @State private var newVerdict: DecisionVerdict = .block
     @State private var newExplanation: String = ""
     @State private var importError: String?
+    @State private var searchText: String = ""
+    @State private var editingRuleId: UUID?
+    @State private var editPattern: String = ""
+    @State private var editIsRegex: Bool = false
+    @State private var editVerdict: DecisionVerdict = .block
+    @State private var editExplanation: String = ""
 
     private let toolOptions = ["*", "Bash", "Edit", "MultiEdit", "Write", "Read", "Glob", "Grep", "Agent"]
+
+    /// Filter rules by search text — matches against tool name, pattern, explanation, and verdict.
+    private func matchesSearch(_ rule: PersistentRule) -> Bool {
+        guard !searchText.isEmpty else { return true }
+        let query = searchText.lowercased()
+        return rule.toolName.lowercased().contains(query)
+            || rule.pattern.lowercased().contains(query)
+            || (rule.explanation ?? "").lowercased().contains(query)
+            || verdictLabel(rule.verdict).lowercased().contains(query)
+            || (rule.builtIn && "default".contains(query))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -194,24 +228,67 @@ struct RulesView: View {
 
             Divider()
 
-            // Import/Export bar
-            importExportBar
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+            // Search + Import/Export bar
+            HStack(spacing: 8) {
+                HStack(spacing: 4) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                    TextField("Search rules…", text: $searchText)
+                        .textFieldStyle(.plain)
+                    if !searchText.isEmpty {
+                        Button(action: { searchText = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(5)
+                .background(Color(nsColor: .textBackgroundColor))
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                )
+
+                importExportBar
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
 
             Divider()
 
-            // Existing rules list
+            // Existing rules list (user rules first, built-in defaults at bottom)
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
-                    if viewModel.persistentRules.isEmpty {
-                        Text("No rules yet. Add one above or use the approval panel.")
-                            .foregroundColor(.secondary)
-                            .padding()
+                    let userRules = viewModel.persistentRules.filter { !$0.builtIn && matchesSearch($0) }
+                    let builtInRules = viewModel.persistentRules.filter { $0.builtIn && matchesSearch($0) }
+
+                    if userRules.isEmpty && builtInRules.isEmpty {
+                        if searchText.isEmpty {
+                            Text("No rules yet. Add one above or use the approval panel.")
+                                .foregroundColor(.secondary)
+                                .padding()
+                        } else {
+                            Text("No rules matching \"\(searchText)\"")
+                                .foregroundColor(.secondary)
+                                .padding()
+                        }
                     } else {
-                        ForEach(viewModel.persistentRules) { rule in
+                        ForEach(userRules) { rule in
                             ruleRow(rule)
+                        }
+
+                        if !builtInRules.isEmpty {
+                            if !userRules.isEmpty { Divider().padding(.vertical, 4) }
+                            Text("Built-in Defaults")
+                                .font(.caption.bold())
+                                .foregroundColor(.secondary)
+                                .padding(.leading, 8)
+                            ForEach(builtInRules) { rule in
+                                ruleRow(rule)
+                            }
                         }
                     }
                 }
@@ -247,6 +324,11 @@ struct RulesView: View {
                     TextField(newIsRegex ? "regex pattern" : "glob pattern (* = wildcard)", text: $newPattern)
                         .font(.system(.body, design: .monospaced))
                         .textFieldStyle(.roundedBorder)
+                        .onChange(of: newPattern) { pattern in
+                            if !newIsRegex && PatternCompiler.looksLikeRegex(pattern) {
+                                newIsRegex = true
+                            }
+                        }
                     if newIsRegex {
                         Text("/").font(.system(.body, design: .monospaced)).foregroundColor(.orange)
                     }
@@ -392,55 +474,160 @@ struct RulesView: View {
     // MARK: - Rule Row
 
     private func ruleRow(_ rule: PersistentRule) -> some View {
-        HStack(spacing: 6) {
-            Text(verdictLabel(rule.verdict))
-                .font(.caption.bold())
-                .foregroundColor(.white)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(verdictColor(rule.verdict))
-                .cornerRadius(4)
+        VStack(spacing: 0) {
+            // Display row
+            HStack(spacing: 6) {
+                Text(verdictLabel(rule.verdict))
+                    .font(.caption.bold())
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(verdictColor(rule.verdict))
+                    .cornerRadius(4)
 
-            Text(rule.toolName)
-                .foregroundColor(.orange)
-                .frame(width: 60, alignment: .leading)
+                Text(rule.isRegex ? "REGEX" : "GLOB")
+                    .font(.caption2.bold())
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(rule.isRegex ? Color.orange.opacity(0.7) : Color.secondary.opacity(0.5))
+                    .cornerRadius(3)
 
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 2) {
-                    if rule.isRegex {
-                        Text("/").foregroundColor(.orange)
+                if rule.builtIn {
+                    Text("DEFAULT")
+                        .font(.caption2.bold())
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.blue.opacity(0.6))
+                        .cornerRadius(3)
+                }
+
+                Text(rule.toolName)
+                    .foregroundColor(.orange)
+                    .frame(width: 60, alignment: .leading)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 2) {
+                        if rule.isRegex {
+                            Text("/").foregroundColor(.orange)
+                        }
+                        Text(rule.pattern)
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
+                        if rule.isRegex {
+                            Text("/").foregroundColor(.orange)
+                        }
                     }
-                    Text(rule.pattern)
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    if rule.isRegex {
-                        Text("/").foregroundColor(.orange)
+
+                    if let explanation = rule.explanation, !explanation.isEmpty {
+                        Text(explanation)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
                     }
                 }
 
-                if let explanation = rule.explanation, !explanation.isEmpty {
-                    Text(explanation)
-                        .font(.caption2)
+                Spacer()
+
+                Button(action: { startEditing(rule) }) {
+                    Image(systemName: "pencil")
                         .foregroundColor(.secondary)
-                        .lineLimit(1)
                 }
-            }
+                .buttonStyle(.plain)
+                .help("Edit this rule")
 
-            Spacer()
-
-            Button(action: {
-                viewModel.deleteRule(id: rule.id)
-            }) {
-                Image(systemName: "trash")
-                    .foregroundColor(.secondary)
+                Button(action: { viewModel.deleteRule(id: rule.id) }) {
+                    Image(systemName: "trash")
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Delete this rule")
             }
-            .buttonStyle(.plain)
-            .help("Delete this rule")
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+
+            // Inline edit form (shown when editing this rule)
+            if editingRuleId == rule.id {
+                VStack(spacing: 6) {
+                    HStack(spacing: 8) {
+                        HStack(spacing: 2) {
+                            if editIsRegex {
+                                Text("/").font(.system(.caption, design: .monospaced)).foregroundColor(.orange)
+                            }
+                            TextField("pattern", text: $editPattern)
+                                .font(.system(.caption, design: .monospaced))
+                                .textFieldStyle(.roundedBorder)
+                                .onChange(of: editPattern) { pattern in
+                                    if !editIsRegex && PatternCompiler.looksLikeRegex(pattern) {
+                                        editIsRegex = true
+                                    }
+                                }
+                            if editIsRegex {
+                                Text("/").font(.system(.caption, design: .monospaced)).foregroundColor(.orange)
+                            }
+                        }
+
+                        Toggle("Regex", isOn: $editIsRegex)
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                            .tint(.orange)
+                    }
+
+                    HStack(spacing: 8) {
+                        Picker("", selection: $editVerdict) {
+                            Text("Deny").tag(DecisionVerdict.block)
+                            Text("Allow").tag(DecisionVerdict.allow)
+                            Text("Ask").tag(DecisionVerdict.prompt)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 200)
+
+                        if editVerdict == .block || editVerdict == .prompt {
+                            TextField("Explanation (optional)", text: $editExplanation)
+                                .font(.system(.caption, design: .monospaced))
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        Spacer()
+
+                        Button("Cancel") { editingRuleId = nil }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+
+                        Button("Save") { saveEdit(rule) }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .tint(.blue)
+                            .disabled(editPattern.isEmpty)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color(nsColor: .controlBackgroundColor))
+            }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
         .cornerRadius(4)
+    }
+
+    private func startEditing(_ rule: PersistentRule) {
+        editingRuleId = rule.id
+        editPattern = rule.pattern
+        editIsRegex = rule.isRegex
+        editVerdict = rule.verdict
+        editExplanation = rule.explanation ?? ""
+    }
+
+    private func saveEdit(_ rule: PersistentRule) {
+        viewModel.updateRule(
+            id: rule.id,
+            pattern: editPattern,
+            isRegex: editIsRegex,
+            verdict: editVerdict,
+            explanation: editExplanation.isEmpty ? nil : editExplanation
+        )
+        editingRuleId = nil
     }
 
     // MARK: - Helpers
@@ -545,12 +732,12 @@ struct SessionRulesView: View {
             } else {
                 ForEach(session.sessionRules) { rule in
                     HStack(spacing: 6) {
-                        Text("ALLOW")
+                        Text(rule.verdict == .block ? "DENY" : "ALLOW")
                             .font(.caption2.bold())
                             .foregroundColor(.white)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
-                            .background(Color.purple)
+                            .background(rule.verdict == .block ? Color.pink : Color.purple)
                             .cornerRadius(3)
 
                         Text(rule.toolName)
@@ -558,6 +745,12 @@ struct SessionRulesView: View {
 
                         Text(rule.pattern)
                             .foregroundColor(.primary)
+
+                        if let explanation = rule.explanation {
+                            Text("— \(explanation)")
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
 
                         Spacer()
 

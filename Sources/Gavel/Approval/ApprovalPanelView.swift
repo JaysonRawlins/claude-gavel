@@ -124,7 +124,7 @@ struct ApprovalPanelView: View {
             // Wrapping estimate: assume ~80 chars per line at monospaced body size.
             let newlineCount = editedCommand.components(separatedBy: .newlines).count
             let wrapEstimate = max(1, editedCommand.count / 80)
-            let lineCount = max(3, max(newlineCount, wrapEstimate) + 1)
+            let lineCount = max(6, max(newlineCount, wrapEstimate) + 1)
             let height = CGFloat(min(lineCount, 20)) * 18
 
             TextEditor(text: $editedCommand)
@@ -277,10 +277,21 @@ struct ApprovalPanelView: View {
             Image(systemName: "bubble.left")
                 .foregroundColor(.secondary)
                 .padding(.top, 4)
-            TextField("Note to Claude (optional — Claude sees this as context)", text: $noteToClaudeText, axis: .vertical)
-                .font(.system(.body, design: .monospaced))
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(1...4)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Note to Claude (optional — Claude sees this as context)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                TextEditor(text: $noteToClaudeText)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minHeight: 36, maxHeight: 120)
+                    .padding(4)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                    )
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -328,6 +339,11 @@ struct ApprovalPanelView: View {
                         RoundedRectangle(cornerRadius: 6)
                             .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
                     )
+                    .onChange(of: sessionPattern) { pattern in
+                        if !isRegexMode && PatternCompiler.looksLikeRegex(pattern) {
+                            isRegexMode = true
+                        }
+                    }
             }
 
             // Live pattern tester
@@ -363,6 +379,18 @@ struct ApprovalPanelView: View {
                 .keyboardShortcut("p", modifiers: [.command, .shift])
 
                 Spacer()
+
+                Button(action: {
+                    coordinator.handleAction(.denyPatternForSession(
+                        pattern: sessionPattern,
+                        explanation: noteToClaudeText.isEmpty ? nil : noteToClaudeText
+                    ), on: sessionPanel)
+                }) {
+                    Label("Session Deny", systemImage: "shield.slash")
+                }
+                .buttonStyle(.bordered)
+                .tint(.pink)
+                .keyboardShortcut("d", modifiers: [.command])
 
                 Button(action: {
                     coordinator.handleAction(.allowPatternForSession(
@@ -440,7 +468,7 @@ struct ApprovalPanelView: View {
                 } else {
                     HStack(spacing: 12) {
                         HStack(spacing: 4) {
-                            Text("Always Deny:")
+                            Text("Deny:")
                                 .font(.system(.body, design: .monospaced))
                                 .foregroundColor(.secondary)
                             resultBadge(
@@ -449,7 +477,7 @@ struct ApprovalPanelView: View {
                             )
                         }
                         HStack(spacing: 4) {
-                            Text("Always Allow:")
+                            Text("Allow:")
                                 .font(.system(.body, design: .monospaced))
                                 .foregroundColor(.secondary)
                             resultBadge(

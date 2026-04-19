@@ -153,7 +153,7 @@ final class Phase1RefactorTests: XCTestCase {
                 "content": AnyCodable("export PATH=$PATH:/usr/local/bin")
             ]
         )
-        XCTAssertNotNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNotNil(matcher.matchSensitivePath(payload: payload))
     }
 
     // MARK: - GavelConstants values are reasonable

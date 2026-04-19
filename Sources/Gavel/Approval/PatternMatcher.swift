@@ -81,6 +81,8 @@ struct PatternMatcher {
             // ── Command obfuscation ──
             ("\\beval\\b.*\\$\\(.*\\b(base64|b64decode)\\b", "Obfuscated command via eval+base64"),
             ("\\bbase64\\s+-[dD]\\b.*\\|.*\\b(bash|sh|zsh)\\b", "Base64 decoded pipe to shell"),
+            ("\\$\\(.*\\bbase64\\s+-[dD]\\b", "Base64 decode in subshell (command obfuscation)"),
+            ("\\$\\(.*\\bbase64\\b.*--decode", "Base64 decode in subshell (command obfuscation)"),
             ("\\bbash\\s*<<", "Heredoc execution (potential obfuscation)"),
 
             // ── Compiled/scripted exfiltration via temp files ──
@@ -193,8 +195,9 @@ struct PatternMatcher {
 
         // Ask user — configuration that may need reading for self-mutation
         let rawAskUserReads: [(pattern: String, reason: String)] = [
-            ("\\.claude/gavel/rules\\.json", "Sensitive: Gavel rules read"),
-            ("\\.claude/gavel/session-defaults\\.json", "Sensitive: Gavel defaults read"),
+            ("\\.claude/gavel(/|$)", "Sensitive: Gavel config read"),
+            ("\\.claude/(settings|settings\\.local)\\.json", "Sensitive: Claude Code settings read"),
+            ("\\.claude/hooks(/|$)", "Sensitive: Claude Code hooks read"),
         ]
 
         sensitiveReads = rawSensitiveReads.compactMap { entry in
@@ -211,39 +214,16 @@ struct PatternMatcher {
             return (regex, entry.reason)
         }
 
-        mcpPatterns = Self.dangerousMcpTools.compactMap { entry in
-            guard let regex = try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive]) else {
-                return nil
-            }
-            return (regex, entry.reason)
-        }
     }
 
-    /// MCP tools that can exfiltrate or modify data — blocked unless user has an explicit allow rule.
-    private static let dangerousMcpTools: [(pattern: String, reason: String)] = [
-        // Messaging — send, update, delete (exfil + evidence destruction)
-        ("mcp__.*[Ss]lack.*(send|update|delete|upload)", "MCP: Slack write operation"),
-        // Browser — can navigate to attacker URLs with data in params
-        ("mcp__.*[Pp]laywright.*(navigate$|evaluate|type|fill|click|run_code)", "MCP: Browser interaction (potential exfiltration)"),
-        // Email
-        ("mcp__.*mail.*(send|create|draft)", "MCP: Email write operation"),
-        // Webhooks / HTTP
-        ("mcp__.*webhook.*(send|create|trigger)", "MCP: Webhook operation"),
-        ("mcp__.*http.*(post|put|patch|delete)", "MCP: HTTP write operation"),
-        // Jira/Todoist — write operations (create, update, delete, comment)
-        ("mcp__.*[Jj]ira.*(create|update|delete|add|edit|transition|link)", "MCP: Jira write operation"),
-        ("mcp__.*[Tt]odoist.*(create|update|delete|close)", "MCP: Todoist write operation"),
-    ]
-
-    /// Pre-compiled MCP tool patterns (compiled once at init).
-    private let mcpPatterns: [(regex: NSRegularExpression, reason: String)]
+    // MCP exfiltration patterns are now seeded as persistent rules in RuleStore.
+    // See RuleStore.seededDefaults for the patterns (Slack, Playwright, Email, Webhooks, HTTP).
 
     /// Check if a PreToolUse payload matches any dangerous pattern.
     /// Returns a reason string if dangerous, nil if safe.
     ///
-    /// Note: MCP tools are checked separately via `matchMcpDangerous` because
-    /// they should be overridable by persistent allow rules (unlike Bash/Write
-    /// patterns which are absolute blocks).
+    /// MCP exfiltration patterns are handled separately as seeded persistent rules
+    /// in RuleStore (visible in the Rules tab, overridable by allow rules).
     func matchDangerous(payload: PreToolUsePayload) -> String? {
         switch payload.toolName {
         case "Bash":
@@ -274,12 +254,10 @@ struct PatternMatcher {
     func matchSensitivePath(payload: PreToolUsePayload) -> String? {
         // Bash: check askUser destructive patterns (rm -rf etc.)
         if payload.toolName == "Bash", let command = payload.command {
-            let stripped = Self.stripQuotedContent(command)
-            let range = NSRange(stripped.startIndex..., in: stripped)
-            for (regex, reason) in askUserBashPatterns {
-                if regex.firstMatch(in: stripped, range: range) != nil {
-                    return reason
-                }
+            if let reason = checkAskUserBash(command) { return reason }
+            let expanded = Self.expandInlineVariables(command)
+            if expanded != command, let reason = checkAskUserBash(expanded) {
+                return reason + " (variable expansion detected)"
             }
         }
 
@@ -295,8 +273,9 @@ struct PatternMatcher {
             }
         }
 
-        // Read: check askUser read paths (config files needed for self-mutation)
-        if payload.toolName == "Read" {
+        // Read/Glob/Grep: check askUser read paths (config files needed for self-mutation)
+        // Grep can leak file contents via pattern matching; Glob reveals file existence.
+        if ["Read", "Glob", "Grep"].contains(payload.toolName) {
             for (regex, reason) in askUserReads {
                 if regex.firstMatch(in: path, range: range) != nil {
                     return reason
@@ -307,11 +286,15 @@ struct PatternMatcher {
         return nil
     }
 
-    /// Check MCP tools separately — these are overridable by persistent allow rules.
-    /// Called from ApprovalEngine AFTER allow rules are checked.
-    func matchMcpDangerous(payload: PreToolUsePayload) -> String? {
-        guard payload.toolName.hasPrefix("mcp__") else { return nil }
-        return matchMcpTool(payload.toolName)
+    private func checkAskUserBash(_ command: String) -> String? {
+        let stripped = Self.stripQuotedContent(command)
+        let range = NSRange(stripped.startIndex..., in: stripped)
+        for (regex, reason) in askUserBashPatterns {
+            if regex.firstMatch(in: stripped, range: range) != nil {
+                return reason
+            }
+        }
+        return nil
     }
 
     // MARK: - Bash command matching
@@ -319,31 +302,51 @@ struct PatternMatcher {
     private func matchBashCommand(_ command: String?) -> String? {
         guard let command = command else { return nil }
 
-        // Match against the full command first (catches everything)
+        if let reason = checkBashPatterns(command) { return reason }
+
+        // Fallback: expand inline variables and re-check.
+        // Catches: D="doppler"; S="secrets"; $D $S → doppler secrets
+        let expanded = Self.expandInlineVariables(command)
+        if expanded != command, let reason = checkBashPatterns(expanded) {
+            return reason + " (variable expansion detected)"
+        }
+
+        return nil
+    }
+
+    private func checkBashPatterns(_ command: String) -> String? {
         let range = NSRange(command.startIndex..., in: command)
         for (regex, reason) in bashPatterns {
             if regex.firstMatch(in: command, range: range) != nil {
-                // Verify it's not a false positive inside a quoted string.
-                // If the match disappears when we strip quoted content,
-                // it was just a string literal (commit message, echo, etc.)
                 let stripped = Self.stripQuotedContent(command)
                 let strippedRange = NSRange(stripped.startIndex..., in: stripped)
                 if regex.firstMatch(in: stripped, range: strippedRange) != nil {
                     return reason
                 }
-                // Match was only in a quoted string — false positive
             }
         }
         return nil
     }
 
     /// Strip message/string-literal content to reduce false positives.
-    /// Only strips quoted args after message-like flags (-m, --message, --body).
+    /// Strips heredoc content, quoted args after message flags, and echo/printf args.
     /// Does NOT strip code arguments (python -c, ruby -e, perl -e).
-    /// "git commit -m 'fixed curl issue'" → "git commit -m ''"
-    /// "echo 'curl -d foo'" → "echo ''"
+    ///
+    ///     "git commit -m 'fixed curl issue'" → "git commit -m ''"
+    ///     "echo 'curl -d foo'" → "echo ''"
+    ///     "git commit -m \"$(cat <<'EOF'\ndoppler secrets\nEOF\n)\"" → heredoc content removed
     static func stripQuotedContent(_ command: String) -> String {
         var result = command
+
+        // Strip heredoc content: <<'EOF'\n...\nEOF → <<'EOF'\nEOF
+        // Heredocs are string literals (commit messages, PR bodies) — not executable.
+        // Note: `bash <<EOF` (heredoc execution) is caught by a separate pattern BEFORE stripping.
+        if let regex = try? NSRegularExpression(
+            pattern: #"<<-?'?"?(\w+)"?'?\s*\n.*?\n\s*\1"#,
+            options: [.dotMatchesLineSeparators]
+        ) {
+            result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "<<$1\n$1")
+        }
 
         // Strip quoted content after message flags: -m, --message, --body, --title
         if let regex = try? NSRegularExpression(pattern: #"(-m|--message|--body|--title)\s+"([^"\\]|\\.)*""#) {
@@ -531,15 +534,53 @@ struct PatternMatcher {
         GavelConstants.tempDirectoryPrefixes.contains { path.hasPrefix($0) }
     }
 
-    // MARK: - MCP tool matching
+    // MARK: - Shell variable expansion
 
-    private func matchMcpTool(_ toolName: String) -> String? {
-        let range = NSRange(toolName.startIndex..., in: toolName)
-        for (regex, reason) in mcpPatterns {
-            if regex.firstMatch(in: toolName, range: range) != nil {
-                return reason
+    /// Expand inline shell variable assignments in a command string.
+    /// Catches the indirection bypass where variables hide sensitive keywords from regex matching.
+    ///
+    ///     "D=\"doppler\"; S=\"secrets\"; $D $S -p test"
+    ///     → "D=\"doppler\"; S=\"secrets\"; doppler secrets -p test"
+    ///
+    /// Only expands variables assigned within the same command string (not env vars).
+    /// Subshell assignments like `VAR=$(...)` are skipped (can't evaluate).
+    static func expandInlineVariables(_ command: String) -> String {
+        var vars: [String: String] = [:]
+        let range = NSRange(command.startIndex..., in: command)
+
+        // Match: VAR="value", VAR='value', VAR=value (with optional export/local prefix)
+        let patterns: [(String, Int, Int)] = [
+            (#"(?:^|[;&\s])(?:export\s+|local\s+)?([A-Za-z_]\w*)="([^"]*)""#, 1, 2),
+            (#"(?:^|[;&\s])(?:export\s+|local\s+)?([A-Za-z_]\w*)='([^']*)'"#, 1, 2),
+            (#"(?:^|[;&\s])(?:export\s+|local\s+)?([A-Za-z_]\w*)=([^\s;"'$][^\s;"']*)"#, 1, 2),
+        ]
+
+        for (pattern, nameGroup, valueGroup) in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            for match in regex.matches(in: command, range: range) {
+                guard let nameRange = Range(match.range(at: nameGroup), in: command),
+                      let valueRange = Range(match.range(at: valueGroup), in: command) else { continue }
+                vars[String(command[nameRange])] = String(command[valueRange])
             }
         }
-        return nil
+
+        guard !vars.isEmpty else { return command }
+
+        // Substitute $VAR and ${VAR} references
+        var result = command
+        for (name, value) in vars {
+            result = result.replacingOccurrences(of: "${\(name)}", with: value)
+            if let regex = try? NSRegularExpression(
+                pattern: "\\$\(NSRegularExpression.escapedPattern(for: name))(?![A-Za-z_0-9])"
+            ) {
+                result = regex.stringByReplacingMatches(
+                    in: result,
+                    range: NSRange(result.startIndex..., in: result),
+                    withTemplate: NSRegularExpression.escapedTemplate(for: value)
+                )
+            }
+        }
+
+        return result
     }
 }

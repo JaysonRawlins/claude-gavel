@@ -192,6 +192,81 @@ final class WireFormatTests: XCTestCase {
         XCTAssertNotNil(responseJson?["reason"])
     }
 
+    func testRouterBlocksOnSessionDeny() {
+        let engine = ApprovalEngine()
+        let manager = SessionManager()
+        let coordinator = ApprovalCoordinator()
+        let session = manager.session(for: 66666)
+        session.isAutoApproveEnabled = true
+        session.sessionRules.append(SessionRule(
+            toolName: "Edit",
+            pattern: "*/production.yml",
+            verdict: .block,
+            explanation: "Protected during deployment"
+        ))
+        let router = HookRouter(sessionManager: manager, approvalEngine: engine, approvalCoordinator: coordinator)
+
+        let json = """
+        {
+            "hookType": "PreToolUse",
+            "sessionPid": 66666,
+            "timestamp": 1712600000.0,
+            "payload": {
+                "type": "PreToolUse",
+                "tool_name": "Edit",
+                "tool_input": {"file_path": "/app/config/production.yml", "old_string": "x", "new_string": "y"},
+                "session_id": "test-session"
+            }
+        }
+        """
+        let data = json.data(using: .utf8)!
+
+        var responseJson: [String: Any]?
+        router.handle(data: data) { responseData in
+            responseJson = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any]
+        }
+
+        XCTAssertEqual(responseJson?["verdict"] as? String, "block")
+        XCTAssertTrue((responseJson?["reason"] as? String)?.contains("Session deny") ?? false)
+    }
+
+    func testRouterSessionDenyOverridesAutoApprove() {
+        let engine = ApprovalEngine()
+        let manager = SessionManager()
+        let coordinator = ApprovalCoordinator()
+        let session = manager.session(for: 77777)
+        session.autoApproveUntil = Date().addingTimeInterval(300)
+        session.sessionRules.append(SessionRule(
+            toolName: "Bash",
+            pattern: "docker push*",
+            verdict: .block,
+            explanation: "No deploys this session"
+        ))
+        let router = HookRouter(sessionManager: manager, approvalEngine: engine, approvalCoordinator: coordinator)
+
+        let json = """
+        {
+            "hookType": "PreToolUse",
+            "sessionPid": 77777,
+            "timestamp": 1712600000.0,
+            "payload": {
+                "type": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "docker push myimage:latest"},
+                "session_id": "test-session"
+            }
+        }
+        """
+
+        var responseJson: [String: Any]?
+        router.handle(data: json.data(using: .utf8)!) { responseData in
+            responseJson = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any]
+        }
+
+        XCTAssertEqual(responseJson?["verdict"] as? String, "block")
+        XCTAssertEqual(session.blockCount, 1)
+    }
+
     func testRouterEnrichesSessionFromPayload() {
         let engine = ApprovalEngine()
         let manager = SessionManager()
