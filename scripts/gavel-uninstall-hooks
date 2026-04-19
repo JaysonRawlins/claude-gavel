@@ -1,0 +1,44 @@
+#!/bin/bash
+# Remove gavel hooks from ~/.claude/settings.json
+# Run this before `brew uninstall gavel`
+set -e
+
+SETTINGS="$HOME/.claude/settings.json"
+if [[ ! -f "$SETTINGS" ]]; then
+    echo "No settings.json found at $SETTINGS"
+    exit 0
+fi
+
+if ! command -v ruby &>/dev/null; then
+    echo "ERROR: ruby not found. Manually remove gavel entries from $SETTINGS"
+    exit 1
+fi
+
+ruby -rjson -e '
+  path = "'"$SETTINGS"'"
+  cfg = JSON.parse(File.read(path))
+  hooks = cfg["hooks"] || {}
+  changed = false
+  hooks.each do |event, entries|
+    original_size = entries.size
+    entries.reject! do |entry|
+      (entry["hooks"] || []).any? { |h| (h["command"] || "").include?("gavel") }
+    end
+    changed = true if entries.size != original_size
+  end
+  hooks.delete_if { |_, v| v.empty? }
+  if changed
+    File.write(path, JSON.pretty_generate(cfg))
+    puts "Removed gavel hooks from settings.json"
+  else
+    puts "No gavel hooks found in settings.json"
+  end
+'
+
+if [[ -d "$HOME/.claude/gavel/hooks" ]]; then
+    rm -rf "$HOME/.claude/gavel/hooks"
+    echo "Removed ~/.claude/gavel/hooks/"
+fi
+
+echo "Done. You can now run: brew uninstall gavel"
+echo "Note: ~/.claude/gavel/ config files (rules.json, session-context.md) are preserved."

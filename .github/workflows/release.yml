@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build release binaries
+        run: swift build -c release
+
+      - name: Import signing certificate
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+      - name: Sign binaries
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          IDENTITY="Developer ID Application: ($APPLE_TEAM_ID)"
+          codesign --force --options runtime --sign "$IDENTITY" .build/release/gavel
+          codesign --force --options runtime --sign "$IDENTITY" .build/release/gavel-hook
+          codesign --verify --verbose .build/release/gavel
+          codesign --verify --verbose .build/release/gavel-hook
+
+      - name: Package release tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          STAGING="gavel-${VERSION}-macos-arm64"
+          mkdir -p "$STAGING/hooks" "$STAGING/defaults" "$STAGING/scripts"
+          cp .build/release/gavel .build/release/gavel-hook "$STAGING/"
+          cp hooks/*.sh "$STAGING/hooks/"
+          cp defaults/session-context.md "$STAGING/defaults/"
+          cp scripts/gavel-uninstall-hooks "$STAGING/scripts/"
+          tar czf "${STAGING}.tar.gz" "$STAGING"
+          shasum -a 256 "${STAGING}.tar.gz" > "${STAGING}.tar.gz.sha256"
+
+      - name: Notarize binaries
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          STAGING="gavel-${VERSION}-macos-arm64"
+          # Create a zip for notarization (notarytool requires zip or dmg)
+          ditto -c -k --keepParent "$STAGING" "${STAGING}-notarize.zip"
+          xcrun notarytool submit "${STAGING}-notarize.zip" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_ID_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          rm "${STAGING}-notarize.zip"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          TARBALL="gavel-${VERSION}-macos-arm64.tar.gz"
+          SHA_FILE="${TARBALL}.sha256"
+          SHA=$(cat "$SHA_FILE" | awk '{print $1}')
+
+          gh release create "$VERSION" \
+            --title "Gavel ${VERSION}" \
+            --notes "$(cat <<EOF
+          ## Install
+
+          \`\`\`bash
+          brew tap JaysonRawlins/gavel
+          brew install gavel
+          brew services start gavel
+          \`\`\`
+
+          **SHA256:** \`${SHA}\`
+          EOF
+          )" \
+            "$TARBALL" "$SHA_FILE"
+
+      - name: Cleanup keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true

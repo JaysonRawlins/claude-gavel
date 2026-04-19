@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// Gavel — Native macOS daemon for Claude Code session monitoring and approval.
@@ -12,6 +13,7 @@ import SwiftUI
 class GavelAppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var monitorWindow: NSWindow?
+    private var cancellables = Set<AnyCancellable>()
 
     let sessionManager = SessionManager()
     let approvalEngine = ApprovalEngine()
@@ -41,6 +43,13 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         setupSocketServer()
         setupHookRouter()
         GavelNotifications.requestPermission()
+
+        sessionManager.$defaultAutoApprove
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] autoApprove in
+                self?.updateMenuBarIcon(autoApprove: autoApprove)
+            }
+            .store(in: &cancellables)
 
         NSApp.setActivationPolicy(.accessory) // Menu bar only, no dock icon
     }
@@ -82,13 +91,15 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "gavel.fill", accessibilityDescription: "Gavel")
-                ?? NSImage(systemSymbolName: "shield.checkered", accessibilityDescription: "Gavel")
             button.toolTip = "Gavel — Claude Code Monitor"
         }
+        updateMenuBarIcon(autoApprove: sessionManager.defaultAutoApprove)
 
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Show Monitor", action: #selector(showMonitor), keyEquivalent: ""))
+        let contextItem = NSMenuItem(title: "Edit Session Context", action: nil, keyEquivalent: "")
+        contextItem.submenu = buildEditorSubmenu()
+        menu.addItem(contextItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Pause All Sessions", action: #selector(togglePauseAll), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Clear Session Rules", action: #selector(revokeAll), keyEquivalent: ""))
@@ -96,6 +107,24 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Restart Gavel", action: #selector(reloadBinary), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Quit Gavel", action: #selector(quit), keyEquivalent: ""))
         statusItem.menu = menu
+    }
+
+    private func updateMenuBarIcon(autoApprove: Bool) {
+        guard let button = statusItem.button else { return }
+        let symbolName = "gavel.fill"
+        let fallback = "shield.checkered"
+
+        if autoApprove {
+            let config = NSImage.SymbolConfiguration(paletteColors: [.systemGreen])
+            let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Gavel — Auto-approve on")
+                ?? NSImage(systemSymbolName: fallback, accessibilityDescription: "Gavel — Auto-approve on")
+            button.image = image?.withSymbolConfiguration(config)
+            button.image?.isTemplate = false
+        } else {
+            let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Gavel")
+                ?? NSImage(systemSymbolName: fallback, accessibilityDescription: "Gavel")
+            button.image = image
+        }
     }
 
     @objc private func showMonitor() {
@@ -115,6 +144,77 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         }
         monitorWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func buildEditorSubmenu() -> NSMenu {
+        let submenu = NSMenu()
+        let editors = EditorPreference.availableEditors()
+        let preferred = EditorPreference.preferredBundleID
+
+        for editor in editors {
+            let item = NSMenuItem(title: editor.name, action: #selector(openContextWithEditor(_:)), keyEquivalent: "")
+            item.representedObject = editor.bundleID
+            item.target = self
+            if editor.bundleID == preferred {
+                item.state = .on
+            }
+            submenu.addItem(item)
+        }
+
+        if editors.isEmpty {
+            submenu.addItem(NSMenuItem(title: "No editors found", action: nil, keyEquivalent: ""))
+        }
+
+        return submenu
+    }
+
+    @objc private func openContextWithEditor(_ sender: NSMenuItem) {
+        guard let bundleID = sender.representedObject as? String else { return }
+        EditorPreference.preferredBundleID = bundleID
+
+        // Rebuild submenu to update checkmark
+        if let contextItem = statusItem.menu?.items.first(where: { $0.title == "Edit Session Context" }) {
+            contextItem.submenu = buildEditorSubmenu()
+        }
+
+        let contextPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/gavel/session-context.md")
+        if !FileManager.default.fileExists(atPath: contextPath.path) {
+            seedSessionContext()
+        }
+        EditorPreference.open(contextPath)
+    }
+
+    /// Copy the default session-context.md if none exists.
+    private func seedSessionContext() {
+        let dest = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/gavel/session-context.md")
+        guard !FileManager.default.fileExists(atPath: dest.path) else { return }
+        let fallback = """
+        # Session Context — Gavel Performance Tuning
+
+        These instructions are injected into every Claude Code session at startup.
+        Edit this file to customize how Claude behaves in your projects.
+
+        ## Engineering Principles
+
+        - Orthogonal design: single responsibility per component, changes don't cascade
+        - Fail fast, fail loud: validate early, surface errors immediately, never swallow exceptions
+        - Minimal coupling: depend on interfaces not implementations, composition over inheritance
+
+        ## Code Quality
+
+        - Functions under 30 lines, files under 300: if it's longer, split it
+        - Name things for the reader: variable names explain WHY not WHAT
+        - One level of abstraction per function
+        - Reduce nesting: early returns > deeply nested if/else
+
+        ## Verification
+
+        - A successful build proves syntax, not behavior. Run the actual feature path.
+        - If something fails: read the error and trace it. Don't guess-and-retry.
+        """
+        FileManager.default.createFile(atPath: dest.path, contents: Data(fallback.utf8))
     }
 
     @objc private func togglePauseAll() {
