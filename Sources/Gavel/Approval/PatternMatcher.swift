@@ -195,8 +195,9 @@ struct PatternMatcher {
 
         // Ask user — configuration that may need reading for self-mutation
         let rawAskUserReads: [(pattern: String, reason: String)] = [
-            ("\\.claude/gavel/rules\\.json", "Sensitive: Gavel rules read"),
-            ("\\.claude/gavel/session-defaults\\.json", "Sensitive: Gavel defaults read"),
+            ("\\.claude/gavel/", "Sensitive: Gavel config read"),
+            ("\\.claude/(settings|settings\\.local)\\.json", "Sensitive: Claude Code settings read"),
+            ("\\.claude/hooks/", "Sensitive: Claude Code hooks read"),
         ]
 
         sensitiveReads = rawSensitiveReads.compactMap { entry in
