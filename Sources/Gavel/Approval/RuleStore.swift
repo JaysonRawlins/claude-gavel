@@ -15,7 +15,7 @@ final class RuleStore: ObservableObject {
     private let configPath: String
 
     /// Current seed version — bump when adding new default rules.
-    private static let seedVersion = 5
+    private static let seedVersion = 6
 
     init(configPath: String? = nil) {
         self.configPath = configPath ?? Self.defaultConfigPath
@@ -196,6 +196,24 @@ final class RuleStore: ObservableObject {
             isRegex: true,
             verdict: .prompt,
             explanation: "curl file:// reads local files — bypasses Read tool protections",
+            builtIn: true
+        ),
+
+        // ── Git safety: destructive reset and push to main ──
+        PersistentRule(
+            toolName: "Bash",
+            pattern: "\\bgit\\s+(reset\\s+--hard|checkout\\s+--\\s+\\.|clean\\s+-[fd]|restore\\s+--staged\\s+\\.)",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "Destructive git operation — discards uncommitted work",
+            builtIn: true
+        ),
+        PersistentRule(
+            toolName: "*",
+            pattern: "git\\s+push\\b.*\\b(main|master)\\b",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "Push to main/master — verify changes before pushing",
             builtIn: true
         ),
     ]
