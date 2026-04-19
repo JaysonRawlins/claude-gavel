@@ -15,7 +15,7 @@ final class RuleStore: ObservableObject {
     private let configPath: String
 
     /// Current seed version — bump when adding new default rules.
-    private static let seedVersion = 2
+    private static let seedVersion = 3
 
     init(configPath: String? = nil) {
         self.configPath = configPath ?? Self.defaultConfigPath
@@ -178,6 +178,16 @@ final class RuleStore: ObservableObject {
             isRegex: true,
             verdict: .prompt,
             explanation: "Changing permissions on Gavel/Claude hooks — could disable security",
+            builtIn: true
+        ),
+
+        // ── Scripting language code execution ──
+        PersistentRule(
+            toolName: "Bash",
+            pattern: "\\b(python3?|ruby|perl|node|php|lua)\\b\\s+(-[ce]|--eval)\\b",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "Inline script execution — can bypass pattern matching via string construction",
             builtIn: true
         ),
     ]

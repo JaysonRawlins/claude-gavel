@@ -185,8 +185,8 @@ final class PersistentRuleTests: XCTestCase {
         let store = RuleStore(configPath: "/dev/null")
         let builtInRules = store.rules.filter { $0.builtIn }
         XCTAssertEqual(builtInRules.count, RuleStore.seededDefaults.count)
-        // v2: 5 MCP exfil + 3 self-protection = 8
-        XCTAssertEqual(builtInRules.count, 8)
+        // v3: 5 MCP exfil + 3 self-protection + 1 scripting = 9
+        XCTAssertEqual(builtInRules.count, 9)
     }
 
     func testSeededRulesArePromptVerdict() {
