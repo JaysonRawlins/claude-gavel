@@ -185,8 +185,8 @@ final class PersistentRuleTests: XCTestCase {
         let store = RuleStore(configPath: "/dev/null")
         let builtInRules = store.rules.filter { $0.builtIn }
         XCTAssertEqual(builtInRules.count, RuleStore.seededDefaults.count)
-        // v3: 5 MCP exfil + 3 self-protection + 1 scripting = 9
-        XCTAssertEqual(builtInRules.count, 9)
+        // v4: 5 MCP exfil + 3 self-protection + 1 scripting + 3 sandbox escape = 12
+        XCTAssertEqual(builtInRules.count, 12)
     }
 
     func testSeededRulesArePromptVerdict() {
@@ -195,6 +195,35 @@ final class PersistentRuleTests: XCTestCase {
         for rule in builtInRules {
             XCTAssertEqual(rule.verdict, .prompt)
         }
+    }
+
+    // MARK: - Scripting execution built-in
+
+    func testScriptingPromptMatchesPython() {
+        let store = RuleStore(configPath: "/dev/null")
+        let payload = PreToolUsePayload(toolName: "Bash", toolInput: [
+            "command": AnyCodable("python3 -c \"import subprocess; subprocess.run(['ls'])\"")
+        ])
+        let decision = store.evaluateBuiltInPrompt(payload: payload)
+        XCTAssertNotNil(decision, "Built-in scripting rule should match python3 -c")
+        XCTAssertTrue(decision?.askUser ?? false)
+    }
+
+    func testScriptingPromptMatchesRuby() {
+        let store = RuleStore(configPath: "/dev/null")
+        let payload = PreToolUsePayload(toolName: "Bash", toolInput: [
+            "command": AnyCodable("ruby -e \"system('ls')\"")
+        ])
+        XCTAssertNotNil(store.evaluateBuiltInPrompt(payload: payload))
+    }
+
+    func testScriptingPromptDoesNotMatchPythonScript() {
+        // Running a .py file is not inline execution
+        let store = RuleStore(configPath: "/dev/null")
+        let payload = PreToolUsePayload(toolName: "Bash", toolInput: [
+            "command": AnyCodable("python3 test_script.py")
+        ])
+        XCTAssertNil(store.evaluateBuiltInPrompt(payload: payload))
     }
 
     // MARK: - Split prompt evaluation

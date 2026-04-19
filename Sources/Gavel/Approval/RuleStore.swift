@@ -15,7 +15,7 @@ final class RuleStore: ObservableObject {
     private let configPath: String
 
     /// Current seed version — bump when adding new default rules.
-    private static let seedVersion = 3
+    private static let seedVersion = 4
 
     init(configPath: String? = nil) {
         self.configPath = configPath ?? Self.defaultConfigPath
@@ -188,6 +188,34 @@ final class RuleStore: ObservableObject {
             isRegex: true,
             verdict: .prompt,
             explanation: "Inline script execution — can bypass pattern matching via string construction",
+            builtIn: true
+        ),
+
+        // ── AppleScript / open command (sandbox escape) ──
+        PersistentRule(
+            toolName: "Bash",
+            pattern: "\\bosascript\\b",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "AppleScript can execute commands in other apps, bypassing Gavel entirely",
+            builtIn: true
+        ),
+        PersistentRule(
+            toolName: "Bash",
+            pattern: "\\bopen\\s+-a\\b",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "Opening apps can provide unmonitored shell access outside Gavel",
+            builtIn: true
+        ),
+
+        // ── Local file read via curl (config exfil) ──
+        PersistentRule(
+            toolName: "Bash",
+            pattern: "\\bcurl\\b.*\\bfile://",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "curl file:// reads local files — bypasses Read tool protections",
             builtIn: true
         ),
     ]
