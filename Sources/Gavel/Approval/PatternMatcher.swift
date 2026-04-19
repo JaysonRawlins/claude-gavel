@@ -273,8 +273,9 @@ struct PatternMatcher {
             }
         }
 
-        // Read: check askUser read paths (config files needed for self-mutation)
-        if payload.toolName == "Read" {
+        // Read/Glob/Grep: check askUser read paths (config files needed for self-mutation)
+        // Grep can leak file contents via pattern matching; Glob reveals file existence.
+        if ["Read", "Glob", "Grep"].contains(payload.toolName) {
             for (regex, reason) in askUserReads {
                 if regex.firstMatch(in: path, range: range) != nil {
                     return reason
