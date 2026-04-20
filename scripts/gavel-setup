@@ -1,0 +1,84 @@
+#!/bin/bash
+# Gavel first-run setup — copies hooks, seeds config, registers with Claude Code.
+# Run this after `brew install gavel`.
+set -e
+
+SHARE_DIR="$(dirname "$(command -v gavel)")/../share/gavel"
+GAVEL_DIR="$HOME/.claude/gavel"
+HOOKS_DIR="$GAVEL_DIR/hooks"
+SETTINGS="$HOME/.claude/settings.json"
+
+# --- Migrate from manual install ---
+OLD_PLIST="$HOME/Library/LaunchAgents/com.gavel.daemon.plist"
+if [[ -f "$OLD_PLIST" ]]; then
+    launchctl bootout "gui/$(id -u)/com.gavel.daemon" 2>/dev/null || true
+    rm -f "$OLD_PLIST"
+    echo "Migrated: removed old com.gavel.daemon LaunchAgent"
+fi
+OLD_BIN="$HOME/.claude/gavel/bin"
+if [[ -d "$OLD_BIN" ]]; then
+    rm -f "$OLD_BIN/gavel" "$OLD_BIN/gavel-hook" 2>/dev/null
+    rmdir "$OLD_BIN" 2>/dev/null || true
+    echo "Migrated: removed old binaries from ~/.claude/gavel/bin/"
+fi
+
+# --- Copy hook shims ---
+mkdir -p "$HOOKS_DIR"
+chmod 755 "$GAVEL_DIR"
+for hook in "$SHARE_DIR/hooks/"*.sh; do
+    cp "$hook" "$HOOKS_DIR/$(basename "$hook")"
+    chmod +x "$HOOKS_DIR/$(basename "$hook")"
+done
+echo "Installed hook shims to $HOOKS_DIR"
+
+# --- Seed session context ---
+CONTEXT="$GAVEL_DIR/session-context.md"
+if [[ ! -f "$CONTEXT" ]]; then
+    cp "$SHARE_DIR/defaults/session-context.md" "$CONTEXT"
+    echo "Seeded session context: $CONTEXT"
+fi
+
+# --- Register hooks in settings.json ---
+mkdir -p "$(dirname "$SETTINGS")"
+if ! command -v ruby &>/dev/null; then
+    echo "WARNING: ruby not found, skipping hook registration."
+    echo "Manually add gavel hooks to $SETTINGS"
+    exit 0
+fi
+
+ruby -rjson -e '
+  settings_path = "'"$SETTINGS"'"
+  hooks_dir = "'"$HOOKS_DIR"'"
+
+  cfg = File.exist?(settings_path) ? JSON.parse(File.read(settings_path)) : {}
+  hooks = cfg["hooks"] ||= {}
+
+  gavel_hooks = {
+    "PreToolUse" => [{"hooks" => [{"type" => "command", "command" => "#{hooks_dir}/pre_tool_use.sh", "timeout" => 86400}]}],
+    "PermissionRequest" => [{"hooks" => [{"type" => "command", "command" => "#{hooks_dir}/permission_request.sh", "timeout" => 86400}]}],
+    "PostToolUse" => [{"hooks" => [{"type" => "command", "command" => "#{hooks_dir}/post_tool_use.sh", "async" => true}]}],
+    "SessionStart" => [{"hooks" => [{"type" => "command", "command" => "#{hooks_dir}/session_start.sh"}]}],
+    "Stop" => [{"hooks" => [{"type" => "command", "command" => "#{hooks_dir}/stop.sh", "async" => true}]}],
+  }
+
+  changed = false
+  gavel_hooks.each do |event, entries|
+    existing = hooks[event] || []
+    has_gavel = existing.any? { |e| (e["hooks"] || []).any? { |h| (h["command"] || "").include?("gavel") } }
+    unless has_gavel
+      hooks[event] = existing + entries
+      changed = true
+    end
+  end
+
+  if changed
+    File.write(settings_path, JSON.pretty_generate(cfg))
+    puts "Registered hooks in #{settings_path}"
+  else
+    puts "Hooks already registered"
+  end
+'
+
+echo ""
+echo "Setup complete. Start gavel with:"
+echo "  brew services start gavel"
