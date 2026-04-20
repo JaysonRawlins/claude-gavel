@@ -52,7 +52,7 @@ jobs:
           cp .build/release/gavel .build/release/gavel-hook "$STAGING/"
           cp hooks/*.sh "$STAGING/hooks/"
           cp defaults/session-context.md "$STAGING/defaults/"
-          cp scripts/gavel-uninstall-hooks "$STAGING/scripts/"
+          cp scripts/gavel-setup scripts/gavel-uninstall-hooks "$STAGING/scripts/"
           tar czf "${STAGING}.tar.gz" "$STAGING"
           shasum -a 256 "${STAGING}.tar.gz" > "${STAGING}.tar.gz.sha256"
 
