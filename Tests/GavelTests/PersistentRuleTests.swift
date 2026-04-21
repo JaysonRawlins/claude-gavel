@@ -185,8 +185,9 @@ final class PersistentRuleTests: XCTestCase {
         let store = RuleStore(configPath: "/dev/null")
         let builtInRules = store.rules.filter { $0.builtIn }
         XCTAssertEqual(builtInRules.count, RuleStore.seededDefaults.count)
-        // v6: 5 MCP exfil + 1 self-protection + 1 scripting + 3 sandbox escape + 2 git safety = 12
-        XCTAssertEqual(builtInRules.count, 12)
+        // v7: 5 MCP exfil + 1 self-protection + 1 scripting + 3 sandbox escape
+        //     + 2 git safety + 3 scheduler = 15
+        XCTAssertEqual(builtInRules.count, 15)
     }
 
     func testSeededRulesArePromptVerdict() {
@@ -252,6 +253,63 @@ final class PersistentRuleTests: XCTestCase {
         XCTAssertNil(store.evaluateBuiltInPrompt(payload: payload))
         // evaluateUserPrompt SHOULD match it
         XCTAssertNotNil(store.evaluateUserPrompt(payload: payload))
+    }
+
+    // MARK: - Scheduler tool built-in rules (issue #29)
+
+    func testCronCreatePrompts() {
+        let store = RuleStore(configPath: "/dev/null")
+        let payload = PreToolUsePayload(toolName: "CronCreate", toolInput: [
+            "cron": AnyCodable("0 3 * * 1"),
+            "prompt": AnyCodable("check deploy")
+        ])
+        let decision = store.evaluateBuiltInPrompt(payload: payload)
+        XCTAssertNotNil(decision, "CronCreate should hit the built-in prompt rule")
+        XCTAssertTrue(decision?.askUser ?? false)
+    }
+
+    func testScheduleWakeupPrompts() {
+        let store = RuleStore(configPath: "/dev/null")
+        let payload = PreToolUsePayload(toolName: "ScheduleWakeup", toolInput: [
+            "delaySeconds": AnyCodable(60),
+            "prompt": AnyCodable("resume work")
+        ])
+        let decision = store.evaluateBuiltInPrompt(payload: payload)
+        XCTAssertNotNil(decision, "ScheduleWakeup should hit the built-in prompt rule")
+        XCTAssertTrue(decision?.askUser ?? false)
+    }
+
+    func testCronDeletePrompts() {
+        let store = RuleStore(configPath: "/dev/null")
+        let payload = PreToolUsePayload(toolName: "CronDelete", toolInput: [
+            "id": AnyCodable("abc123")
+        ])
+        let decision = store.evaluateBuiltInPrompt(payload: payload)
+        XCTAssertNotNil(decision, "CronDelete should hit the built-in prompt rule")
+        XCTAssertTrue(decision?.askUser ?? false)
+    }
+
+    func testCronListDoesNotPrompt() {
+        // Read-only — no rule, falls through to normal flow.
+        let store = RuleStore(configPath: "/dev/null")
+        let payload = PreToolUsePayload(toolName: "CronList", toolInput: [:])
+        XCTAssertNil(store.evaluateBuiltInPrompt(payload: payload))
+    }
+
+    func testUserAllowOverridesSchedulerPrompt() {
+        // Stage 6 (user allow) beats Stage 7 (built-in prompt) in ApprovalEngine.
+        // A user who trusts CronCreate should be able to add a matching allow rule.
+        let store = RuleStore(configPath: "/dev/null")
+        store.addRule(PersistentRule(toolName: "CronCreate", pattern: "*", isRegex: false, verdict: .allow))
+        let engine = ApprovalEngine(ruleStore: store)
+        let session = Session(pid: 88888)
+        let payload = PreToolUsePayload(toolName: "CronCreate", toolInput: [
+            "cron": AnyCodable("0 9 * * *"),
+            "prompt": AnyCodable("daily check")
+        ])
+        let decision = engine.evaluate(payload: payload, session: session)
+        // Allow rule wins — no block, no askUser prompt.
+        XCTAssertNotEqual(decision.verdict, .block)
     }
 
     // MARK: - Self-protection built-in rules
