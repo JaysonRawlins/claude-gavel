@@ -399,6 +399,7 @@ struct ApprovalPanelView: View {
                         updatedCommand: cmdIfModified,
                         updatedInput: updatedInputIfModified
                     ), on: sessionPanel)
+                    coordinator.sessionManager?.noteInteraction()
                 }) {
                     Label("Session Allow", systemImage: "checkmark.shield")
                 }
@@ -413,12 +414,25 @@ struct ApprovalPanelView: View {
                     coordinator.handleAction(.deny(
                         context: noteToClaudeText.isEmpty ? nil : noteToClaudeText
                     ), on: sessionPanel)
+                    coordinator.sessionManager?.noteInteraction()
                 }) {
                     Label("Deny", systemImage: "xmark.circle")
                 }
                 .buttonStyle(.bordered)
                 .tint(.orange)
                 .keyboardShortcut(.escape, modifiers: [])
+
+                Button(action: {
+                    if let approval = sessionPanel.currentApproval {
+                        approval.session.revokeAutoApprove()
+                    }
+                    coordinator.sessionManager?.noteInteraction()
+                }) {
+                    Label("Prompt", systemImage: "questionmark.bubble")
+                }
+                .buttonStyle(.bordered)
+                .tint(.yellow)
+                .help("Turn off auto + sub-agent inherit for this session. Current call still needs Allow/Deny.")
 
                 Spacer()
 
@@ -428,6 +442,7 @@ struct ApprovalPanelView: View {
                         updatedCommand: cmdIfModified,
                         updatedInput: updatedInputIfModified
                     ), on: sessionPanel)
+                    coordinator.sessionManager?.noteInteraction()
                 }) {
                     Label("Allow Once", systemImage: "checkmark.circle")
                 }

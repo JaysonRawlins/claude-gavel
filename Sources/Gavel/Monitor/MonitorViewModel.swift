@@ -66,6 +66,24 @@ final class MonitorViewModel: ObservableObject {
         }
     }
 
+    /// Revoke auto across every session + reset defaults + notify. The menu bar
+    /// "Prompt All Sessions" action and the inactivity timer both call through here.
+    func promptAllSessions() {
+        sessionManager.promptAllSessions()
+    }
+
+    /// Revoke auto on a single session and record user activity.
+    /// One-click alternative to toggling both Auto and Sub off manually.
+    func promptSession(_ session: Session) {
+        session.revokeAutoApprove()
+        sessionManager.noteInteraction()
+    }
+
+    /// Record any direct user interaction with gavel's UI. Resets the inactivity timer.
+    func noteInteraction() {
+        sessionManager.noteInteraction()
+    }
+
     var ruleCount: Int {
         approvalCoordinator.ruleStore?.rules.count ?? 0
     }

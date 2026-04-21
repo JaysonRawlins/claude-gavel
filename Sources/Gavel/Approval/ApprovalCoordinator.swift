@@ -21,6 +21,9 @@ final class ApprovalCoordinator: ObservableObject {
     /// RuleStore for persistent always-deny/always-allow rules.
     var ruleStore: RuleStore?
 
+    /// SessionManager reference for recording user-interaction signals (inactivity timer).
+    weak var sessionManager: SessionManager?
+
     struct PendingApproval {
         let payload: PreToolUsePayload
         let session: Session
