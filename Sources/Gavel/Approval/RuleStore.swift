@@ -15,7 +15,7 @@ final class RuleStore: ObservableObject {
     private let configPath: String
 
     /// Current seed version — bump when adding new default rules.
-    private static let seedVersion = 6
+    private static let seedVersion = 7
 
     init(configPath: String? = nil) {
         self.configPath = configPath ?? Self.defaultConfigPath
@@ -214,6 +214,36 @@ final class RuleStore: ObservableObject {
             isRegex: true,
             verdict: .prompt,
             explanation: "Push to main/master — verify changes before pushing",
+            builtIn: true
+        ),
+
+        // ── Persistence-creating scheduler tools ──
+        // These plant future execution that fires while the user may not be watching.
+        // Prompt even under auto-approve so the user sees and confirms each one.
+        // Using toolName="*" with an anchored regex pattern gives each rule a
+        // unique pattern string — needed because seed-migration dedupes on pattern.
+        PersistentRule(
+            toolName: "*",
+            pattern: "^CronCreate$",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "Scheduling a future prompt — plants delayed execution that runs autonomously",
+            builtIn: true
+        ),
+        PersistentRule(
+            toolName: "*",
+            pattern: "^ScheduleWakeup$",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "Scheduling session re-entry — Claude will resume with this prompt at the given delay",
+            builtIn: true
+        ),
+        PersistentRule(
+            toolName: "*",
+            pattern: "^CronDelete$",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "Deleting a scheduled job — could remove legitimate user-created schedules",
             builtIn: true
         ),
     ]
