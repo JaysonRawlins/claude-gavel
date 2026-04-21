@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Combine
 import SwiftUI
 
@@ -20,6 +21,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
     let approvalCoordinator = ApprovalCoordinator()
     lazy var hookRouter: HookRouter = {
         approvalCoordinator.ruleStore = approvalEngine.ruleStore
+        approvalCoordinator.sessionManager = sessionManager
         return HookRouter(
             sessionManager: sessionManager,
             approvalEngine: approvalEngine,
@@ -51,7 +53,18 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
+        registerGlobalHotKeys()
+
         NSApp.setActivationPolicy(.accessory) // Menu bar only, no dock icon
+    }
+
+    private func registerGlobalHotKeys() {
+        // Cmd+Opt+Shift+P — system-wide "Prompt All Sessions" panic button.
+        // Mirrors the menu item shortcut but fires even when another app is frontmost.
+        let modifiers = UInt32(cmdKey | optionKey | shiftKey)
+        GlobalHotKey.register(keyCode: UInt32(kVK_ANSI_P), modifiers: modifiers) { [weak self] in
+            self?.viewModel.promptAllSessions()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -102,6 +115,9 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(contextItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Pause All Sessions", action: #selector(togglePauseAll), keyEquivalent: ""))
+        let promptAllItem = NSMenuItem(title: "Prompt All Sessions", action: #selector(promptAll), keyEquivalent: "P")
+        promptAllItem.keyEquivalentModifierMask = [.command, .option, .shift]
+        menu.addItem(promptAllItem)
         menu.addItem(NSMenuItem(title: "Clear Session Rules", action: #selector(revokeAll), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Restart Gavel", action: #selector(reloadBinary), keyEquivalent: ""))
@@ -219,6 +235,10 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func togglePauseAll() {
         viewModel.togglePause()
+    }
+
+    @objc private func promptAll() {
+        viewModel.promptAllSessions()
     }
 
     @objc private func revokeAll() {

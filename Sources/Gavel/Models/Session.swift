@@ -49,6 +49,7 @@ final class Session: ObservableObject, Identifiable {
 
     func revokeAutoApprove() {
         isAutoApproveEnabled = false
+        isSubAgentInheritEnabled = false
         autoApproveUntil = nil
         sessionRules.removeAll()
     }

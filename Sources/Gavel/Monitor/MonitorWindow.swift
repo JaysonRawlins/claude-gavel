@@ -99,18 +99,29 @@ struct MonitorWindow: View {
             HStack {
                 Button("Clear Session Rules") {
                     viewModel.revokeAutoApprove()
+                    viewModel.noteInteraction()
                 }
                 .buttonStyle(.bordered)
                 .tint(.purple)
                 .help("Clears session-scoped patterns and disables auto-approve. Persistent rules (Rules tab) are not affected.")
 
+                Button("Prompt All") {
+                    viewModel.promptAllSessions()
+                }
+                .buttonStyle(.bordered)
+                .tint(.yellow)
+                .help("One-click: clear auto on every session + reset defaults. Same as the menu bar action.")
+
                 Spacer()
+
+                inactivityPicker
 
                 Toggle(isOn: Binding(
                     get: { viewModel.sessionManager.defaultAutoApprove },
                     set: { newVal in
                         viewModel.sessionManager.defaultAutoApprove = newVal
                         viewModel.sessionManager.saveDefaults()
+                        viewModel.noteInteraction()
                     }
                 )) {
                     Text("Default Auto")
@@ -121,6 +132,33 @@ struct MonitorWindow: View {
                 .controlSize(.small)
                 .help("New sessions start with auto-approve enabled. Deny rules, prompt rules, and sensitive paths still force dialogs.")
             }
+        }
+    }
+
+    private var inactivityPicker: some View {
+        HStack(spacing: 4) {
+            Text("Idle off")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Picker("", selection: Binding(
+                get: { viewModel.sessionManager.inactivityTimeoutMinutes },
+                set: { newVal in
+                    viewModel.sessionManager.inactivityTimeoutMinutes = newVal
+                    viewModel.sessionManager.saveDefaults()
+                    viewModel.noteInteraction()
+                }
+            )) {
+                Text("Off").tag(0)
+                Text("1 min").tag(1)
+                Text("5 min").tag(5)
+                Text("15 min").tag(15)
+                Text("30 min").tag(30)
+                Text("60 min").tag(60)
+            }
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .frame(width: 90)
+            .help("When gavel sees no user interaction for this long, auto-approval is revoked across all sessions.")
         }
     }
 
@@ -150,6 +188,7 @@ struct MonitorWindow: View {
                     let allSub = viewModel.sessionManager.sessions.values.allSatisfy { $0.isSubAgentInheritEnabled }
                     viewModel.sessionManager.defaultSubAgentInherit = allSub
                     viewModel.sessionManager.saveDefaults()
+                    viewModel.noteInteraction()
                 }
             )) {
                 Text("Sub")
@@ -162,7 +201,10 @@ struct MonitorWindow: View {
 
             Toggle(isOn: Binding(
                 get: { session.isAutoApproveEnabled },
-                set: { _ in viewModel.toggleAutoApprove(for: session) }
+                set: { _ in
+                    viewModel.toggleAutoApprove(for: session)
+                    viewModel.noteInteraction()
+                }
             )) {
                 Text("Auto")
                     .font(.caption)
@@ -171,11 +213,20 @@ struct MonitorWindow: View {
             .tint(.green)
             .controlSize(.small)
 
+            Button("Prompt") {
+                viewModel.promptSession(session)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(.yellow)
+            .help("Clear auto + sub-agent inherit + timed auto in one click. Next tool call will prompt.")
+
             Button(session.isPaused ? "Resume" : "Pause") {
                 session.isPaused.toggle()
                 let anyPaused = viewModel.sessionManager.sessions.values.contains { $0.isPaused }
                 viewModel.sessionManager.defaultPaused = anyPaused
                 viewModel.sessionManager.saveDefaults()
+                viewModel.noteInteraction()
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -183,6 +234,7 @@ struct MonitorWindow: View {
 
             Button("Kill") {
                 kill(Int32(session.pid), SIGINT)
+                viewModel.noteInteraction()
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
