@@ -60,7 +60,13 @@ struct PatternMatcher {
             // ── Persistence mechanisms (expanded) ──
             ("\\bcrontab\\b", "Crontab modification"),
             ("\\blaunchctl\\b\\s+(load|unload|submit|bootstrap|bootout|enable|disable|kickstart)", "LaunchAgent/Daemon modification"),
-            ("\\bat\\b\\s+", "at job scheduling"),
+            // `at` command: require a segment boundary AND a recognizable timespec.
+            // The previous `\bat\b\s+` matched any prose "at " — e.g. heredoc bodies
+            // inside `gh pr create`, or commit messages like "fix bug at line 42".
+            // Real `at` invocations live at the start of a command or after a pipe /
+            // chain operator, followed by a time keyword, clock time (`HH:MM`), or
+            // relative offset (`+ N ...`).
+            ("(^|[|&;])\\s*at\\s+(-[a-zA-Z]\\s+\\S+\\s+)?(now\\b|noon\\b|midnight\\b|teatime\\b|\\d{1,2}:\\d{2}|\\+\\s*\\d)", "at job scheduling"),
 
             // ── Destructive operations (catastrophic, non-recoverable) ──
             ("\\bmkfs\\b", "Filesystem format command"),

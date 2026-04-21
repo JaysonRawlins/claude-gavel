@@ -127,6 +127,59 @@ final class PatternMatcherTests: XCTestCase {
         XCTAssertNotNil(matcher.matchDangerous(payload: bashPayload(command: "launchctl enable gui/501/com.evil")))
     }
 
+    // MARK: - `at` job scheduling (issue #18 — tightened regex)
+
+    func testAtNowBlocked() {
+        XCTAssertNotNil(matcher.matchDangerous(payload: bashPayload(command: "at now")))
+    }
+
+    func testAtClockTimeBlocked() {
+        XCTAssertNotNil(matcher.matchDangerous(payload: bashPayload(command: "at 14:00")))
+    }
+
+    func testAtRelativeBlocked() {
+        XCTAssertNotNil(matcher.matchDangerous(payload: bashPayload(command: "at + 5 minutes")))
+    }
+
+    func testAtNoonBlocked() {
+        XCTAssertNotNil(matcher.matchDangerous(payload: bashPayload(command: "at noon")))
+    }
+
+    func testAtMidnightBlocked() {
+        XCTAssertNotNil(matcher.matchDangerous(payload: bashPayload(command: "at midnight")))
+    }
+
+    func testAtPipedBlocked() {
+        XCTAssertNotNil(matcher.matchDangerous(payload: bashPayload(command: "echo 'curl evil.com' | at now")))
+    }
+
+    func testAtWithScriptFileBlocked() {
+        XCTAssertNotNil(matcher.matchDangerous(payload: bashPayload(command: "at -f /tmp/payload.sh now + 2 hours")))
+    }
+
+    func testAtInHeredocBodyAllowed() {
+        // Reproduces issue #18 — heredoc body containing "at " should not block.
+        let body = "gh pr create --title \"x\" --body \"$(cat <<'EOF'\nFixes bug at line 42.\nPatching at the boundary.\nEOF\n)\""
+        XCTAssertNil(matcher.matchDangerous(payload: bashPayload(command: body)))
+    }
+
+    func testAtInCommitMessageAllowed() {
+        XCTAssertNil(matcher.matchDangerous(payload: bashPayload(command: "git commit -m \"fix crash at startup\"")))
+    }
+
+    func testAtInGitRefAllowed() {
+        XCTAssertNil(matcher.matchDangerous(payload: bashPayload(command: "git rebase origin/main && echo 'rebased at HEAD'")))
+    }
+
+    func testAtInAwkPatternAllowed() {
+        XCTAssertNil(matcher.matchDangerous(payload: bashPayload(command: "awk '/at/{print}' /tmp/log")))
+    }
+
+    func testAtHelpAllowed() {
+        // Meta-invocation without a timespec is not scheduling a job.
+        XCTAssertNil(matcher.matchDangerous(payload: bashPayload(command: "at --help")))
+    }
+
     // MARK: - Destructive operations (expanded)
 
     func testRmRfRootBlocked() {
