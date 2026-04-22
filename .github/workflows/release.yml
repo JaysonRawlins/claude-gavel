@@ -73,7 +73,7 @@ jobs:
             --wait
           rm "${STAGING}-notarize.zip"
 
-      - name: Create GitHub Release
+      - name: Attach assets to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -82,9 +82,16 @@ jobs:
           SHA_FILE="${TARBALL}.sha256"
           SHA=$(cat "$SHA_FILE" | awk '{print $1}')
 
-          gh release create "$VERSION" \
-            --title "Gavel ${VERSION}" \
-            --notes "$(cat <<EOF
+          # release-please creates the GitHub Release when its Release PR is
+          # merged; this workflow fires on the same tag push and uploads the
+          # signed/notarized tarball. For manual tags there is no pre-existing
+          # release, so fall through to `gh release create`.
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" "$TARBALL" "$SHA_FILE" --clobber
+          else
+            gh release create "$VERSION" \
+              --title "Gavel ${VERSION}" \
+              --notes "$(cat <<EOF
           ## Install
 
           \`\`\`bash
@@ -96,7 +103,8 @@ jobs:
           **SHA256:** \`${SHA}\`
           EOF
           )" \
-            "$TARBALL" "$SHA_FILE"
+              "$TARBALL" "$SHA_FILE"
+          fi
 
       - name: Cleanup keychain
         if: always()
