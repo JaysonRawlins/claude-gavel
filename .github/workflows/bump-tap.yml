@@ -1,0 +1,57 @@
+name: Bump Homebrew Tap
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    # Only bump the tap once the release.yml workflow has attached the tarball asset.
+    # Otherwise the formula action would fail to fetch the download URL.
+    if: ${{ !github.event.release.prerelease }}
+    steps:
+      - name: Mint app token for tap repo
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: homebrew-gavel
+
+      - name: Wait for release asset to be attached
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          # The release.yml workflow runs in parallel and uploads the tarball.
+          # Poll for up to 15 minutes for the asset to appear.
+          ASSET="gavel-${TAG}-macos-arm64.tar.gz"
+          for i in $(seq 1 90); do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+                 | grep -q "\"name\":\"${ASSET}\""; then
+              echo "Asset ${ASSET} is available."
+              exit 0
+            fi
+            echo "Waiting for ${ASSET} ($i/90)…"
+            sleep 10
+          done
+          echo "Timed out waiting for ${ASSET}." >&2
+          exit 1
+
+      - name: Bump formula in JaysonRawlins/homebrew-gavel
+        uses: mislav/bump-homebrew-formula-action@v3
+        with:
+          formula-name: gavel
+          formula-path: Formula/gavel.rb
+          homebrew-tap: ${{ github.repository_owner }}/homebrew-gavel
+          download-url: https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/gavel-${{ github.event.release.tag_name }}-macos-arm64.tar.gz
+          commit-message: |
+            gavel {{version}}
+
+            Created by the gavel-release-bot GitHub App on release of ${{ github.event.release.tag_name }}.
+        env:
+          COMMITTER_TOKEN: ${{ steps.app-token.outputs.token }}
