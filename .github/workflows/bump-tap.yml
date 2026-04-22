@@ -10,7 +10,6 @@ jobs:
   bump:
     runs-on: ubuntu-latest
     # Only bump the tap once the release.yml workflow has attached the tarball asset.
-    # Otherwise the formula action would fail to fetch the download URL.
     if: ${{ !github.event.release.prerelease }}
     steps:
       - name: Mint app token for tap repo
@@ -28,30 +27,60 @@ jobs:
           TAG: ${{ github.event.release.tag_name }}
         run: |
           # The release.yml workflow runs in parallel and uploads the tarball.
-          # Poll for up to 15 minutes for the asset to appear.
-          ASSET="gavel-${TAG}-macos-arm64.tar.gz"
+          # Poll for up to 15 minutes for both the tarball and its sha256 sidecar.
+          TARBALL="gavel-${TAG}-macos-arm64.tar.gz"
+          SHA_FILE="${TARBALL}.sha256"
           for i in $(seq 1 90); do
-            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
-                 | grep -q "\"name\":\"${ASSET}\""; then
-              echo "Asset ${ASSET} is available."
+            assets=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+            if echo "$assets" | grep -qx "$TARBALL" && echo "$assets" | grep -qx "$SHA_FILE"; then
+              echo "Assets available."
               exit 0
             fi
-            echo "Waiting for ${ASSET} ($i/90)…"
+            echo "Waiting for release assets ($i/90)…"
             sleep 10
           done
-          echo "Timed out waiting for ${ASSET}." >&2
+          echo "Timed out waiting for release assets." >&2
           exit 1
 
       - name: Bump formula in JaysonRawlins/homebrew-gavel
-        uses: mislav/bump-homebrew-formula-action@v3
-        with:
-          formula-name: gavel
-          formula-path: Formula/gavel.rb
-          homebrew-tap: ${{ github.repository_owner }}/homebrew-gavel
-          download-url: https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/gavel-${{ github.event.release.tag_name }}-macos-arm64.tar.gz
-          commit-message: |
-            gavel {{version}}
-
-            Created by the gavel-release-bot GitHub App on release of ${{ github.event.release.tag_name }}.
         env:
-          COMMITTER_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ github.event.release.tag_name }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.repository }}
+        # The mislav/bump-homebrew-formula-action and dawidd6/action-homebrew-bump-formula
+        # both default to a fork-and-PR flow. App tokens can't call /user or create forks
+        # (both return 403 "Resource not accessible by integration"), so we commit directly
+        # with plain git. The App is scoped to claude-gavel + homebrew-gavel only, so the
+        # token has write access to the tap.
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          TARBALL="gavel-${TAG}-macos-arm64.tar.gz"
+          DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/${TARBALL}"
+
+          # Pull the sha256 from the sidecar asset rather than re-downloading the tarball.
+          SHA=$(gh release download "$TAG" --repo "$REPO" --pattern "${TARBALL}.sha256" -O - | awk '{print $1}')
+          [[ -n "$SHA" ]] || { echo "Empty sha256"; exit 1; }
+
+          TAP_DIR="$RUNNER_TEMP/tap"
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${OWNER}/homebrew-gavel.git" "$TAP_DIR"
+          cd "$TAP_DIR"
+
+          FORMULA=Formula/gavel.rb
+          sed -i -E "s|url \"https://github\.com/[^\"]+\"|url \"${DOWNLOAD_URL}\"|" "$FORMULA"
+          sed -i -E "s|sha256 \"[a-f0-9]+\"|sha256 \"${SHA}\"|" "$FORMULA"
+          sed -i -E "s|version \"[^\"]+\"|version \"${VERSION}\"|" "$FORMULA"
+
+          if git diff --quiet "$FORMULA"; then
+            echo "Formula already at ${VERSION} — nothing to do."
+            exit 0
+          fi
+
+          git config user.email "gavel-release-bot[bot]@users.noreply.github.com"
+          git config user.name  "gavel-release-bot[bot]"
+          git add "$FORMULA"
+          git commit -m "gavel ${VERSION}
+
+          Created by the gavel-release-bot GitHub App on release of ${TAG}."
+          git push
