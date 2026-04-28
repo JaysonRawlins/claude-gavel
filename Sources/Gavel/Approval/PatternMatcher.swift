@@ -41,7 +41,13 @@ struct PatternMatcher {
             // scp/rsync to remote
             ("\\b(scp|rsync)\\b.*:", "Potential file exfiltration via scp/rsync"),
             // dns exfiltration
-            ("\\b(dig|nslookup|host)\\b.*\\$\\(", "Potential DNS exfiltration"),
+            // Anchor to command position to avoid matching shell variables like
+            // `DIG=$(...)` — case-insensitive matching makes `DIG` look like `dig`,
+            // and the unanchored `\\b` form treated `=` as a word boundary.
+            // Real `dig`/`nslookup`/`host` invocations sit at the start of a
+            // command, after a chain operator, or inside a subshell, followed by
+            // a whitespace-separated argument list that contains `$(`.
+            ("(^|[|&;(])\\s*(dig|nslookup|host)\\s+.*\\$\\(", "Potential DNS exfiltration"),
 
             // ── Environment variable theft (expanded) ──
             ("\\b(env|printenv|set)\\b.*[|].*\\b(curl|wget|nc|ncat|python|ruby|perl)", "Piping environment to network command"),
