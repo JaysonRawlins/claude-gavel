@@ -34,8 +34,8 @@ final class HookRouter {
 
         switch event.payload {
         case .preToolUse(let payload):
-            if let sid = payload.sessionId { session.sessionId = sid }
-            if let cwd = payload.cwd { session.cwd = cwd }
+            if let sid = payload.sessionId { sessionManager.recordSessionId(sid, on: session) }
+            if let cwd = payload.cwd { sessionManager.recordCwd(cwd, on: session) }
 
             // AskUserQuestion and ExitPlanMode are user interaction tools —
             // don't intercept, let Claude's built-in UI handle them
@@ -50,12 +50,12 @@ final class HookRouter {
             handlePreToolUse(payload: payload, session: session, timestamp: ts, respond: respond)
 
         case .postToolUse(let payload):
-            if let sid = payload.sessionId { session.sessionId = sid }
+            if let sid = payload.sessionId { sessionManager.recordSessionId(sid, on: session) }
             handlePostToolUse(payload: payload, session: session, timestamp: ts)
 
         case .sessionStart(let payload):
-            if let sid = payload.sessionId { session.sessionId = sid }
-            session.cwd = payload.cwd
+            if let sid = payload.sessionId { sessionManager.recordSessionId(sid, on: session) }
+            if let cwd = payload.cwd { sessionManager.recordCwd(cwd, on: session) }
             session.model = payload.model
             let source = payload.source ?? "startup"
             emitFeed(.system("Session \(source)", pid: session.pid, at: ts))
@@ -64,7 +64,7 @@ final class HookRouter {
             emitFeed(.stop(pid: session.pid, at: ts))
 
         case .userPromptSubmit(let payload):
-            if let sid = payload.sessionId { session.sessionId = sid }
+            if let sid = payload.sessionId { sessionManager.recordSessionId(sid, on: session) }
             session.lastPrompt = payload.prompt
             let preview = (payload.prompt ?? "").prefix(120)
             emitFeed(.prompt(text: String(preview), pid: session.pid, at: ts))

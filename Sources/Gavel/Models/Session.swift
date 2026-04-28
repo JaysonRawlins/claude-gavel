@@ -8,6 +8,7 @@ final class Session: ObservableObject, Identifiable {
     @Published var sessionId: String?
     @Published var cwd: String?
     @Published var model: String?
+    @Published var label: String = ""
     @Published var isPaused: Bool = false
     @Published var isAlive: Bool = true
     @Published var isAutoApproveEnabled: Bool = false

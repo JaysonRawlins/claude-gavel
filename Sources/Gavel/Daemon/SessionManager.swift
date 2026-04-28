@@ -21,14 +21,22 @@ final class SessionManager: ObservableObject {
     /// is revoked across all sessions (walk-away defense).
     @Published var inactivityTimeoutMinutes: Int = 15
 
+    /// User-typed labels keyed by Claude Code session UUID. Survives daemon restarts.
+    @Published private var sessionLabels: [String: String] = [:]
+
     private var lastInteraction: Date = Date()
 
     private static var defaultsPath: String {
         FileManager.default.homeDirectoryForCurrentUser.path + "/.claude/gavel/session-defaults.json"
     }
 
+    private static var sessionsPath: String {
+        FileManager.default.homeDirectoryForCurrentUser.path + "/.claude/gavel/active-sessions.json"
+    }
+
     init() {
         loadDefaults()
+        loadActiveSessions()
         startCleanupTimer()
         startInactivityTimer()
     }
@@ -51,6 +59,7 @@ final class SessionManager: ObservableObject {
         session.isSubAgentInheritEnabled = defaultSubAgentInherit
         session.isPaused = defaultPaused
         sessions[pid] = session
+        saveActiveSessions()
         return session
     }
 
@@ -60,7 +69,8 @@ final class SessionManager: ObservableObject {
             "autoApprove": defaultAutoApprove,
             "subAgentInherit": defaultSubAgentInherit,
             "paused": defaultPaused,
-            "inactivityTimeoutMinutes": inactivityTimeoutMinutes
+            "inactivityTimeoutMinutes": inactivityTimeoutMinutes,
+            "sessionLabels": sessionLabels
         ]
         if let json = try? JSONSerialization.data(withJSONObject: data, options: .prettyPrinted) {
             FileManager.default.createFile(atPath: Self.defaultsPath, contents: json)
@@ -74,13 +84,110 @@ final class SessionManager: ObservableObject {
         defaultSubAgentInherit = (json["subAgentInherit"] as? Bool) ?? false
         defaultPaused = (json["paused"] as? Bool) ?? false
         inactivityTimeoutMinutes = (json["inactivityTimeoutMinutes"] as? Int) ?? 15
+        sessionLabels = (json["sessionLabels"] as? [String: String]) ?? [:]
+    }
+
+    /// Bind a Claude Code session UUID to a Session and apply any saved label.
+    /// If the user typed a label before the sessionId was known, persist it now.
+    func recordSessionId(_ sid: String, on session: Session) {
+        let changed = session.sessionId != sid
+        session.sessionId = sid
+        if session.label.isEmpty, let saved = sessionLabels[sid] {
+            session.label = saved
+        } else if !session.label.isEmpty && sessionLabels[sid] != session.label {
+            sessionLabels[sid] = session.label
+            saveDefaults()
+        }
+        if changed {
+            lock.lock()
+            saveActiveSessions()
+            lock.unlock()
+        }
+    }
+
+    /// Update the cwd for a session and persist the change.
+    func recordCwd(_ cwd: String, on session: Session) {
+        let changed = session.cwd != cwd
+        session.cwd = cwd
+        if changed {
+            lock.lock()
+            saveActiveSessions()
+            lock.unlock()
+        }
+    }
+
+    /// Save (or clear) the label for a session UUID. Empty/whitespace removes the entry.
+    func setLabel(_ label: String, for sessionId: String) {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            sessionLabels.removeValue(forKey: sessionId)
+        } else {
+            sessionLabels[sessionId] = trimmed
+        }
+        saveDefaults()
     }
 
     /// Remove a session (e.g., when the process exits).
     func removeSession(pid: Int) {
         lock.lock()
         sessions.removeValue(forKey: pid)
+        saveActiveSessions()
         lock.unlock()
+    }
+
+    /// Drop any sessions whose process has exited. Triggered by the "Clear Dead"
+    /// monitor button so the user doesn't have to wait for the cleanup timer's
+    /// grace period.
+    func clearDeadSessions() {
+        lock.lock()
+        let toRemove = sessions.compactMap { (pid, session) -> Int? in
+            (!session.isAlive || !isProcessAlive(pid: pid)) ? pid : nil
+        }
+        for pid in toRemove {
+            sessions.removeValue(forKey: pid)
+        }
+        if !toRemove.isEmpty {
+            saveActiveSessions()
+        }
+        lock.unlock()
+    }
+
+    // MARK: - Active session persistence
+
+    private struct PersistedSession: Codable {
+        let pid: Int
+        let sessionId: String?
+        let cwd: String?
+    }
+
+    /// Caller's responsibility: hold `lock` (or know that no concurrent writer can race).
+    private func saveActiveSessions() {
+        let snapshot = sessions.values
+            .filter { $0.isAlive }
+            .map { PersistedSession(pid: $0.pid, sessionId: $0.sessionId, cwd: $0.cwd) }
+        guard let json = try? JSONEncoder().encode(snapshot) else { return }
+        FileManager.default.createFile(atPath: Self.sessionsPath, contents: json)
+    }
+
+    /// Rehydrate sessions seen by the daemon before restart. Filters out PIDs
+    /// whose process is no longer alive. Must run after loadDefaults() so that
+    /// labels are already populated and can be applied here.
+    private func loadActiveSessions() {
+        guard let data = FileManager.default.contents(atPath: Self.sessionsPath),
+              let snapshots = try? JSONDecoder().decode([PersistedSession].self, from: data) else { return }
+
+        for snap in snapshots {
+            guard isProcessAlive(pid: snap.pid) else { continue }
+            let session = Session(pid: snap.pid, cwd: snap.cwd)
+            session.sessionId = snap.sessionId
+            session.isAutoApproveEnabled = defaultAutoApprove
+            session.isSubAgentInheritEnabled = defaultSubAgentInherit
+            session.isPaused = defaultPaused
+            if let sid = snap.sessionId, let savedLabel = sessionLabels[sid] {
+                session.label = savedLabel
+            }
+            sessions[snap.pid] = session
+        }
     }
 
     /// Check if a PID is still alive using kill(0).

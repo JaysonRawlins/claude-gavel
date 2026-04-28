@@ -112,6 +112,14 @@ struct MonitorWindow: View {
                 .tint(.yellow)
                 .help("One-click: clear auto on every session + reset defaults. Same as the menu bar action.")
 
+                Button("Clear Dead") {
+                    viewModel.sessionManager.clearDeadSessions()
+                    viewModel.noteInteraction()
+                }
+                .buttonStyle(.bordered)
+                .tint(.gray)
+                .help("Drop sessions whose Claude Code process has exited.")
+
                 Spacer()
 
                 inactivityPicker
@@ -168,7 +176,8 @@ struct MonitorWindow: View {
                 .fill(session.isAlive ? .green : .gray)
                 .frame(width: 8, height: 8)
 
-            Text("PID \(session.pid)")
+            // verbatim avoids LocalizedStringKey's locale grouping (e.g. "12,345")
+            Text(verbatim: "PID \(session.pid)")
                 .font(.system(.caption, design: .monospaced))
                 .frame(width: 70, alignment: .leading)
 
@@ -178,6 +187,8 @@ struct MonitorWindow: View {
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
+
+            sessionLabelField(session)
 
             Spacer()
 
@@ -241,6 +252,86 @@ struct MonitorWindow: View {
             .tint(.red)
             .help("Send SIGINT to this session's Claude Code process")
         }
+    }
+
+    /// Editable per-session label. Persists to session-defaults.json keyed by Claude
+    /// Code's session UUID, so the name survives daemon restarts.
+    @ViewBuilder
+    private func sessionLabelField(_ session: Session) -> some View {
+        SessionLabelField(session: session) { newVal in
+            if let sid = session.sessionId {
+                viewModel.sessionManager.setLabel(newVal, for: sid)
+            }
+            viewModel.noteInteraction()
+        }
+    }
+}
+
+/// Click-to-edit label control. Shows as a plain pill until clicked; only then
+/// does it become a focusable TextField. This keeps the field from grabbing
+/// first responder when the monitor opens and removes the always-on focus ring.
+private struct SessionLabelField: View {
+    @ObservedObject var session: Session
+    let onCommit: (String) -> Void
+
+    @State private var isEditing = false
+    @State private var draft: String = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Group {
+            if isEditing {
+                TextField("Name…", text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.caption)
+                    .frame(width: 130)
+                    .focused($focused)
+                    .onSubmit { commit() }
+                    .onExitCommand { cancel() }
+                    .onChange(of: focused) { isFocused in
+                        if !isFocused && isEditing { commit() }
+                    }
+            } else {
+                Button(action: beginEditing) {
+                    Text(session.label.isEmpty ? "Name…" : session.label)
+                        .font(.caption)
+                        .foregroundColor(session.label.isEmpty ? .secondary : .primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(width: 130, alignment: .leading)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color.secondary.opacity(0.10))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .help(session.sessionId.map { "Session ID: \($0)" } ?? "Click to name this session")
+    }
+
+    private func beginEditing() {
+        draft = session.label
+        isEditing = true
+        DispatchQueue.main.async { focused = true }
+    }
+
+    private func commit() {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        session.label = trimmed
+        onCommit(trimmed)
+        isEditing = false
+    }
+
+    private func cancel() {
+        isEditing = false
     }
 }
 
@@ -739,7 +830,7 @@ struct SessionRulesView: View {
                     .fill(session.isAlive ? .green : .gray)
                     .frame(width: 8, height: 8)
 
-                Text("PID \(session.pid)")
+                Text(verbatim: "PID \(session.pid)")
                     .font(.system(.body, design: .monospaced).bold())
 
                 if let cwd = session.cwd {
