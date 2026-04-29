@@ -179,7 +179,8 @@ final class SessionManager: ObservableObject {
 
         for snap in snapshots {
             guard isProcessAlive(pid: snap.pid) else { continue }
-            let session = Session(pid: snap.pid, cwd: snap.cwd)
+            let started = ProcessTree.startTime(of: Int32(snap.pid))
+            let session = Session(pid: snap.pid, cwd: snap.cwd, startedAt: started)
             session.sessionId = snap.sessionId
             session.isAutoApproveEnabled = defaultAutoApprove
             session.isSubAgentInheritEnabled = defaultSubAgentInherit
@@ -203,7 +204,8 @@ final class SessionManager: ObservableObject {
         for (pid, cwd) in discovered {
             let pidInt = Int(pid)
             if sessions[pidInt] != nil { continue }
-            let session = Session(pid: pidInt, cwd: cwd)
+            let started = ProcessTree.startTime(of: pid)
+            let session = Session(pid: pidInt, cwd: cwd, startedAt: started)
             session.isAutoApproveEnabled = defaultAutoApprove
             session.isSubAgentInheritEnabled = defaultSubAgentInherit
             session.isPaused = defaultPaused

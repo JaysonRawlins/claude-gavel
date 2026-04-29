@@ -93,6 +93,20 @@ final class HookRouter {
     ) {
         session.toolCallCount += 1
 
+        // Flash the row in the monitor so the user can see which session is
+        // working without reading PIDs. Auto-clears after 0.6s; SwiftUI animates
+        // the fade. Stamp comparison protects against bursts — only the most
+        // recent activity's clear actually fires.
+        let stamp = Date()
+        DispatchQueue.main.async {
+            session.lastActivityAt = stamp
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            if session.lastActivityAt == stamp {
+                session.lastActivityAt = nil
+            }
+        }
+
         let summary = payload.command ?? payload.filePath ?? ""
         emitFeed(.toolCall(
             tool: payload.toolName,

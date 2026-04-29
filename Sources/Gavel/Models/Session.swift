@@ -15,6 +15,11 @@ final class Session: ObservableObject, Identifiable {
     @Published var isSubAgentInheritEnabled: Bool = false
     @Published var lastPrompt: String?
 
+    /// Set to the current time on each tool call so the monitor row can flash a
+    /// brief highlight. Cleared back to nil ~600ms later by the daemon so SwiftUI
+    /// can animate the fade. Don't use this for stats — it isn't durable.
+    @Published var lastActivityAt: Date?
+
     // Timed auto-approve
     @Published var autoApproveUntil: Date?
 
@@ -42,9 +47,9 @@ final class Session: ObservableObject, Identifiable {
         return remaining > 0 ? remaining : nil
     }
 
-    init(pid: Int, cwd: String? = nil) {
+    init(pid: Int, cwd: String? = nil, startedAt: Date? = nil) {
         self.pid = pid
-        self.startedAt = Date()
+        self.startedAt = startedAt ?? Date()
         self.cwd = cwd
     }
 

@@ -76,9 +76,9 @@ struct MonitorWindow: View {
     }
 
     private var sessionControls: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 2) {
             let sessions = Array(viewModel.sessionManager.sessions.values)
-                .sorted { $0.pid < $1.pid }
+                .sorted { $0.startedAt > $1.startedAt }
 
             if sessions.isEmpty {
                 HStack {
@@ -88,8 +88,13 @@ struct MonitorWindow: View {
                     Spacer()
                 }
             } else {
-                ForEach(sessions, id: \.pid) { session in
-                    sessionRow(session)
+                ForEach(Array(sessions.enumerated()), id: \.element.pid) { index, session in
+                    SessionRow(
+                        session: session,
+                        viewModel: viewModel,
+                        isNewest: index == 0,
+                        alternate: index.isMultiple(of: 2)
+                    )
                 }
             }
 
@@ -178,7 +183,19 @@ struct MonitorWindow: View {
         }
     }
 
-    private func sessionRow(_ session: Session) -> some View {
+}
+
+/// One row in the session-controls strip. Extracted into its own View so it can
+/// observe the Session directly — the function-form predecessor only refreshed
+/// on the 2-second stats timer, which made Pause/Resume label changes feel
+/// laggy and made the per-tool-call flash highlight impossible.
+private struct SessionRow: View {
+    @ObservedObject var session: Session
+    let viewModel: MonitorViewModel
+    let isNewest: Bool
+    let alternate: Bool
+
+    var body: some View {
         HStack(spacing: 8) {
             Circle()
                 .fill(session.isAlive ? .green : .gray)
@@ -196,41 +213,82 @@ struct MonitorWindow: View {
                     .lineLimit(1)
             }
 
-            sessionLabelField(session)
+            SessionLabelField(session: session) { newVal in
+                if let sid = session.sessionId {
+                    viewModel.sessionManager.setLabel(newVal, for: sid)
+                }
+                viewModel.noteInteraction()
+            }
 
             Spacer()
 
-            Toggle(isOn: Binding(
-                get: { session.isSubAgentInheritEnabled },
-                set: { newVal in
-                    session.isSubAgentInheritEnabled = newVal
-                    let allSub = viewModel.sessionManager.sessions.values.allSatisfy { $0.isSubAgentInheritEnabled }
-                    viewModel.sessionManager.defaultSubAgentInherit = allSub
-                    viewModel.sessionManager.saveDefaults()
-                    viewModel.noteInteraction()
-                }
-            )) {
+            actionCluster
+        }
+        .padding(.vertical, 3)
+        .padding(.leading, 8)
+        .padding(.trailing, 6)
+        .background(
+            ZStack {
+                rowBackground
+                Color.yellow.opacity(session.lastActivityAt != nil ? 0.20 : 0)
+            }
+        )
+        .overlay(alignment: .leading) {
+            if isNewest {
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(width: 3)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .animation(.easeOut(duration: 0.45), value: session.lastActivityAt)
+        .help(isNewest ? "Most recently started session" : "")
+    }
+
+    /// Right-side controls in fixed widths so Sub/Auto/Prompt/Pause/Kill line up
+    /// across rows regardless of cwd or label length.
+    @ViewBuilder
+    private var actionCluster: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 Text("Sub")
                     .font(.caption)
+                    .lineLimit(1)
+                Toggle("", isOn: Binding(
+                    get: { session.isSubAgentInheritEnabled },
+                    set: { newVal in
+                        session.isSubAgentInheritEnabled = newVal
+                        let allSub = viewModel.sessionManager.sessions.values.allSatisfy { $0.isSubAgentInheritEnabled }
+                        viewModel.sessionManager.defaultSubAgentInherit = allSub
+                        viewModel.sessionManager.saveDefaults()
+                        viewModel.noteInteraction()
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(.cyan)
+                .controlSize(.small)
             }
-            .toggleStyle(.switch)
-            .tint(.cyan)
-            .controlSize(.small)
+            .frame(width: 70, alignment: .leading)
             .help("Auto-approve sub-agent calls (deny rules still block)")
 
-            Toggle(isOn: Binding(
-                get: { session.isAutoApproveEnabled },
-                set: { _ in
-                    viewModel.toggleAutoApprove(for: session)
-                    viewModel.noteInteraction()
-                }
-            )) {
+            HStack(spacing: 4) {
                 Text("Auto")
                     .font(.caption)
+                    .lineLimit(1)
+                Toggle("", isOn: Binding(
+                    get: { session.isAutoApproveEnabled },
+                    set: { _ in
+                        viewModel.toggleAutoApprove(for: session)
+                        viewModel.noteInteraction()
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(.green)
+                .controlSize(.small)
             }
-            .toggleStyle(.switch)
-            .tint(.green)
-            .controlSize(.small)
+            .frame(width: 76, alignment: .leading)
 
             Button("Prompt") {
                 viewModel.promptSession(session)
@@ -238,6 +296,7 @@ struct MonitorWindow: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
             .tint(.yellow)
+            .frame(width: 70)
             .help("Clear auto + sub-agent inherit + timed auto in one click. Next tool call will prompt.")
 
             Button(session.isPaused ? "Resume" : "Pause") {
@@ -250,6 +309,7 @@ struct MonitorWindow: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
             .tint(session.isPaused ? .green : .orange)
+            .frame(width: 76)
 
             Button("Kill") {
                 kill(Int32(session.pid), SIGINT)
@@ -258,20 +318,14 @@ struct MonitorWindow: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
             .tint(.red)
+            .frame(width: 56)
             .help("Send SIGINT to this session's Claude Code process")
         }
     }
 
-    /// Editable per-session label. Persists to session-defaults.json keyed by Claude
-    /// Code's session UUID, so the name survives daemon restarts.
-    @ViewBuilder
-    private func sessionLabelField(_ session: Session) -> some View {
-        SessionLabelField(session: session) { newVal in
-            if let sid = session.sessionId {
-                viewModel.sessionManager.setLabel(newVal, for: sid)
-            }
-            viewModel.noteInteraction()
-        }
+    private var rowBackground: Color {
+        if isNewest { return Color.accentColor.opacity(0.10) }
+        return alternate ? Color.secondary.opacity(0.06) : Color.clear
     }
 }
 
@@ -812,7 +866,7 @@ struct SessionRulesView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 let sessions = Array(viewModel.sessionManager.sessions.values)
-                    .sorted { $0.pid < $1.pid }
+                    .sorted { $0.startedAt > $1.startedAt }
 
                 if sessions.isEmpty {
                     Text("No active sessions.")

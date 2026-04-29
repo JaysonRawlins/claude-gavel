@@ -88,6 +88,24 @@ struct ProcessTree {
         return pids
     }
 
+    /// Return the kernel-recorded start time of `pid`. Used to order rehydrated
+    /// or discovered sessions by when their Claude Code process actually started,
+    /// not when gavel happened to notice them.
+    static func startTime(of pid: Int32) -> Date? {
+        var info = proc_bsdinfo()
+        let bytes = proc_pidinfo(
+            pid,
+            PROC_PIDTBSDINFO,
+            0,
+            &info,
+            Int32(MemoryLayout<proc_bsdinfo>.size)
+        )
+        guard bytes > 0 else { return nil }
+        let secs = TimeInterval(info.pbi_start_tvsec)
+        let micros = TimeInterval(info.pbi_start_tvusec) / 1_000_000
+        return Date(timeIntervalSince1970: secs + micros)
+    }
+
     /// Return the current working directory of `pid`, using proc_pidinfo
     /// (the same API `lsof` uses internally for `cwd`). Nil if the process
     /// is gone or we lack permission to inspect it.
