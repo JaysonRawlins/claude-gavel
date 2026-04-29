@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.1.1...v1.2.0) (2026-04-29)
+
+
+### Features
+
+* **monitor:** discover running Claude Code sessions at startup ([#39](https://github.com/JaysonRawlins/claude-gavel/issues/39)) ([9b1f502](https://github.com/JaysonRawlins/claude-gavel/commit/9b1f5027cdaabb0836bd4459466907f0b93df749))
+* **monitor:** per-session labels and active session persistence ([9c48301](https://github.com/JaysonRawlins/claude-gavel/commit/9c48301f002997ddbab164bd5d81b373ac68438d))
+* **monitor:** row redesign with activity flash and recency sort ([#40](https://github.com/JaysonRawlins/claude-gavel/issues/40)) ([19725dd](https://github.com/JaysonRawlins/claude-gavel/commit/19725dd9c753de827ad5e31c616f6362d2be4f14))
+
+
+### Bug Fixes
+
+* **bump-tap:** commit directly with git instead of fork-and-PR action ([#36](https://github.com/JaysonRawlins/claude-gavel/issues/36)) ([787d33f](https://github.com/JaysonRawlins/claude-gavel/commit/787d33f93f3d515fe4e8080a213a0fefe2e3299e))
+* **security:** anchor DNS exfil pattern to command position ([774a8b1](https://github.com/JaysonRawlins/claude-gavel/commit/774a8b1bdadd1f4e730354722be41de697b78911))
+
 ## [1.1.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.1.0...v1.1.1) (2026-04-22)
 
 
