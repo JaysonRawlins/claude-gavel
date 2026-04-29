@@ -120,6 +120,14 @@ struct MonitorWindow: View {
                 .tint(.gray)
                 .help("Drop sessions whose Claude Code process has exited.")
 
+                Button("Discover") {
+                    viewModel.sessionManager.discoverRunningSessions()
+                    viewModel.noteInteraction()
+                }
+                .buttonStyle(.bordered)
+                .tint(.blue)
+                .help("Scan for Claude Code CLI processes that haven't fired a hook yet (e.g. started while gavel was down).")
+
                 Spacer()
 
                 inactivityPicker

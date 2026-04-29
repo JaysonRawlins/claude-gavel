@@ -37,6 +37,7 @@ final class SessionManager: ObservableObject {
     init() {
         loadDefaults()
         loadActiveSessions()
+        discoverRunningSessions()
         startCleanupTimer()
         startInactivityTimer()
     }
@@ -188,6 +189,30 @@ final class SessionManager: ObservableObject {
             }
             sessions[snap.pid] = session
         }
+    }
+
+    /// Find Claude Code CLI processes running on this machine and add any we
+    /// don't already track. Solves the "started while gavel was down" gap that
+    /// persistence alone can't cover. Discovered sessions get a PID and cwd
+    /// immediately; their sessionId is filled in by the next hook event.
+    @discardableResult
+    func discoverRunningSessions() -> Int {
+        let discovered = ProcessTree.findClaudeCliSessions()
+        var added = 0
+        lock.lock()
+        for (pid, cwd) in discovered {
+            let pidInt = Int(pid)
+            if sessions[pidInt] != nil { continue }
+            let session = Session(pid: pidInt, cwd: cwd)
+            session.isAutoApproveEnabled = defaultAutoApprove
+            session.isSubAgentInheritEnabled = defaultSubAgentInherit
+            session.isPaused = defaultPaused
+            sessions[pidInt] = session
+            added += 1
+        }
+        if added > 0 { saveActiveSessions() }
+        lock.unlock()
+        return added
     }
 
     /// Check if a PID is still alive using kill(0).
