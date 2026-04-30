@@ -165,7 +165,8 @@ final class HookRouter {
 
                 let decision = approvalCoordinator.requestApproval(
                     payload: payload, session: session, timestamp: timestamp,
-                    forceDialog: true
+                    forceDialog: true,
+                    triggerReason: engineDecision.reason
                 )
                 switch decision.verdict {
                 case .allow, .prompt:

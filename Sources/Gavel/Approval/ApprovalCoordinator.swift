@@ -29,6 +29,11 @@ final class ApprovalCoordinator: ObservableObject {
         let session: Session
         let timestamp: Date
         let forceDialog: Bool
+        /// The reason from the engine decision when the dialog was forced
+        /// (e.g. "Crontab modification"). Nil for default-tier dialogs where no
+        /// rule fired. Surfaced in the panel so the user can see *why* they're
+        /// being asked, instead of rubber-stamping a context-free prompt.
+        let triggerReason: String?
         let respond: (Decision) -> Void
     }
 
@@ -63,7 +68,8 @@ final class ApprovalCoordinator: ObservableObject {
         payload: PreToolUsePayload,
         session: Session,
         timestamp: Date,
-        forceDialog: Bool = false
+        forceDialog: Bool = false,
+        triggerReason: String? = nil
     ) -> Decision {
         if !forceDialog && session.isAutoApproveEnabled {
             return Decision(verdict: .allow, reason: "Auto-approved")
@@ -76,7 +82,8 @@ final class ApprovalCoordinator: ObservableObject {
             payload: payload,
             session: session,
             timestamp: timestamp,
-            forceDialog: forceDialog
+            forceDialog: forceDialog,
+            triggerReason: triggerReason
         ) { decision in
             result = decision
             semaphore.signal()
