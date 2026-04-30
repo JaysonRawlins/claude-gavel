@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.3](https://github.com/JaysonRawlins/claude-gavel/compare/v1.2.2...v1.2.3) (2026-04-30)
+
+
+### Bug Fixes
+
+* **daemon:** single-instance guard via connect-probe before bind ([#45](https://github.com/JaysonRawlins/claude-gavel/issues/45)) ([d7fc79e](https://github.com/JaysonRawlins/claude-gavel/commit/d7fc79e09fc5d65dd6893b2607ec901dd8a24da8))
+
 ## [1.2.2](https://github.com/JaysonRawlins/claude-gavel/compare/v1.2.1...v1.2.2) (2026-04-30)
 
 
