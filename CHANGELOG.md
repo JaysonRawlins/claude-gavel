@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/JaysonRawlins/claude-gavel/compare/v1.2.1...v1.2.2) (2026-04-30)
+
+
+### Bug Fixes
+
+* **cli:** handle --version/--help, reject unknown args before daemon launch ([#43](https://github.com/JaysonRawlins/claude-gavel/issues/43)) ([7f7a1b4](https://github.com/JaysonRawlins/claude-gavel/commit/7f7a1b465302097694b6e0bb0fa3a8fd76492f75))
+
 ## [1.2.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.2.0...v1.2.1) (2026-04-30)
 
 
