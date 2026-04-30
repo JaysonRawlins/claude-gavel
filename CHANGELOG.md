@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.2.0...v1.2.1) (2026-04-30)
+
+
+### Bug Fixes
+
+* **security:** pattern FP audit + approval dialog visibility ([#41](https://github.com/JaysonRawlins/claude-gavel/issues/41)) ([566527a](https://github.com/JaysonRawlins/claude-gavel/commit/566527aac3a57d1d6e9fc723e45ac4acb9ddb103))
+
 ## [1.2.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.1.1...v1.2.0) (2026-04-29)
 
 
