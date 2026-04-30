@@ -314,6 +314,12 @@ NSSetUncaughtExceptionHandler { exception in
     gavelLog("STACK: \(exception.callStackSymbols.prefix(10).joined(separator: "\n  "))")
 }
 
+// Argv handling — runs BEFORE any daemon setup. Without this, an unknown
+// arg like `gavel --version` falls through to NSApplication.run() and
+// silently launches a second daemon that fights the real one for the socket
+// (split-brain). Diagnostic invocations should never bind the socket.
+parseArgsOrExit(Array(CommandLine.arguments.dropFirst()))
+
 // Ignore SIGPIPE — clients disconnect, we don't want to die
 signal(SIGPIPE, SIG_IGN)
 
@@ -331,3 +337,36 @@ let app = NSApplication.shared
 let delegate = GavelAppDelegate()
 app.delegate = delegate
 app.run()
+
+// MARK: - Argv parsing
+
+/// Returns normally only when the binary should proceed to daemon launch.
+/// Calls `exit()` for `--version`/`--help` and any unknown argument, so the
+/// process never reaches `NSApplication.run()` and never binds the socket.
+func parseArgsOrExit(_ args: [String]) {
+    if args.isEmpty { return }
+    if args.count > 1 {
+        FileHandle.standardError.write(Data("gavel: too many arguments (expected 0 or 1)\n".utf8))
+        FileHandle.standardError.write(Data("Try 'gavel --help' for usage.\n".utf8))
+        exit(2)
+    }
+    switch args[0] {
+    case "--version", "-v":
+        print("gavel \(GAVEL_VERSION)")
+        exit(0)
+    case "--help", "-h":
+        print("""
+        gavel — Claude Code session monitor and approval daemon
+
+        Usage:
+          gavel              Run as menu bar daemon (managed by LaunchAgent)
+          gavel --version    Print version and exit
+          gavel --help       Print this help and exit
+        """)
+        exit(0)
+    default:
+        FileHandle.standardError.write(Data("gavel: unknown argument: \(args[0])\n".utf8))
+        FileHandle.standardError.write(Data("Try 'gavel --help' for usage.\n".utf8))
+        exit(2)
+    }
+}
