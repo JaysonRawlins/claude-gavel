@@ -18,6 +18,15 @@ final class SocketServer {
     }
 
     func start() throws {
+        // Single-instance guard: if a live peer is already serving this socket,
+        // refuse to take it over. Without this, the second daemon would
+        // unlink+bind and silently steal the path while the first daemon's
+        // listening fd survives — split-brain. Hook connections then land on
+        // whichever bound last, with whichever rule set that process loaded.
+        if Self.probeAlive(socketPath: socketPath) {
+            throw GavelError.daemonAlreadyRunning(path: socketPath)
+        }
+
         // Clean up stale socket
         unlink(socketPath)
 
@@ -96,6 +105,43 @@ final class SocketServer {
         }
     }
 
+    /// Returns true iff a peer is currently `accept()`-ing on `socketPath`.
+    ///
+    /// Classification (kept narrow on purpose):
+    /// - `connect()` succeeds → live daemon → true.
+    /// - `ENOENT` → no socket file → false.
+    /// - `ECONNREFUSED` → stale socket file with no listener → false.
+    /// - Any other errno → conservative *true* so we fail closed and don't
+    ///   accidentally clobber a running daemon over an EPERM/EACCES quirk.
+    static func probeAlive(socketPath: String) -> Bool {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = socketPath.utf8CString
+        guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else {
+            return false
+        }
+        withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
+            ptr.withMemoryRebound(to: CChar.self, capacity: pathBytes.count) { dest in
+                for (i, byte) in pathBytes.enumerated() { dest[i] = byte }
+            }
+        }
+
+        let result = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+                connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        if result == 0 { return true }
+        switch errno {
+        case ENOENT, ECONNREFUSED: return false
+        default: return true
+        }
+    }
+
     private func handleConnection(fd: Int32) {
         defer { close(fd) }
 
@@ -138,6 +184,7 @@ enum GavelError: Error, LocalizedError {
     case socketPathTooLong
     case bindFailed(errno: Int32)
     case listenFailed(errno: Int32)
+    case daemonAlreadyRunning(path: String)
 
     var errorDescription: String? {
         switch self {
@@ -145,6 +192,7 @@ enum GavelError: Error, LocalizedError {
         case .socketPathTooLong: return "Socket path exceeds maximum length"
         case .bindFailed(let e): return "Failed to bind socket: \(String(cString: strerror(e)))"
         case .listenFailed(let e): return "Failed to listen on socket: \(String(cString: strerror(e)))"
+        case .daemonAlreadyRunning(let path): return "Another gavel daemon is already serving \(path)"
         }
     }
 }

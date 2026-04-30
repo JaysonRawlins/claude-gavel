@@ -270,6 +270,12 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         do {
             try socketServer?.start()
             print("Gavel listening on \(socketPath)")
+        } catch GavelError.daemonAlreadyRunning(let path) {
+            // TOCTOU: a peer daemon came up between our top-level probe and
+            // this bind. Refuse to clobber it.
+            gavelLog("Refusing to start: another gavel daemon is already serving \(path) (TOCTOU)")
+            FileHandle.standardError.write(Data("gavel: another daemon is already running on \(path)\n".utf8))
+            exit(1)
         } catch {
             print("Failed to start socket server: \(error)")
         }
@@ -332,6 +338,19 @@ for sig: Int32 in [SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE] {
 }
 
 gavelLog("Gavel starting")
+
+// Single-instance guard: probe the socket BEFORE NSApplication.run() so a
+// duplicate launch never shows a menu bar icon and never registers as a
+// running daemon. SocketServer.start() also enforces this, but probing
+// here keeps the foot-gun symptoms (split-brain, ghost menu bar) off the
+// screen entirely.
+let socketPath = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent(".claude/gavel/gavel.sock").path
+if SocketServer.probeAlive(socketPath: socketPath) {
+    gavelLog("Refusing to start: another gavel daemon is already serving \(socketPath)")
+    FileHandle.standardError.write(Data("gavel: another daemon is already running on \(socketPath)\n".utf8))
+    exit(1)
+}
 
 let app = NSApplication.shared
 let delegate = GavelAppDelegate()
