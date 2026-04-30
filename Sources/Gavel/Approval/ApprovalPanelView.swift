@@ -15,6 +15,9 @@ struct ApprovalPanelView: View {
         VStack(spacing: 0) {
             if let approval = sessionPanel.currentApproval {
                 toolHeader(approval)
+                if let reason = approval.triggerReason, !reason.isEmpty {
+                    triggerBanner(reason)
+                }
                 Divider()
                 toolDetails(approval)
                 Divider()
@@ -45,7 +48,14 @@ struct ApprovalPanelView: View {
             )
             editedCommand = ApprovalCoordinator.sanitizeDashes(a.payload.command ?? "")
             editedFields = [:]
-            noteToClaudeText = ""
+            // Pre-populate the note field for forced dialogs so a default
+            // "approved via Gavel" trail flows back to Claude even if the user
+            // just clicks Allow without typing. Empty for default-tier prompts.
+            if let reason = a.triggerReason, !reason.isEmpty {
+                noteToClaudeText = "User approved this via Gavel — \(reason)"
+            } else {
+                noteToClaudeText = ""
+            }
             isRegexMode = false
         }
     }
@@ -81,6 +91,30 @@ struct ApprovalPanelView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    // MARK: - Trigger Banner
+
+    @ViewBuilder
+    private func triggerBanner(_ reason: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+                .font(.callout)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Triggered by Gavel rule")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text(reason)
+                    .font(.system(.callout, design: .monospaced))
+                    .foregroundColor(.primary)
+                    .textSelection(.enabled)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.orange.opacity(0.12))
     }
 
     // MARK: - Tool Details

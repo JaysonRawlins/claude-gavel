@@ -28,18 +28,30 @@ struct PatternMatcher {
     init() {
         let rawBash: [(pattern: String, reason: String)] = [
             // ── Credential exfiltration (expanded) ──
-            // curl with any data-sending flag
-            ("\\bcurl\\b.*(-d|--data|--data-raw|--data-binary|--data-urlencode|-F|--form|--upload-file|-T)\\b", "Potential data exfiltration via curl"),
-            // curl with URL containing variable/subshell expansion (exfil via URL)
-            ("\\bcurl\\b.*\\$\\(", "Potential exfiltration via curl with command substitution"),
+            // curl with any data-sending flag. Short flags must be case-sensitive
+            // (`(?-i:...)`) because curl distinguishes `-d`/`-D`, `-F`/`-f`, `-T`/`-t`:
+            // `-D` is `--dump-header` (receive), `-f` is `--fail`, `-t` is
+            // `--telnet-option` — none of which send data. The surrounding rule set
+            // is compiled `.caseInsensitive`, which previously made `-D`/`-f`/`-t`
+            // false-trigger this exfil rule on benign downloads like
+            // `curl -D - -o file URL`.
+            ("\\bcurl\\b.*(?-i:-d|--data|--data-raw|--data-binary|--data-urlencode|-F|--form|--upload-file|-T)\\b", "Potential data exfiltration via curl"),
+            // curl with URL containing variable/subshell expansion (exfil via URL).
+            // Anchored to command position so `MY_CURL=$(which curl)` (a benign var
+            // assignment that captures the curl path) doesn't trip on `\bcurl\b`
+            // matching the all-caps env var name under case-insensitive matching.
+            ("(^|[|&;(])\\s*curl\\s+.*\\$\\(", "Potential exfiltration via curl with command substitution"),
             // wget POST
             ("\\bwget\\b.*--post-(data|file)", "Potential data exfiltration via wget"),
             // python/ruby/perl network exfil
             ("\\b(python3?|ruby|perl)\\b.*\\b(urlopen|urllib|requests\\.|Net::HTTP|socket\\.connect|TCPSocket|IO\\.popen)", "Scripting language network exfiltration"),
             // openssl data exfil
             ("\\bopenssl\\b.*s_client.*connect", "Potential exfiltration via openssl"),
-            // scp/rsync to remote
-            ("\\b(scp|rsync)\\b.*:", "Potential file exfiltration via scp/rsync"),
+            // scp/rsync to remote. Anchored to command position so a `SCP=...`
+            // env-var assignment doesn't match `\bSCP\b` (case-insensitive) and
+            // false-trigger on a colon appearing later in the same line (URLs,
+            // time strings, etc.).
+            ("(^|[|&;(])\\s*(scp|rsync)\\s+.*:", "Potential file exfiltration via scp/rsync"),
             // dns exfiltration
             // Anchor to command position to avoid matching shell variables like
             // `DIG=$(...)` — case-insensitive matching makes `DIG` look like `dig`,
@@ -50,9 +62,15 @@ struct PatternMatcher {
             ("(^|[|&;(])\\s*(dig|nslookup|host)\\s+.*\\$\\(", "Potential DNS exfiltration"),
 
             // ── Environment variable theft (expanded) ──
-            ("\\b(env|printenv|set)\\b.*[|].*\\b(curl|wget|nc|ncat|python|ruby|perl)", "Piping environment to network command"),
-            ("\\b(env|printenv|set)\\b.*>\\s*/tmp/", "Environment variables written to temp file"),
-            ("\\bcurl\\b.*-d.*\\$\\(\\s*(env|printenv|set)\\b", "Environment exfiltration via curl subshell"),
+            // env/printenv/set anchored to command position. Without anchoring,
+            // case-insensitive `\bENV\b` matched the leading `ENV=production ...`
+            // env-var assignment that's common in shell pipelines (e.g.
+            // `ENV=prod node server > /tmp/server.log`), false-blocking benign work.
+            ("(^|[|&;(])\\s*(env|printenv|set)\\s+.*[|].*\\b(curl|wget|nc|ncat|python|ruby|perl)\\b", "Piping environment to network command"),
+            ("(^|[|&;(])\\s*(env|printenv|set)\\s+.*>\\s*/tmp/", "Environment variables written to temp file"),
+            // curl + -d + $(env|printenv|set) — short flag must stay case-sensitive
+            // (see L38 rationale).
+            ("\\bcurl\\b.*(?-i:-d).*\\$\\(\\s*(env|printenv|set)\\b", "Environment exfiltration via curl subshell"),
 
             // ── Reverse shells (expanded) ──
             ("\\bbash\\s+-i\\s+>&", "Reverse shell pattern detected"),
@@ -64,7 +82,10 @@ struct PatternMatcher {
             ("\\bphp\\b.*fsockopen.*exec", "PHP reverse shell"),
 
             // ── Persistence mechanisms (expanded) ──
-            ("\\bcrontab\\b", "Crontab modification"),
+            // crontab anchored to command position with whitespace/EOL after the
+            // name so a `CRONTAB=/etc/crontab` env-var assignment (which has `=`
+            // after the name, a `\b` boundary but not `\s`) doesn't false-match.
+            ("(^|[|&;(])\\s*crontab(\\s+|$)", "Crontab modification"),
             ("\\blaunchctl\\b\\s+(load|unload|submit|bootstrap|bootout|enable|disable|kickstart)", "LaunchAgent/Daemon modification"),
             // `at` command: require a segment boundary AND a recognizable timespec.
             // The previous `\bat\b\s+` matched any prose "at " — e.g. heredoc bodies
@@ -126,6 +147,17 @@ struct PatternMatcher {
             ("\\baz\\s+.*\\b(update|create|delete|set|add|remove|start|stop|restart)\\b", "Azure CLI write operation"),
             ("\\baws\\s+.*\\b(create|delete|update|put|remove|terminate|stop|start|modify|run)\\b(?!.*--dry-run)", "AWS CLI write operation"),
             ("\\bgcloud\\s+.*\\b(create|delete|update|add|remove|start|stop|deploy)\\b", "GCloud CLI write operation"),
+            // ── Bypass-coverage fallbacks ──
+            // The hard-block versions of these (rawBash above) anchor to command
+            // position to avoid env-var-prefix false positives. That leaves a gap
+            // for `bash -c "curl $(...)"`-style invocations where the dangerous
+            // command isn't at command position. Mirror the broader, unanchored
+            // pattern here at ask-user tier so the user gets a dialog instead of
+            // silent allow. Patterns selected for ask-user only when their FP
+            // shape is rare in practice (env-var-prefix idioms like `ENV=prod cmd`
+            // are too common to prompt on, so those gaps stay accepted).
+            ("\\bcurl\\b.*\\$\\(", "curl with command substitution (broad — review)"),
+            ("\\bcrontab\\b", "crontab reference (broad — review)"),
         ]
 
         // Hard block — credentials and persistence vectors that should never be written
@@ -245,8 +277,10 @@ struct PatternMatcher {
                 return pathBlock
             }
             // Only scan content for files in temp directories — project source files
-            // contain pattern strings as literals that trigger false positives
-            if let path = payload.filePath, Self.isTempPath(path) {
+            // contain pattern strings as literals that trigger false positives.
+            // Skip documentation extensions: scanner targets polyglot exfil scripts,
+            // not prose that happens to mention credentials and contain hyperlinks.
+            if let path = payload.filePath, Self.isTempPath(path), !Self.isDocumentationPath(path) {
                 let contentToScan = payload.toolInput["content"]?.stringValue
                     ?? payload.toolInput["new_string"]?.stringValue
                 if let content = contentToScan {
@@ -416,12 +450,13 @@ struct PatternMatcher {
 
         let range = NSRange(content.startIndex..., in: content)
 
-        // Check for credential/sensitive path references in the content
+        // Check for credential/sensitive path references in the content.
+        // Path-shaped indicators only — bare nouns like "credentials" cause FPs in any
+        // documentation that mentions auth (e.g. Microsoft/AWS docs with hyperlinks).
         let credPatterns = [
             "\\.ssh/", "\\.aws/", "\\.gnupg/", "\\.env\\b",
             "\\.kube/config", "\\.npmrc", "\\.netrc", "\\.docker/config",
             "id_rsa", "id_ed25519", "authorized_keys",
-            "credentials", "secret_key", "access_key",
         ]
         var hasCredRef = false
         for pattern in credPatterns {
@@ -544,6 +579,14 @@ struct PatternMatcher {
     /// Project source files are excluded to avoid false positives from pattern string literals.
     static func isTempPath(_ path: String) -> Bool {
         GavelConstants.tempDirectoryPrefixes.contains { path.hasPrefix($0) }
+    }
+
+    /// Documentation file extensions — prose, not executable code. Excluded from exfil
+    /// content scanning to avoid FPs on docs that hyperlink to URLs and mention auth.
+    static func isDocumentationPath(_ path: String) -> Bool {
+        let lower = path.lowercased()
+        let docExtensions = [".md", ".mdx", ".markdown", ".txt", ".rst", ".adoc", ".asciidoc", ".html", ".htm"]
+        return docExtensions.contains { lower.hasSuffix($0) }
     }
 
     // MARK: - Shell variable expansion
