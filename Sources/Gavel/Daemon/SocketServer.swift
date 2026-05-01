@@ -18,6 +18,13 @@ final class SocketServer {
     }
 
     func start() throws {
+        // SO_NOSIGPIPE on the per-connection fd handles the daemon's normal
+        // path, but tests instantiate SocketServer outside the daemon's
+        // signal-handler setup in main.swift. Belt-and-suspenders: ignore
+        // SIGPIPE process-wide so a write to a peer-closed socket can never
+        // crash the host process regardless of context.
+        signal(SIGPIPE, SIG_IGN)
+
         // Single-instance guard: if a live peer is already serving this socket,
         // refuse to take it over. Without this, the second daemon would
         // unlink+bind and silently steal the path while the first daemon's
@@ -167,7 +174,20 @@ final class SocketServer {
             if bytesRead < bufSize { break }
         }
 
-        guard !data.isEmpty else { return }
+        // Empty data means the client connected but never sent anything (or the
+        // read timed out before any bytes arrived). Failing silently here makes
+        // the hook see EOF and emit "daemon returned invalid response", which
+        // Claude Code then treats as a tool error and cancels parallel siblings.
+        // Send an explicit fail-closed JSON instead so the hook surfaces a
+        // diagnosable reason and the cascade has a chance to be debugged.
+        guard !data.isEmpty else {
+            let errMsg = #"{"verdict":"block","reason":"Gavel: empty hook payload (read timeout — daemon worker may be starved under burst load)"}"#
+            let errData = Data(errMsg.utf8)
+            _ = errData.withUnsafeBytes { ptr in
+                write(fd, ptr.baseAddress!, errData.count)
+            }
+            return
+        }
 
         // For PreToolUse hooks, we need to send a response back.
         // The handler determines whether to respond based on hook type.
