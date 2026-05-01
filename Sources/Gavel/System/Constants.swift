@@ -15,8 +15,16 @@ enum GavelConstants {
     /// Socket read buffer size (64KB chunks).
     static let socketBufferSize = 64 * 1024
 
-    /// Socket read timeout in seconds.
-    static let socketReadTimeoutSeconds: Int = 2
+    /// Socket read timeout in seconds. Generous because the bound is on each
+    /// `read()` call, not the whole conversation. Under burst load (e.g. five
+    /// parallel `gavel-hook` subprocesses launching at once), an individual
+    /// hook can be descheduled between `connect()` and `write()` for hundreds
+    /// of milliseconds; a 2-second cap was tight enough that one hook in the
+    /// burst would time out, fail closed, and Claude Code would then SIGTERM
+    /// the surviving siblings as parallel-call cancellation. 30 seconds is
+    /// loose enough for any realistic scheduling delay yet still bounded so a
+    /// truly stuck client can't hold a worker thread indefinitely.
+    static let socketReadTimeoutSeconds: Int = 30
 
     /// Stats update interval in seconds.
     static let statsUpdateInterval: TimeInterval = 2.0
