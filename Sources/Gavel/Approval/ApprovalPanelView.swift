@@ -1,32 +1,76 @@
 import SwiftUI
 
+/// All state for the note-to-Claude field, hoisted into an ObservableObject so
+/// the field's sub-view can observe it independently of the parent panel.
+/// Rationale: when the user clicks the in-field checkbox, only `NoteField`
+/// needs to re-render — the action buttons (Allow/Deny) live in the parent
+/// body and shouldn't get torn down by an unrelated state change. An earlier
+/// `@State`-on-parent design wedged the daemon when the user toggled the
+/// checkbox and then clicked Deny: the parent body re-rendered, the
+/// floating-panel checkbox lost / shuffled key-responder status, and the
+/// subsequent Deny click never reached `coordinator.handleAction`. Isolating
+/// the state plus replacing `Toggle.checkbox` with a `Button`-styled checkbox
+/// (which doesn't carry the same NSButton focus quirks in utility panels)
+/// removes both vectors.
+final class NoteFieldState: ObservableObject {
+    @Published var text: String = ""
+    @Published var sendToClaude: Bool = false
+    @Published var hasBeenEdited: Bool = false
+    var seeded: String = ""
+
+    /// True when the field still shows the auto-seeded preview (i.e. user
+    /// hasn't edited). Drives italic + secondary text styling.
+    var notePreviewActive: Bool {
+        !hasBeenEdited && !seeded.isEmpty && text == seeded
+    }
+
+    /// Note value to send as `additionalContext` on Allow paths. nil unless
+    /// the user explicitly opted in (checkbox or edit-auto-tick) AND there's
+    /// non-empty text.
+    var noteForAllowContext: String? {
+        guard sendToClaude, !text.isEmpty else { return nil }
+        return text
+    }
+
+    /// Note value to send as the deny reason. Gated on `hasBeenEdited` rather
+    /// than the checkbox: a typed deny reason is always high-signal, but the
+    /// auto-seeded preview ("User approved this via Gavel") is nonsensical
+    /// as a deny reason and must not flow on a no-edit deny.
+    var noteForDenyContext: String? {
+        guard hasBeenEdited, !text.isEmpty else { return nil }
+        return text
+    }
+
+    func reset(seededText: String) {
+        text = seededText
+        seeded = seededText
+        hasBeenEdited = false
+        sendToClaude = false
+    }
+
+    /// Called from the field's `onChange`. Promotes the first text mutation
+    /// to "user has edited" + auto-ticks the send checkbox.
+    func userEditedIfNeeded() {
+        if !hasBeenEdited && text != seeded {
+            hasBeenEdited = true
+            sendToClaude = true
+        }
+    }
+}
+
 /// The interactive approval dialog shown for each PreToolUse event.
 /// Each session gets its own panel via SessionPanel.
 struct ApprovalPanelView: View {
     @ObservedObject var coordinator: ApprovalCoordinator
     @ObservedObject var sessionPanel: ApprovalCoordinator.SessionPanel
     @State private var sessionPattern: String = ""
-    @State private var noteToClaudeText: String = ""
     @State private var editedCommand: String = ""
     @State private var editedFields: [String: String] = [:]
     @State private var isRegexMode: Bool = false
 
-    /// The auto-seeded value of the note field for the current approval. Tracked
-    /// separately so we can render it as a preview (italic + secondary color)
-    /// until the user actually edits it. Once edited, the user's text becomes
-    /// authoritative and renders normally.
-    @State private var seededNoteText: String = ""
-
-    /// Becomes true on the user's first edit of the note field. Drives both the
-    /// preview/normal styling and the auto-tick of `sendNoteToClaude`.
-    @State private var noteHasBeenEdited: Bool = false
-
-    /// Gates whether the note flows to Claude as `additionalContext` on Allow.
-    /// Off by default so the seeded "User approved this via Gavel — …" preview
-    /// doesn't spam Claude's context for normal approvals. Auto-ticks when the
-    /// user edits the note. Deny paths are NOT gated by this — denies always
-    /// include the typed note as the deny reason.
-    @State private var sendNoteToClaude: Bool = false
+    /// All note-field state lives here. See `NoteFieldState` for the
+    /// architectural rationale (re-render isolation + bug fix).
+    @StateObject private var noteState = NoteFieldState()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -66,31 +110,17 @@ struct ApprovalPanelView: View {
             editedCommand = ApprovalCoordinator.sanitizeDashes(a.payload.command ?? "")
             editedFields = [:]
             // Seed the note field as a *preview* of what would flow to Claude
-            // if the user opts in. Not actually sent unless the checkbox is
-            // ticked (or the user edits the field, which auto-ticks).
-            // Default-tier prompts (no rule fired) get a generic canned line so
-            // the opt-in path is consistent — useful when the user runs with
-            // auto off and wants a quick "user explicitly approved" trail
-            // without typing each time.
+            // if the user opts in. Default-tier prompts (no rule fired) get a
+            // generic canned line so the opt-in path is consistent.
             let seeded: String
             if let reason = a.triggerReason, !reason.isEmpty {
                 seeded = "User approved this via Gavel — \(reason)"
             } else {
                 seeded = "User approved this via Gavel"
             }
-            noteToClaudeText = seeded
-            seededNoteText = seeded
-            noteHasBeenEdited = false
-            sendNoteToClaude = false
+            noteState.reset(seededText: seeded)
             isRegexMode = false
         }
-    }
-
-    /// True when the field still shows the auto-seeded preview (i.e. user hasn't
-    /// edited). Used to render the text in italic + secondary so it's visually
-    /// obvious it's a preview, not a value-in-flight.
-    private var notePreviewActive: Bool {
-        !noteHasBeenEdited && !seededNoteText.isEmpty && noteToClaudeText == seededNoteText
     }
 
     // MARK: - Header
@@ -344,63 +374,10 @@ struct ApprovalPanelView: View {
             Image(systemName: "bubble.left")
                 .foregroundColor(.secondary)
                 .padding(.top, 4)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Note to Claude")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                TextEditor(text: $noteToClaudeText)
-                    .font(notePreviewActive
-                          ? .system(.body, design: .monospaced).italic()
-                          : .system(.body, design: .monospaced))
-                    .foregroundColor(notePreviewActive ? .secondary : .primary)
-                    .frame(minHeight: 36, maxHeight: 120)
-                    .padding(4)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .cornerRadius(6)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(sendNoteToClaude ? Color.green.opacity(0.6) : Color.secondary.opacity(0.3),
-                                    lineWidth: sendNoteToClaude ? 1.5 : 1)
-                    )
-                    .onChange(of: noteToClaudeText) { newValue in
-                        // First user edit auto-ticks the send-checkbox so a
-                        // typed note doesn't get silently dropped. The check
-                        // against seededNoteText prevents the resetFields()
-                        // assignment from also tripping this.
-                        if !noteHasBeenEdited && newValue != seededNoteText {
-                            noteHasBeenEdited = true
-                            sendNoteToClaude = true
-                        }
-                    }
-                Toggle(isOn: $sendNoteToClaude) {
-                    Text("Send note to Claude (off by default — used for testing / explicit context)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .toggleStyle(.checkbox)
-                .help("When checked, the note above is sent to Claude as additionalContext on Allow. Denies always include the note as the deny reason regardless of this checkbox.")
-            }
+            NoteField(state: noteState)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-    }
-
-    /// The note value to send as additionalContext on Allow paths. Returns nil
-    /// when the checkbox is off (or text is empty), suppressing the seeded
-    /// preview from leaking into Claude's context.
-    private var noteForAllowContext: String? {
-        guard sendNoteToClaude, !noteToClaudeText.isEmpty else { return nil }
-        return noteToClaudeText
-    }
-
-    /// The note value to send on Deny paths. Gated on `noteHasBeenEdited`
-    /// rather than the checkbox: a typed deny reason is always high-signal
-    /// for Claude's replan, but the auto-seeded preview ("User approved this
-    /// via Gavel") is nonsense as a deny reason and must not flow if the
-    /// user just hit Deny without typing.
-    private var noteForDenyContext: String? {
-        guard noteHasBeenEdited, !noteToClaudeText.isEmpty else { return nil }
-        return noteToClaudeText
     }
 
     // MARK: - Action Bar
@@ -458,7 +435,7 @@ struct ApprovalPanelView: View {
             // Persistent + session rules row
             HStack(spacing: 6) {
                 Button(action: {
-                    coordinator.handleAction(.alwaysDenyPattern(pattern: sessionPattern, isRegex: isRegexMode, explanation: noteForDenyContext), on: sessionPanel)
+                    coordinator.handleAction(.alwaysDenyPattern(pattern: sessionPattern, isRegex: isRegexMode, explanation: noteState.noteForDenyContext), on: sessionPanel)
                 }) {
                     Label("Always Deny", systemImage: "hand.raised")
                 }
@@ -489,7 +466,7 @@ struct ApprovalPanelView: View {
                 Button(action: {
                     coordinator.handleAction(.denyPatternForSession(
                         pattern: sessionPattern,
-                        explanation: noteForDenyContext
+                        explanation: noteState.noteForDenyContext
                     ), on: sessionPanel)
                 }) {
                     Label("Session Deny", systemImage: "shield.slash")
@@ -501,7 +478,7 @@ struct ApprovalPanelView: View {
                 Button(action: {
                     coordinator.handleAction(.allowPatternForSession(
                         pattern: sessionPattern,
-                        context: noteForAllowContext,
+                        context: noteState.noteForAllowContext,
                         updatedCommand: cmdIfModified,
                         updatedInput: updatedInputIfModified
                     ), on: sessionPanel)
@@ -518,7 +495,7 @@ struct ApprovalPanelView: View {
             HStack {
                 Button(action: {
                     coordinator.handleAction(.deny(
-                        context: noteForDenyContext
+                        context: noteState.noteForDenyContext
                     ), on: sessionPanel)
                     coordinator.sessionManager?.noteInteraction()
                 }) {
@@ -544,7 +521,7 @@ struct ApprovalPanelView: View {
 
                 Button(action: {
                     coordinator.handleAction(.allow(
-                        context: noteForAllowContext,
+                        context: noteState.noteForAllowContext,
                         updatedCommand: cmdIfModified,
                         updatedInput: updatedInputIfModified
                     ), on: sessionPanel)
@@ -694,6 +671,56 @@ struct ApprovalPanelView: View {
         case "Read", "Glob", "Grep": return .gray
         case "Agent": return .purple
         default: return .primary
+        }
+    }
+}
+
+// MARK: - NoteField sub-view
+
+/// The note-to-Claude field, isolated into its own view so checkbox toggles
+/// only re-render this slice — keeping the parent panel's action buttons
+/// (Allow/Deny) stable. The checkbox is implemented as a `Button` styled with
+/// SF Symbol icons rather than a `Toggle.checkbox`, because the latter's
+/// underlying NSButton in floating utility panels can lose / shuffle key
+/// responder status, eating the user's subsequent click on Deny. This combo
+/// (state isolation + button-as-checkbox) fixes the wedge reproduced in the
+/// pentest test case "tick checkbox then click Deny without typing".
+private struct NoteField: View {
+    @ObservedObject var state: NoteFieldState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Note to Claude")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            TextEditor(text: $state.text)
+                .font(state.notePreviewActive
+                      ? .system(.body, design: .monospaced).italic()
+                      : .system(.body, design: .monospaced))
+                .foregroundColor(state.notePreviewActive ? .secondary : .primary)
+                .frame(minHeight: 36, maxHeight: 120)
+                .padding(4)
+                .background(Color(nsColor: .textBackgroundColor))
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(state.sendToClaude ? Color.green.opacity(0.6) : Color.secondary.opacity(0.3),
+                                lineWidth: state.sendToClaude ? 1.5 : 1)
+                )
+                .onChange(of: state.text) { _ in
+                    state.userEditedIfNeeded()
+                }
+            Button(action: { state.sendToClaude.toggle() }) {
+                HStack(spacing: 6) {
+                    Image(systemName: state.sendToClaude ? "checkmark.square.fill" : "square")
+                        .foregroundColor(state.sendToClaude ? .accentColor : .secondary)
+                    Text("Send note to Claude (off by default — used for testing / explicit context)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+            .help("When checked, the note above is sent to Claude as additionalContext on Allow. Denies always include the typed note as the deny reason regardless of this checkbox.")
         }
     }
 }
