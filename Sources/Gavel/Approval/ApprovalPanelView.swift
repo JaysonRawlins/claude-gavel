@@ -68,14 +68,18 @@ struct ApprovalPanelView: View {
             // Seed the note field as a *preview* of what would flow to Claude
             // if the user opts in. Not actually sent unless the checkbox is
             // ticked (or the user edits the field, which auto-ticks).
+            // Default-tier prompts (no rule fired) get a generic canned line so
+            // the opt-in path is consistent — useful when the user runs with
+            // auto off and wants a quick "user explicitly approved" trail
+            // without typing each time.
+            let seeded: String
             if let reason = a.triggerReason, !reason.isEmpty {
-                let seeded = "User approved this via Gavel — \(reason)"
-                noteToClaudeText = seeded
-                seededNoteText = seeded
+                seeded = "User approved this via Gavel — \(reason)"
             } else {
-                noteToClaudeText = ""
-                seededNoteText = ""
+                seeded = "User approved this via Gavel"
             }
+            noteToClaudeText = seeded
+            seededNoteText = seeded
             noteHasBeenEdited = false
             sendNoteToClaude = false
             isRegexMode = false
