@@ -11,6 +11,23 @@ struct ApprovalPanelView: View {
     @State private var editedFields: [String: String] = [:]
     @State private var isRegexMode: Bool = false
 
+    /// The auto-seeded value of the note field for the current approval. Tracked
+    /// separately so we can render it as a preview (italic + secondary color)
+    /// until the user actually edits it. Once edited, the user's text becomes
+    /// authoritative and renders normally.
+    @State private var seededNoteText: String = ""
+
+    /// Becomes true on the user's first edit of the note field. Drives both the
+    /// preview/normal styling and the auto-tick of `sendNoteToClaude`.
+    @State private var noteHasBeenEdited: Bool = false
+
+    /// Gates whether the note flows to Claude as `additionalContext` on Allow.
+    /// Off by default so the seeded "User approved this via Gavel — …" preview
+    /// doesn't spam Claude's context for normal approvals. Auto-ticks when the
+    /// user edits the note. Deny paths are NOT gated by this — denies always
+    /// include the typed note as the deny reason.
+    @State private var sendNoteToClaude: Bool = false
+
     var body: some View {
         VStack(spacing: 0) {
             if let approval = sessionPanel.currentApproval {
@@ -48,16 +65,28 @@ struct ApprovalPanelView: View {
             )
             editedCommand = ApprovalCoordinator.sanitizeDashes(a.payload.command ?? "")
             editedFields = [:]
-            // Pre-populate the note field for forced dialogs so a default
-            // "approved via Gavel" trail flows back to Claude even if the user
-            // just clicks Allow without typing. Empty for default-tier prompts.
+            // Seed the note field as a *preview* of what would flow to Claude
+            // if the user opts in. Not actually sent unless the checkbox is
+            // ticked (or the user edits the field, which auto-ticks).
             if let reason = a.triggerReason, !reason.isEmpty {
-                noteToClaudeText = "User approved this via Gavel — \(reason)"
+                let seeded = "User approved this via Gavel — \(reason)"
+                noteToClaudeText = seeded
+                seededNoteText = seeded
             } else {
                 noteToClaudeText = ""
+                seededNoteText = ""
             }
+            noteHasBeenEdited = false
+            sendNoteToClaude = false
             isRegexMode = false
         }
+    }
+
+    /// True when the field still shows the auto-seeded preview (i.e. user hasn't
+    /// edited). Used to render the text in italic + secondary so it's visually
+    /// obvious it's a preview, not a value-in-flight.
+    private var notePreviewActive: Bool {
+        !noteHasBeenEdited && !seededNoteText.isEmpty && noteToClaudeText == seededNoteText
     }
 
     // MARK: - Header
@@ -311,24 +340,53 @@ struct ApprovalPanelView: View {
             Image(systemName: "bubble.left")
                 .foregroundColor(.secondary)
                 .padding(.top, 4)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Note to Claude (optional — Claude sees this as context)")
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Note to Claude")
                     .font(.caption)
                     .foregroundColor(.secondary)
                 TextEditor(text: $noteToClaudeText)
-                    .font(.system(.body, design: .monospaced))
+                    .font(notePreviewActive
+                          ? .system(.body, design: .monospaced).italic()
+                          : .system(.body, design: .monospaced))
+                    .foregroundColor(notePreviewActive ? .secondary : .primary)
                     .frame(minHeight: 36, maxHeight: 120)
                     .padding(4)
                     .background(Color(nsColor: .textBackgroundColor))
                     .cornerRadius(6)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                            .stroke(sendNoteToClaude ? Color.green.opacity(0.6) : Color.secondary.opacity(0.3),
+                                    lineWidth: sendNoteToClaude ? 1.5 : 1)
                     )
+                    .onChange(of: noteToClaudeText) { newValue in
+                        // First user edit auto-ticks the send-checkbox so a
+                        // typed note doesn't get silently dropped. The check
+                        // against seededNoteText prevents the resetFields()
+                        // assignment from also tripping this.
+                        if !noteHasBeenEdited && newValue != seededNoteText {
+                            noteHasBeenEdited = true
+                            sendNoteToClaude = true
+                        }
+                    }
+                Toggle(isOn: $sendNoteToClaude) {
+                    Text("Send note to Claude (off by default — used for testing / explicit context)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .toggleStyle(.checkbox)
+                .help("When checked, the note above is sent to Claude as additionalContext on Allow. Denies always include the note as the deny reason regardless of this checkbox.")
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+    }
+
+    /// The note value to send as additionalContext on Allow paths. Returns nil
+    /// when the checkbox is off (or text is empty), suppressing the seeded
+    /// preview from leaking into Claude's context.
+    private var noteForAllowContext: String? {
+        guard sendNoteToClaude, !noteToClaudeText.isEmpty else { return nil }
+        return noteToClaudeText
     }
 
     // MARK: - Action Bar
@@ -429,7 +487,7 @@ struct ApprovalPanelView: View {
                 Button(action: {
                     coordinator.handleAction(.allowPatternForSession(
                         pattern: sessionPattern,
-                        context: noteToClaudeText.isEmpty ? nil : noteToClaudeText,
+                        context: noteForAllowContext,
                         updatedCommand: cmdIfModified,
                         updatedInput: updatedInputIfModified
                     ), on: sessionPanel)
@@ -472,7 +530,7 @@ struct ApprovalPanelView: View {
 
                 Button(action: {
                     coordinator.handleAction(.allow(
-                        context: noteToClaudeText.isEmpty ? nil : noteToClaudeText,
+                        context: noteForAllowContext,
                         updatedCommand: cmdIfModified,
                         updatedInput: updatedInputIfModified
                     ), on: sessionPanel)
