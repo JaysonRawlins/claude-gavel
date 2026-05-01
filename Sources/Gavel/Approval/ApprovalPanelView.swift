@@ -393,6 +393,16 @@ struct ApprovalPanelView: View {
         return noteToClaudeText
     }
 
+    /// The note value to send on Deny paths. Gated on `noteHasBeenEdited`
+    /// rather than the checkbox: a typed deny reason is always high-signal
+    /// for Claude's replan, but the auto-seeded preview ("User approved this
+    /// via Gavel") is nonsense as a deny reason and must not flow if the
+    /// user just hit Deny without typing.
+    private var noteForDenyContext: String? {
+        guard noteHasBeenEdited, !noteToClaudeText.isEmpty else { return nil }
+        return noteToClaudeText
+    }
+
     // MARK: - Action Bar
 
     @ViewBuilder
@@ -448,7 +458,7 @@ struct ApprovalPanelView: View {
             // Persistent + session rules row
             HStack(spacing: 6) {
                 Button(action: {
-                    coordinator.handleAction(.alwaysDenyPattern(pattern: sessionPattern, isRegex: isRegexMode, explanation: noteToClaudeText.isEmpty ? nil : noteToClaudeText), on: sessionPanel)
+                    coordinator.handleAction(.alwaysDenyPattern(pattern: sessionPattern, isRegex: isRegexMode, explanation: noteForDenyContext), on: sessionPanel)
                 }) {
                     Label("Always Deny", systemImage: "hand.raised")
                 }
@@ -479,7 +489,7 @@ struct ApprovalPanelView: View {
                 Button(action: {
                     coordinator.handleAction(.denyPatternForSession(
                         pattern: sessionPattern,
-                        explanation: noteToClaudeText.isEmpty ? nil : noteToClaudeText
+                        explanation: noteForDenyContext
                     ), on: sessionPanel)
                 }) {
                     Label("Session Deny", systemImage: "shield.slash")
@@ -508,7 +518,7 @@ struct ApprovalPanelView: View {
             HStack {
                 Button(action: {
                     coordinator.handleAction(.deny(
-                        context: noteToClaudeText.isEmpty ? nil : noteToClaudeText
+                        context: noteForDenyContext
                     ), on: sessionPanel)
                     coordinator.sessionManager?.noteInteraction()
                 }) {
