@@ -16,6 +16,12 @@ final class MonitorViewModel: ObservableObject {
     @Published var testerTestString: String = ""
     @Published var testerIsRegex: Bool = true
 
+    /// User-pinned session PID. Click any row to pin (highlight); click the
+    /// pinned row again to unpin. In-memory only — fresh on app restart.
+    /// Lingers if the pinned session ends; the UI just renders no highlight
+    /// until the user pins something else.
+    @Published var pinnedSessionPid: Int?
+
     let approvalCoordinator: ApprovalCoordinator
     let sessionManager: SessionManager
     private let maxFeedEntries = GavelConstants.maxFeedEntries
@@ -42,6 +48,15 @@ final class MonitorViewModel: ObservableObject {
     }
 
     // MARK: - Controls
+
+    func togglePin(for session: Session) {
+        if pinnedSessionPid == session.pid {
+            pinnedSessionPid = nil
+        } else {
+            pinnedSessionPid = session.pid
+        }
+        noteInteraction()
+    }
 
     func toggleAutoApprove(for session: Session) {
         if session.isAutoApproveEnabled {
