@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.2.3...v1.3.0) (2026-05-01)
+
+
+### Features
+
+* **monitor:** click row to pin highlight, drop first-row default highlight ([#50](https://github.com/JaysonRawlins/claude-gavel/issues/50)) ([65b0f12](https://github.com/JaysonRawlins/claude-gavel/commit/65b0f126dc185d6dfe260bafa42019f19af273c1))
+
+
+### Bug Fixes
+
+* **daemon:** bump socket read timeout 2s→30s, fail-closed on empty payload ([#51](https://github.com/JaysonRawlins/claude-gavel/issues/51)) ([338d228](https://github.com/JaysonRawlins/claude-gavel/commit/338d22853a005a286019b1934e791599ddcd021f))
+
 ## [1.2.3](https://github.com/JaysonRawlins/claude-gavel/compare/v1.2.2...v1.2.3) (2026-04-30)
 
 
