@@ -92,7 +92,7 @@ struct MonitorWindow: View {
                     SessionRow(
                         session: session,
                         viewModel: viewModel,
-                        isNewest: index == 0,
+                        isPinned: viewModel.pinnedSessionPid == session.pid,
                         alternate: index.isMultiple(of: 2)
                     )
                 }
@@ -192,7 +192,7 @@ struct MonitorWindow: View {
 private struct SessionRow: View {
     @ObservedObject var session: Session
     let viewModel: MonitorViewModel
-    let isNewest: Bool
+    let isPinned: Bool
     let alternate: Bool
 
     var body: some View {
@@ -234,15 +234,22 @@ private struct SessionRow: View {
             }
         )
         .overlay(alignment: .leading) {
-            if isNewest {
+            if isPinned {
                 Rectangle()
                     .fill(Color.accentColor)
                     .frame(width: 3)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 4))
+        // Hit-test the entire row, including padding/Spacer gaps. Buttons and
+        // toggles still consume their own taps (SwiftUI default), so only the
+        // identity area (status dot, PID, cwd, label gap) triggers the pin.
+        .contentShape(Rectangle())
+        .onTapGesture {
+            viewModel.togglePin(for: session)
+        }
         .animation(.easeOut(duration: 0.45), value: session.lastActivityAt)
-        .help(isNewest ? "Most recently started session" : "")
+        .help(isPinned ? "Pinned — click again to unpin" : "Click to pin this row")
     }
 
     /// Right-side controls in fixed widths so Sub/Auto/Prompt/Pause/Kill line up
@@ -324,7 +331,7 @@ private struct SessionRow: View {
     }
 
     private var rowBackground: Color {
-        if isNewest { return Color.accentColor.opacity(0.10) }
+        if isPinned { return Color.accentColor.opacity(0.10) }
         return alternate ? Color.secondary.opacity(0.06) : Color.clear
     }
 }
