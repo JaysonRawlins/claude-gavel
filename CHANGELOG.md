@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.3.0...v1.4.0) (2026-05-02)
+
+
+### Features
+
+* **approval+monitor:** note-flow checkbox + 5s activity flash ([#53](https://github.com/JaysonRawlins/claude-gavel/issues/53)) ([cb4c304](https://github.com/JaysonRawlins/claude-gavel/commit/cb4c304d5f25ab53f3379e655f3c945f28f13847))
+
 ## [1.3.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.2.3...v1.3.0) (2026-05-01)
 
 
