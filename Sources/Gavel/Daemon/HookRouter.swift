@@ -94,14 +94,17 @@ final class HookRouter {
         session.toolCallCount += 1
 
         // Flash the row in the monitor so the user can see which session is
-        // working without reading PIDs. Auto-clears after 0.6s; SwiftUI animates
+        // working without reading PIDs. Auto-clears after 5s; SwiftUI animates
         // the fade. Stamp comparison protects against bursts — only the most
-        // recent activity's clear actually fires.
+        // recent activity's clear actually fires (so a burst extends the visible
+        // window rather than truncating it). 5s is the sweet spot at ~12+
+        // sessions: long enough that human glance-and-find can't miss it, short
+        // enough that it doesn't pile up across rows during normal traffic.
         let stamp = Date()
         DispatchQueue.main.async {
             session.lastActivityAt = stamp
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
             if session.lastActivityAt == stamp {
                 session.lastActivityAt = nil
             }
