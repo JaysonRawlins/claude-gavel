@@ -90,13 +90,20 @@ final class SessionManager: ObservableObject {
 
     /// Bind a Claude Code session UUID to a Session and apply any saved label.
     /// If the user typed a label before the sessionId was known, persist it now.
+    /// Called from socket-worker threads — `@Published` mutations on `session`
+    /// are dispatched to main per SwiftUI's main-thread invariant.
     func recordSessionId(_ sid: String, on session: Session) {
         let changed = session.sessionId != sid
-        session.sessionId = sid
-        if session.label.isEmpty, let saved = sessionLabels[sid] {
-            session.label = saved
-        } else if !session.label.isEmpty && sessionLabels[sid] != session.label {
-            sessionLabels[sid] = session.label
+        let savedLabel = sessionLabels[sid]
+        let currentLabel = session.label
+        DispatchQueue.main.async {
+            session.sessionId = sid
+            if session.label.isEmpty, let saved = savedLabel {
+                session.label = saved
+            }
+        }
+        if !currentLabel.isEmpty && savedLabel != currentLabel {
+            sessionLabels[sid] = currentLabel
             saveDefaults()
         }
         if changed {
@@ -107,9 +114,12 @@ final class SessionManager: ObservableObject {
     }
 
     /// Update the cwd for a session and persist the change.
+    /// Worker-thread caller; @Published mutation dispatched to main.
     func recordCwd(_ cwd: String, on session: Session) {
         let changed = session.cwd != cwd
-        session.cwd = cwd
+        DispatchQueue.main.async {
+            session.cwd = cwd
+        }
         if changed {
             lock.lock()
             saveActiveSessionsLocked()
@@ -269,8 +279,13 @@ final class SessionManager: ObservableObject {
         for pid in pids {
             if !isProcessAlive(pid: pid) {
                 lock.lock()
-                sessions[pid]?.isAlive = false
+                let session = sessions[pid]
                 lock.unlock()
+                // `isAlive` is @Published; SwiftUI requires main-thread
+                // mutation. The cleanup timer runs on a global utility queue.
+                DispatchQueue.main.async {
+                    session?.isAlive = false
+                }
                 DispatchQueue.global().asyncAfter(deadline: .now() + GavelConstants.sessionRemovalGraceSeconds) { [weak self] in
                     self?.removeSession(pid: pid)
                 }

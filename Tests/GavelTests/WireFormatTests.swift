@@ -291,6 +291,13 @@ final class WireFormatTests: XCTestCase {
         """
         router.handle(data: json.data(using: .utf8)!) { _ in }
 
+        // sessionId/cwd are @Published; SessionManager dispatches the writes
+        // to the main queue (worker → main per SwiftUI invariant). Drain the
+        // main queue before asserting so the dispatched writes have landed.
+        let exp = expectation(description: "main queue drained")
+        DispatchQueue.main.async { exp.fulfill() }
+        wait(for: [exp], timeout: 1.0)
+
         XCTAssertEqual(session.sessionId, "enrichment-test")
         XCTAssertEqual(session.cwd, "/home/user/project")
     }

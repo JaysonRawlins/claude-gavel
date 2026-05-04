@@ -176,6 +176,14 @@ final class MonitorViewModel: ObservableObject {
             allowRuleCount += session.sessionRules.filter { $0.verdict == .allow }.count
             denyRuleCount += session.sessionRules.filter { $0.verdict == .block }.count
             if session.isAutoApproveEnabled { autoCount += 1 }
+            // Counters and taintedPaths live in non-Combine thread-safe stores
+            // (SessionStats / TaintedPathStore) so worker-thread mutations
+            // never trip SwiftUI's main-thread invariant. The trade-off: the
+            // UI doesn't auto-refresh on each increment. Pump a manual publish
+            // here on the 2-second tick so monitor rows re-read the current
+            // counter / taint values during normal render. Two-second
+            // granularity is fine for stats; nothing here needs realtime.
+            session.objectWillChange.send()
         }
 
         let totalRules = allowRuleCount + denyRuleCount
