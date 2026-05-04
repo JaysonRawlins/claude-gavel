@@ -111,6 +111,11 @@ final class ApprovalCoordinator: ObservableObject {
 
     /// Handle the user's decision from the approval panel.
     func handleAction(_ action: Action, on sessionPanel: SessionPanel) {
+        // Diagnostic breadcrumb. Critical signal: if `currentApprovalPresent`
+        // is ever `false` when a click arrives, we've found the wedge vector
+        // (click drops silently, semaphore never signals, hook waits forever).
+        let presentMarker = sessionPanel.currentApproval == nil ? "MISSING" : "ok"
+        gavelLog("[approval] action pid=\(sessionPanel.pid) currentApproval=\(presentMarker) action=\(actionLogTag(action))")
         guard let current = sessionPanel.currentApproval else { return }
 
         // Build updatedInput if user modified the command
@@ -192,6 +197,7 @@ final class ApprovalCoordinator: ObservableObject {
     /// Forced dialogs (from prompt rules / MCP blocks) are NOT flushed.
     func enableAutoApprove(for session: Session) {
         session.isAutoApproveEnabled = true
+        sessionManager?.saveActiveSessions()
 
         guard let sp = sessionPanels[session.pid] else { return }
 
@@ -220,11 +226,13 @@ final class ApprovalCoordinator: ObservableObject {
 
     func disableAutoApprove(for session: Session) {
         session.isAutoApproveEnabled = false
+        sessionManager?.saveActiveSessions()
     }
 
     // MARK: - Per-Session Panel Management
 
     private func showApproval(_ approval: PendingApproval, on sp: SessionPanel) {
+        gavelLog("[approval] show pid=\(sp.pid) tool=\(approval.payload.toolName) queueDepth=\(sp.pendingQueue.count) trigger=\(approval.triggerReason ?? "-")")
         sp.currentApproval = approval
         activeSessionPanel = sp
 
@@ -245,6 +253,7 @@ final class ApprovalCoordinator: ObservableObject {
     }
 
     private func advanceQueue(on sp: SessionPanel) {
+        gavelLog("[approval] advance pid=\(sp.pid) remaining=\(sp.pendingQueue.count)")
         sp.currentApproval = nil
         if sp.pendingQueue.isEmpty {
             closePanel(on: sp)
@@ -252,6 +261,21 @@ final class ApprovalCoordinator: ObservableObject {
             let next = sp.pendingQueue.removeFirst()
             sp.queueCount = sp.pendingQueue.count
             showApproval(next, on: sp)
+        }
+    }
+
+    /// Compact tag for the action enum, used in diagnostic logs. Avoids
+    /// dumping the full enum (which would include user-typed notes) into
+    /// gavel.log.
+    private func actionLogTag(_ action: Action) -> String {
+        switch action {
+        case .allow: return "allow"
+        case .deny: return "deny"
+        case .allowPatternForSession: return "allowPatternForSession"
+        case .denyPatternForSession: return "denyPatternForSession"
+        case .alwaysDenyPattern: return "alwaysDenyPattern"
+        case .alwaysAllowPattern: return "alwaysAllowPattern"
+        case .alwaysPromptPattern: return "alwaysPromptPattern"
         }
     }
 

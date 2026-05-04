@@ -271,6 +271,12 @@ final class HookRouter {
     // MARK: - Helpers
 
     private func sendResponse(_ decision: Decision, respond: ((Data) -> Void)?) {
+        // Diagnostic breadcrumb: every hook response that reaches the worker
+        // should produce a `[hook] respond ...` line. If a `[socket] enter`
+        // ever lacks a matching `[hook] respond` and `[socket] exit wrote=N`
+        // (with N > 0), the worker died/wedged after read but before write.
+        let reasonTag = decision.reason ?? "-"
+        gavelLog("[hook] respond verdict=\(decision.verdict.rawValue) reason=\(reasonTag.prefix(80))")
         if let respond = respond,
            let data = decision.hookResponse.data(using: .utf8) {
             respond(data)

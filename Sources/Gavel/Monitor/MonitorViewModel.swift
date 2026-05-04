@@ -73,12 +73,14 @@ final class MonitorViewModel: ObservableObject {
         guard let session = sessionManager.sessions.values.first else { return }
         session.isPaused.toggle()
         isPaused = session.isPaused
+        sessionManager.saveActiveSessions()
     }
 
     func revokeAutoApprove() {
         for session in sessionManager.sessions.values {
             session.revokeAutoApprove()
         }
+        sessionManager.saveActiveSessions()
     }
 
     /// Revoke auto across every session + reset defaults + notify. The menu bar
@@ -91,6 +93,7 @@ final class MonitorViewModel: ObservableObject {
     /// One-click alternative to toggling both Auto and Sub off manually.
     func promptSession(_ session: Session) {
         session.revokeAutoApprove()
+        sessionManager.saveActiveSessions()
         sessionManager.noteInteraction()
     }
 

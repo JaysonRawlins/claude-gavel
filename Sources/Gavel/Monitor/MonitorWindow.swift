@@ -268,6 +268,7 @@ private struct SessionRow: View {
                         let allSub = viewModel.sessionManager.sessions.values.allSatisfy { $0.isSubAgentInheritEnabled }
                         viewModel.sessionManager.defaultSubAgentInherit = allSub
                         viewModel.sessionManager.saveDefaults()
+                        viewModel.sessionManager.saveActiveSessions()
                         viewModel.noteInteraction()
                     }
                 ))
@@ -311,6 +312,7 @@ private struct SessionRow: View {
                 let anyPaused = viewModel.sessionManager.sessions.values.contains { $0.isPaused }
                 viewModel.sessionManager.defaultPaused = anyPaused
                 viewModel.sessionManager.saveDefaults()
+                viewModel.sessionManager.saveActiveSessions()
                 viewModel.noteInteraction()
             }
             .buttonStyle(.bordered)
