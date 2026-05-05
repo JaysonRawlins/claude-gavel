@@ -73,12 +73,14 @@ final class MonitorViewModel: ObservableObject {
         guard let session = sessionManager.sessions.values.first else { return }
         session.isPaused.toggle()
         isPaused = session.isPaused
+        sessionManager.saveActiveSessions()
     }
 
     func revokeAutoApprove() {
         for session in sessionManager.sessions.values {
             session.revokeAutoApprove()
         }
+        sessionManager.saveActiveSessions()
     }
 
     /// Revoke auto across every session + reset defaults + notify. The menu bar
@@ -91,6 +93,7 @@ final class MonitorViewModel: ObservableObject {
     /// One-click alternative to toggling both Auto and Sub off manually.
     func promptSession(_ session: Session) {
         session.revokeAutoApprove()
+        sessionManager.saveActiveSessions()
         sessionManager.noteInteraction()
     }
 
@@ -117,6 +120,10 @@ final class MonitorViewModel: ObservableObject {
 
     func updateRule(id: UUID, pattern: String, isRegex: Bool, verdict: DecisionVerdict, explanation: String?) {
         approvalCoordinator.ruleStore?.updateRule(id: id, pattern: pattern, isRegex: isRegex, verdict: verdict, explanation: explanation)
+    }
+
+    func setRuleDisabled(id: UUID, isDisabled: Bool) {
+        approvalCoordinator.ruleStore?.setDisabled(id: id, isDisabled: isDisabled)
     }
 
     func exportRules(to url: URL) throws {
@@ -173,6 +180,14 @@ final class MonitorViewModel: ObservableObject {
             allowRuleCount += session.sessionRules.filter { $0.verdict == .allow }.count
             denyRuleCount += session.sessionRules.filter { $0.verdict == .block }.count
             if session.isAutoApproveEnabled { autoCount += 1 }
+            // Counters and taintedPaths live in non-Combine thread-safe stores
+            // (SessionStats / TaintedPathStore) so worker-thread mutations
+            // never trip SwiftUI's main-thread invariant. The trade-off: the
+            // UI doesn't auto-refresh on each increment. Pump a manual publish
+            // here on the 2-second tick so monitor rows re-read the current
+            // counter / taint values during normal render. Two-second
+            // granularity is fine for stats; nothing here needs realtime.
+            session.objectWillChange.send()
         }
 
         let totalRules = allowRuleCount + denyRuleCount

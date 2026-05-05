@@ -493,17 +493,16 @@ struct ApprovalPanelView: View {
 
             // One-time actions
             HStack {
-                Button(action: {
-                    coordinator.handleAction(.deny(
-                        context: noteState.noteForDenyContext
-                    ), on: sessionPanel)
-                    coordinator.sessionManager?.noteInteraction()
-                }) {
+                Button(action: { performDeny() }) {
                     Label("Deny", systemImage: "xmark.circle")
                 }
                 .buttonStyle(.bordered)
                 .tint(.orange)
-                .keyboardShortcut(.escape, modifiers: [])
+                // Modifier required so a stray Escape press (TextEditor
+                // dismiss, accidental key) doesn't reject an in-flight
+                // approval. Cmd+Escape mirrors the Cmd+Return convention
+                // used for Allow Once.
+                .keyboardShortcut(.escape, modifiers: [.command])
 
                 Button(action: {
                     if let approval = sessionPanel.currentApproval {
@@ -519,23 +518,39 @@ struct ApprovalPanelView: View {
 
                 Spacer()
 
-                Button(action: {
-                    coordinator.handleAction(.allow(
-                        context: noteState.noteForAllowContext,
-                        updatedCommand: cmdIfModified,
-                        updatedInput: updatedInputIfModified
-                    ), on: sessionPanel)
-                    coordinator.sessionManager?.noteInteraction()
-                }) {
+                Button(action: { performAllowOnce() }) {
                     Label("Allow Once", systemImage: "checkmark.circle")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
-                .keyboardShortcut(.return, modifiers: [])
+                // Cmd+Return only — plain Return alone too easily fires Allow
+                // on macOS (TextEditor doesn't always capture it), and an
+                // accidental approval is a real cost. Both action shortcuts
+                // (Cmd+Return / Cmd+Escape) require the Cmd modifier for
+                // symmetry and to prevent stray-key triggering.
+                .keyboardShortcut(.return, modifiers: [.command])
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    /// Trigger the Allow Once action. Extracted so the visible button and
+    /// the hidden Cmd+Return shortcut button can share one implementation.
+    private func performAllowOnce() {
+        coordinator.handleAction(.allow(
+            context: noteState.noteForAllowContext,
+            updatedCommand: cmdIfModified,
+            updatedInput: updatedInputIfModified
+        ), on: sessionPanel)
+        coordinator.sessionManager?.noteInteraction()
+    }
+
+    private func performDeny() {
+        coordinator.handleAction(.deny(
+            context: noteState.noteForDenyContext
+        ), on: sessionPanel)
+        coordinator.sessionManager?.noteInteraction()
     }
 
     // MARK: - Pattern Tester

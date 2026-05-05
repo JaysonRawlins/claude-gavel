@@ -45,6 +45,24 @@ struct TaintTracker {
     }
 
     /// Record new tainted paths from a command that copies sensitive data.
+    /// Writes go through TaintedPathStore (thread-safe) so the worker thread
+    /// that calls this never touches Combine. A local Set is used as a scratch
+    /// buffer so the private extractors below keep their existing
+    /// `inout Set<String>` signatures and we batch a single `formUnion` at
+    /// the end (one lock acquisition instead of one per insert).
+    static func recordTaints(command: String, into store: TaintedPathStore) {
+        guard referencesSensitiveSource(command) else { return }
+        var buffer = Set<String>()
+        extractRedirectTarget(from: command, into: &buffer)
+        extractCompileOutput(from: command, into: &buffer)
+        extractCopyDestination(from: command, into: &buffer)
+        if !buffer.isEmpty {
+            store.formUnion(buffer)
+        }
+    }
+
+    /// Set-style overload kept for unit tests that hand-craft a Set rather
+    /// than going through the store.
     static func recordTaints(command: String, into taintedPaths: inout Set<String>) {
         guard referencesSensitiveSource(command) else { return }
         extractRedirectTarget(from: command, into: &taintedPaths)
