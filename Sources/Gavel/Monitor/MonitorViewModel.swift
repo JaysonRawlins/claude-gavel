@@ -122,6 +122,10 @@ final class MonitorViewModel: ObservableObject {
         approvalCoordinator.ruleStore?.updateRule(id: id, pattern: pattern, isRegex: isRegex, verdict: verdict, explanation: explanation)
     }
 
+    func setRuleDisabled(id: UUID, isDisabled: Bool) {
+        approvalCoordinator.ruleStore?.setDisabled(id: id, isDisabled: isDisabled)
+    }
+
     func exportRules(to url: URL) throws {
         guard let rules = approvalCoordinator.ruleStore?.rules else { return }
         let encoder = JSONEncoder()

@@ -3,6 +3,21 @@ import XCTest
 
 final class WireFormatTests: XCTestCase {
 
+    /// Build an ApprovalEngine that does NOT load the user's real rules.json.
+    /// Without this, any prompt rule the user has installed (e.g. "always
+    /// prompt on doppler secrets") matches the test payload and the dialog
+    /// blocks the test forever waiting for a click that never comes. The
+    /// returned engine and its tempdir-scoped store should be discarded by
+    /// the caller (FileManager removeItem in a defer).
+    private func makeIsolatedEngine() -> (ApprovalEngine, String) {
+        let path = NSTemporaryDirectory() + "wireformat-rules-\(UUID().uuidString).json"
+        let engine = ApprovalEngine(
+            patternMatcher: PatternMatcher(),
+            ruleStore: RuleStore(configPath: path)
+        )
+        return (engine, path)
+    }
+
     // MARK: - Decision hookResponse (daemon → shim protocol)
 
     func testAllowDecisionJson() throws {
@@ -130,7 +145,8 @@ final class WireFormatTests: XCTestCase {
     // MARK: - HookRouter integration
 
     func testRouterAllowsNormalCommand() {
-        let engine = ApprovalEngine()
+        let (engine, ruleStorePath) = makeIsolatedEngine()
+        defer { try? FileManager.default.removeItem(atPath: ruleStorePath) }
         let manager = SessionManager()
         let coordinator = ApprovalCoordinator()
         // Pre-create session with auto-approve so router doesn't block on dialog
@@ -162,7 +178,8 @@ final class WireFormatTests: XCTestCase {
     }
 
     func testRouterBlocksDangerousCommand() {
-        let engine = ApprovalEngine()
+        let (engine, ruleStorePath) = makeIsolatedEngine()
+        defer { try? FileManager.default.removeItem(atPath: ruleStorePath) }
         let manager = SessionManager()
         let coordinator = ApprovalCoordinator()
         // Dangerous commands are blocked before reaching interactive approval
@@ -193,7 +210,8 @@ final class WireFormatTests: XCTestCase {
     }
 
     func testRouterBlocksOnSessionDeny() {
-        let engine = ApprovalEngine()
+        let (engine, ruleStorePath) = makeIsolatedEngine()
+        defer { try? FileManager.default.removeItem(atPath: ruleStorePath) }
         let manager = SessionManager()
         let coordinator = ApprovalCoordinator()
         let session = manager.session(for: 66666)
@@ -231,7 +249,8 @@ final class WireFormatTests: XCTestCase {
     }
 
     func testRouterSessionDenyOverridesAutoApprove() {
-        let engine = ApprovalEngine()
+        let (engine, ruleStorePath) = makeIsolatedEngine()
+        defer { try? FileManager.default.removeItem(atPath: ruleStorePath) }
         let manager = SessionManager()
         let coordinator = ApprovalCoordinator()
         let session = manager.session(for: 77777)
@@ -268,7 +287,8 @@ final class WireFormatTests: XCTestCase {
     }
 
     func testRouterEnrichesSessionFromPayload() {
-        let engine = ApprovalEngine()
+        let (engine, ruleStorePath) = makeIsolatedEngine()
+        defer { try? FileManager.default.removeItem(atPath: ruleStorePath) }
         let manager = SessionManager()
         let coordinator = ApprovalCoordinator()
         let session = manager.session(for: 55555)
@@ -292,11 +312,10 @@ final class WireFormatTests: XCTestCase {
         router.handle(data: json.data(using: .utf8)!) { _ in }
 
         // sessionId/cwd are @Published; SessionManager dispatches the writes
-        // to the main queue (worker → main per SwiftUI invariant). Drain the
-        // main queue before asserting so the dispatched writes have landed.
-        let exp = expectation(description: "main queue drained")
-        DispatchQueue.main.async { exp.fulfill() }
-        wait(for: [exp], timeout: 1.0)
+        // to the main queue (worker → main per SwiftUI invariant). Pump the
+        // current run loop briefly so the dispatched writes land before we
+        // assert.
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
 
         XCTAssertEqual(session.sessionId, "enrichment-test")
         XCTAssertEqual(session.cwd, "/home/user/project")
