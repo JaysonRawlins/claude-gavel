@@ -292,7 +292,14 @@ final class ApprovalCoordinator: ObservableObject {
         let contentView = ApprovalPanelView(coordinator: self, sessionPanel: sp)
         let hostingView = NSHostingView(rootView: contentView)
 
-        let p = NSPanel(
+        // Use a panel subclass that ignores plain Escape. Default NSPanel
+        // behavior: Escape (and Cmd+.) call `cancelOperation` which closes
+        // the panel. That orphans the pending approval (worker still
+        // blocked on its semaphore) and leaves the user with no UI to
+        // resolve it. The Deny button's `Cmd+Escape` shortcut still fires
+        // because it's handled at the SwiftUI level before reaching the
+        // window's cancelOperation.
+        let p = NoEscapeNSPanel(
             contentRect: NSRect(x: 0, y: 0, width: GavelConstants.panelWidth, height: GavelConstants.panelHeight),
             styleMask: [.titled, .closable, .resizable, .utilityWindow],
             backing: .buffered,
@@ -342,5 +349,20 @@ private extension Array {
             else { rest.append(element) }
         }
         return (matching, rest)
+    }
+}
+
+// MARK: - Escape-resistant panel
+
+/// NSPanel that swallows the default `cancelOperation:` (plain Escape).
+/// Without this, pressing Escape in the approval dialog closes the panel
+/// without resolving the pending approval — the worker thread stays blocked
+/// on its semaphore and the user has no UI to dismiss it. The Deny button's
+/// Cmd+Escape SwiftUI shortcut still fires because it's intercepted before
+/// the keystroke reaches NSWindow's cancelOperation handling.
+private final class NoEscapeNSPanel: NSPanel {
+    override func cancelOperation(_ sender: Any?) {
+        // intentional no-op — leave the dialog open so the user must
+        // explicitly choose Cmd+Return (allow) or Cmd+Escape (deny).
     }
 }
