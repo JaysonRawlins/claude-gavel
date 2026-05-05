@@ -493,17 +493,16 @@ struct ApprovalPanelView: View {
 
             // One-time actions
             HStack {
-                Button(action: {
-                    coordinator.handleAction(.deny(
-                        context: noteState.noteForDenyContext
-                    ), on: sessionPanel)
-                    coordinator.sessionManager?.noteInteraction()
-                }) {
+                Button(action: { performDeny() }) {
                     Label("Deny", systemImage: "xmark.circle")
                 }
                 .buttonStyle(.bordered)
                 .tint(.orange)
-                .keyboardShortcut(.escape, modifiers: [])
+                // Modifier required so a stray Escape press (TextEditor
+                // dismiss, accidental key) doesn't reject an in-flight
+                // approval. Cmd+Escape mirrors the Cmd+Return convention
+                // used for Allow Once.
+                .keyboardShortcut(.escape, modifiers: [.command])
 
                 Button(action: {
                     if let approval = sessionPanel.currentApproval {
@@ -550,6 +549,13 @@ struct ApprovalPanelView: View {
             context: noteState.noteForAllowContext,
             updatedCommand: cmdIfModified,
             updatedInput: updatedInputIfModified
+        ), on: sessionPanel)
+        coordinator.sessionManager?.noteInteraction()
+    }
+
+    private func performDeny() {
+        coordinator.handleAction(.deny(
+            context: noteState.noteForDenyContext
         ), on: sessionPanel)
         coordinator.sessionManager?.noteInteraction()
     }
