@@ -523,23 +523,16 @@ struct ApprovalPanelView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
-                .keyboardShortcut(.return, modifiers: [])
+                // Cmd+Return only — plain Return alone too easily fires Allow
+                // on macOS (TextEditor doesn't always capture it), and an
+                // accidental approval is a real cost. Both action shortcuts
+                // (Cmd+Return / Cmd+Escape) require the Cmd modifier for
+                // symmetry and to prevent stray-key triggering.
+                .keyboardShortcut(.return, modifiers: [.command])
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        // Hidden mirror of the Allow Once shortcut that fires on Cmd+Return.
-        // Plain Return is consumed by the note TextEditor when it has focus
-        // (inserts a newline), so Cmd+Return gives a way to approve without
-        // first defocusing the field. SwiftUI honors only one
-        // `.keyboardShortcut` per Button, so this is a separate hidden Button.
-        .background(
-            Button("") { performAllowOnce() }
-                .keyboardShortcut(.return, modifiers: [.command])
-                .opacity(0)
-                .frame(width: 0, height: 0)
-                .accessibilityHidden(true)
-        )
     }
 
     /// Trigger the Allow Once action. Extracted so the visible button and
