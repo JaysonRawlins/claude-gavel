@@ -26,13 +26,27 @@ final class Session: ObservableObject, Identifiable {
     // Session rules — wildcard patterns for approval or denial
     @Published var sessionRules: [SessionRule] = []
 
-    // Taint tracking — temp files that contain sensitive data
-    @Published var taintedPaths: Set<String> = []
+    // Worker-mutable state. NOT @Published on purpose — both are touched on
+    // every PreToolUse hook from background threads, and `@Published`
+    // mutations from non-main contend with SwiftUI's main-thread publish
+    // chain (under load this manifested as workers deadlocking after
+    // accept(), see freeze investigation 2026-05-04). UI sees these update
+    // via the 2-second stats timer in MonitorViewModel which calls
+    // `objectWillChange.send()` per session, triggering a re-render that
+    // reads the current values via the computed accessors below.
 
-    // Stats
-    @Published var toolCallCount: Int = 0
-    @Published var allowCount: Int = 0
-    @Published var blockCount: Int = 0
+    let stats = SessionStats()
+
+    /// Temp files containing sensitive data flow. TaintedPathStore is
+    /// thread-safe; existing UI code can still call `.count`, `.sorted()`,
+    /// `.isEmpty` on it directly via the conveniences on the store type.
+    let taintedPaths = TaintedPathStore()
+
+    // Computed proxies so `session.toolCallCount` style call-sites in views
+    // and the stats aggregator still read naturally.
+    var toolCallCount: Int { stats.toolCallCount }
+    var allowCount: Int { stats.allowCount }
+    var blockCount: Int { stats.blockCount }
 
     var id: Int { pid }
 

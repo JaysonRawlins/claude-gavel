@@ -268,6 +268,7 @@ private struct SessionRow: View {
                         let allSub = viewModel.sessionManager.sessions.values.allSatisfy { $0.isSubAgentInheritEnabled }
                         viewModel.sessionManager.defaultSubAgentInherit = allSub
                         viewModel.sessionManager.saveDefaults()
+                        viewModel.sessionManager.saveActiveSessions()
                         viewModel.noteInteraction()
                     }
                 ))
@@ -311,6 +312,7 @@ private struct SessionRow: View {
                 let anyPaused = viewModel.sessionManager.sessions.values.contains { $0.isPaused }
                 viewModel.sessionManager.defaultPaused = anyPaused
                 viewModel.sessionManager.saveDefaults()
+                viewModel.sessionManager.saveActiveSessions()
                 viewModel.noteInteraction()
             }
             .buttonStyle(.bordered)
@@ -692,6 +694,22 @@ struct RulesView: View {
         VStack(spacing: 0) {
             // Display row
             HStack(spacing: 6) {
+                // Enable/disable toggle. Click flips the rule's `isDisabled`
+                // and persists. Disabled rules render greyed-out to make the
+                // off state visible at a glance — important when the user has
+                // disabled a rule for testing and wants to remember to re-enable.
+                Button(action: {
+                    viewModel.setRuleDisabled(id: rule.id, isDisabled: !rule.isDisabled)
+                    viewModel.noteInteraction()
+                }) {
+                    Image(systemName: rule.isDisabled ? "circle" : "checkmark.circle.fill")
+                        .foregroundColor(rule.isDisabled ? .secondary : .green)
+                }
+                .buttonStyle(.plain)
+                .help(rule.isDisabled
+                      ? "Disabled — click to enable"
+                      : "Enabled — click to temporarily disable (persists across restarts)")
+
                 Text(verdictLabel(rule.verdict))
                     .font(.caption.bold())
                     .foregroundColor(.white)
@@ -715,6 +733,16 @@ struct RulesView: View {
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
                         .background(Color.blue.opacity(0.6))
+                        .cornerRadius(3)
+                }
+
+                if rule.isDisabled {
+                    Text("OFF")
+                        .font(.caption2.bold())
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.gray)
                         .cornerRadius(3)
                 }
 
@@ -761,6 +789,7 @@ struct RulesView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
+            .opacity(rule.isDisabled ? 0.5 : 1.0)
 
             // Inline edit form (shown when editing this rule)
             if editingRuleId == rule.id {

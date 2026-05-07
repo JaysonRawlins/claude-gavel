@@ -30,7 +30,7 @@ final class RuleStore: ObservableObject {
     // MARK: - Evaluation (split by verdict for priority ordering)
 
     func evaluateDeny(payload: PreToolUsePayload) -> Decision? {
-        for i in rules.indices where rules[i].verdict == .block {
+        for i in rules.indices where rules[i].verdict == .block && !rules[i].isDisabled {
             if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
                 var reason = "Always deny: \(rules[i].name)"
                 if let explanation = rules[i].explanation, !explanation.isEmpty {
@@ -43,7 +43,7 @@ final class RuleStore: ObservableObject {
     }
 
     func evaluateAllow(payload: PreToolUsePayload) -> Decision? {
-        for i in rules.indices where rules[i].verdict == .allow {
+        for i in rules.indices where rules[i].verdict == .allow && !rules[i].isDisabled {
             if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
                 return Decision(verdict: .allow, reason: "Always allow: \(rules[i].name)")
             }
@@ -53,7 +53,7 @@ final class RuleStore: ObservableObject {
 
     /// User-created prompt rules — high priority, checked before allow rules.
     func evaluateUserPrompt(payload: PreToolUsePayload) -> Decision? {
-        for i in rules.indices where rules[i].verdict == .prompt && !rules[i].builtIn {
+        for i in rules.indices where rules[i].verdict == .prompt && !rules[i].builtIn && !rules[i].isDisabled {
             if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
                 return Decision(verdict: .block, reason: "Always prompt: \(rules[i].name)", askUser: true)
             }
@@ -63,12 +63,20 @@ final class RuleStore: ObservableObject {
 
     /// Built-in prompt rules — lower priority, checked after allow rules so users can override.
     func evaluateBuiltInPrompt(payload: PreToolUsePayload) -> Decision? {
-        for i in rules.indices where rules[i].verdict == .prompt && rules[i].builtIn {
+        for i in rules.indices where rules[i].verdict == .prompt && rules[i].builtIn && !rules[i].isDisabled {
             if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
                 return Decision(verdict: .block, reason: "Default rule: \(rules[i].name)", askUser: true)
             }
         }
         return nil
+    }
+
+    /// Toggle a rule's disabled state. Persists immediately so the change
+    /// survives a daemon restart (and stays visible in the UI as "off").
+    func setDisabled(id: UUID, isDisabled: Bool) {
+        guard let idx = rules.firstIndex(where: { $0.id == id }) else { return }
+        rules[idx].isDisabled = isDisabled
+        saveRules()
     }
 
     // MARK: - Rule Management
@@ -331,6 +339,11 @@ struct PersistentRule: Codable, Identifiable {
     let explanation: String?
     /// True for seeded default rules (MCP exfil patterns). User rules are always false.
     let builtIn: Bool
+    /// Skip this rule during evaluation when true. Persisted so the disable
+    /// survives daemon restarts (so a forgotten "temporarily off" rule still
+    /// surfaces in the UI rather than silently re-engaging on reboot). Toggle
+    /// from the Rules tab; defaults to false (rule active).
+    var isDisabled: Bool
 
     /// Pre-compiled regex (rebuilt on first access, not persisted).
     private var _compiledRegex: NSRegularExpression?
@@ -344,10 +357,11 @@ struct PersistentRule: Codable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, toolName, pattern, isRegex, verdict, createdAt, explanation, builtIn
+        case id, name, toolName, pattern, isRegex, verdict, createdAt, explanation, builtIn, isDisabled
     }
 
-    /// Backward-compatible decoding — isRegex, explanation, builtIn default for old rules.json.
+    /// Backward-compatible decoding — isRegex, explanation, builtIn, isDisabled
+    /// all default for old rules.json files lacking the field.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -359,6 +373,7 @@ struct PersistentRule: Codable, Identifiable {
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         explanation = try c.decodeIfPresent(String.self, forKey: .explanation)
         builtIn = try c.decodeIfPresent(Bool.self, forKey: .builtIn) ?? false
+        isDisabled = try c.decodeIfPresent(Bool.self, forKey: .isDisabled) ?? false
     }
 
     init(
@@ -367,7 +382,8 @@ struct PersistentRule: Codable, Identifiable {
         isRegex: Bool = false,
         verdict: DecisionVerdict,
         explanation: String? = nil,
-        builtIn: Bool = false
+        builtIn: Bool = false,
+        isDisabled: Bool = false
     ) {
         self.id = UUID()
         self.toolName = toolName
@@ -378,6 +394,7 @@ struct PersistentRule: Codable, Identifiable {
         self.name = "\(toolName): \(isRegex ? "/" : "")\(pattern)\(isRegex ? "/" : "")"
         self.explanation = explanation
         self.builtIn = builtIn
+        self.isDisabled = isDisabled
         self._compiledRegex = Self.compilePattern(pattern, isRegex: isRegex)
     }
 
@@ -392,6 +409,7 @@ struct PersistentRule: Codable, Identifiable {
         self.name = "\(old.toolName): \(isRegex ? "/" : "")\(pattern)\(isRegex ? "/" : "")"
         self.explanation = explanation
         self.builtIn = old.builtIn
+        self.isDisabled = old.isDisabled
         self._compiledRegex = Self.compilePattern(pattern, isRegex: isRegex)
     }
 

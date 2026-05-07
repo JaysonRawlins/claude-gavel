@@ -4,10 +4,23 @@ import XCTest
 final class ApprovalEngineTests: XCTestCase {
     var engine: ApprovalEngine!
     var session: Session!
+    var ruleStorePath: String!
 
     override func setUp() {
-        engine = ApprovalEngine()
+        // Isolated rule store so the user's real rules.json never leaks into
+        // the engine and breaks tests with their own prompt patterns.
+        ruleStorePath = NSTemporaryDirectory() + "engine-tests-\(UUID().uuidString).json"
+        engine = ApprovalEngine(
+            patternMatcher: PatternMatcher(),
+            ruleStore: RuleStore(configPath: ruleStorePath)
+        )
         session = Session(pid: 12345)
+    }
+
+    override func tearDown() {
+        if let path = ruleStorePath {
+            try? FileManager.default.removeItem(atPath: path)
+        }
     }
 
     private func payload(tool: String = "Bash", command: String? = nil, filePath: String? = nil) -> PreToolUsePayload {

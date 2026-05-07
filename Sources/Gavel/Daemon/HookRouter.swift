@@ -56,7 +56,9 @@ final class HookRouter {
         case .sessionStart(let payload):
             if let sid = payload.sessionId { sessionManager.recordSessionId(sid, on: session) }
             if let cwd = payload.cwd { sessionManager.recordCwd(cwd, on: session) }
-            session.model = payload.model
+            // Worker thread → main for the @Published write.
+            let model = payload.model
+            DispatchQueue.main.async { session.model = model }
             let source = payload.source ?? "startup"
             emitFeed(.system("Session \(source)", pid: session.pid, at: ts))
 
@@ -65,8 +67,9 @@ final class HookRouter {
 
         case .userPromptSubmit(let payload):
             if let sid = payload.sessionId { sessionManager.recordSessionId(sid, on: session) }
-            session.lastPrompt = payload.prompt
-            let preview = (payload.prompt ?? "").prefix(120)
+            let prompt = payload.prompt
+            DispatchQueue.main.async { session.lastPrompt = prompt }
+            let preview = (prompt ?? "").prefix(120)
             emitFeed(.prompt(text: String(preview), pid: session.pid, at: ts))
 
         case .notification(let payload):
@@ -91,7 +94,7 @@ final class HookRouter {
         timestamp: Date,
         respond: ((Data) -> Void)?
     ) {
-        session.toolCallCount += 1
+        session.stats.incrementToolCall()
 
         // Flash the row in the monitor so the user can see which session is
         // working without reading PIDs. Auto-clears after 5s; SwiftUI animates
@@ -123,14 +126,14 @@ final class HookRouter {
             session.taintedPaths.insert(path)
         }
         if payload.toolName == "Bash", let command = payload.command {
-            if let taintReason = TaintTracker.checkExfiltration(command: command, taintedPaths: session.taintedPaths) {
+            if let taintReason = TaintTracker.checkExfiltration(command: command, taintedPaths: session.taintedPaths.snapshot) {
                 let decision = Decision(verdict: .block, reason: taintReason)
-                session.blockCount += 1
+                session.stats.incrementBlock()
                 emitFeed(.decision(badge: .block, reason: taintReason, pid: session.pid, at: timestamp))
                 sendResponse(decision, respond: respond)
                 return
             }
-            TaintTracker.recordTaints(command: command, into: &session.taintedPaths)
+            TaintTracker.recordTaints(command: command, into: session.taintedPaths)
         }
 
         // Stage 0.5: Session deny rules — checked early so they block even under auto-approve
@@ -139,7 +142,7 @@ final class HookRouter {
             command: payload.command,
             filePath: payload.filePath
         ) {
-            session.blockCount += 1
+            session.stats.incrementBlock()
             let reason = "Session deny: \(rule.toolName): \(rule.pattern)"
             emitFeed(.decision(badge: .block, reason: reason, pid: session.pid, at: timestamp))
             sendResponse(Decision(verdict: .block, reason: reason, additionalContext: rule.explanation), respond: respond)
@@ -157,7 +160,7 @@ final class HookRouter {
                     command: payload.command,
                     filePath: payload.filePath
                 ) {
-                    session.allowCount += 1
+                    session.stats.incrementAllow()
                     emitFeed(.decision(badge: .allow, reason: "Session rule: \(rule.toolName): \(rule.pattern)", pid: session.pid, at: timestamp))
                     sendResponse(Decision(verdict: .allow, reason: "Session rule: \(rule.pattern)"), respond: respond)
                     return
@@ -173,17 +176,17 @@ final class HookRouter {
                 )
                 switch decision.verdict {
                 case .allow, .prompt:
-                    session.allowCount += 1
+                    session.stats.incrementAllow()
                     emitFeed(.decision(badge: .allow, reason: decision.reason, pid: session.pid, at: timestamp))
                 case .block:
-                    session.blockCount += 1
+                    session.stats.incrementBlock()
                     emitFeed(.decision(badge: .block, reason: decision.reason, pid: session.pid, at: timestamp))
                 }
                 sendResponse(decision, respond: respond)
                 return
             } else {
                 // Hard block: dangerous patterns, persistent deny, pause
-                session.blockCount += 1
+                session.stats.incrementBlock()
                 let badge: DecisionBadge = session.isPaused ? .paused : .block
                 emitFeed(.decision(badge: badge, reason: engineDecision.reason, pid: session.pid, at: timestamp))
                 sendResponse(engineDecision, respond: respond)
@@ -192,7 +195,7 @@ final class HookRouter {
         }
         // Persistent allow rules (have a reason) skip the dialog
         if engineDecision.reason != nil {
-            session.allowCount += 1
+            session.stats.incrementAllow()
             emitFeed(.decision(badge: .allow, reason: engineDecision.reason, pid: session.pid, at: timestamp))
             sendResponse(engineDecision, respond: respond)
             return
@@ -200,7 +203,7 @@ final class HookRouter {
 
         // Stage 2: Check auto-approve and session wildcard rules (skip dialog)
         if session.isAutoApproveActive {
-            session.allowCount += 1
+            session.stats.incrementAllow()
             emitFeed(.decision(badge: .autoApprove, reason: engineDecision.reason, pid: session.pid, at: timestamp))
             sendResponse(engineDecision, respond: respond)
             return
@@ -211,7 +214,7 @@ final class HookRouter {
             command: payload.command,
             filePath: payload.filePath
         ) {
-            session.allowCount += 1
+            session.stats.incrementAllow()
             emitFeed(.decision(badge: .allow, reason: "\(rule.toolName): \(rule.pattern)", pid: session.pid, at: timestamp))
             sendResponse(engineDecision, respond: respond)
             return
@@ -220,7 +223,7 @@ final class HookRouter {
         // Stage 2.5: Sub-agent inheritance — auto-approve sub-agent calls
         // (deny rules already checked in Stage 1, so blocks are respected)
         if payload.isSubAgent && session.isSubAgentInheritEnabled {
-            session.allowCount += 1
+            session.stats.incrementAllow()
             emitFeed(.decision(badge: .autoApprove, reason: "Sub-agent: \(payload.agentType ?? "unknown")", pid: session.pid, at: timestamp))
             sendResponse(Decision(verdict: .allow, reason: "Sub-agent inherited"), respond: respond)
             return
@@ -235,10 +238,10 @@ final class HookRouter {
 
         switch decision.verdict {
         case .allow, .prompt:
-            session.allowCount += 1
+            session.stats.incrementAllow()
             emitFeed(.decision(badge: .allow, reason: decision.reason, pid: session.pid, at: timestamp))
         case .block:
-            session.blockCount += 1
+            session.stats.incrementBlock()
             emitFeed(.decision(badge: .block, reason: decision.reason, pid: session.pid, at: timestamp))
         }
 
@@ -271,6 +274,12 @@ final class HookRouter {
     // MARK: - Helpers
 
     private func sendResponse(_ decision: Decision, respond: ((Data) -> Void)?) {
+        // Diagnostic breadcrumb: every hook response that reaches the worker
+        // should produce a `[hook] respond ...` line. If a `[socket] enter`
+        // ever lacks a matching `[hook] respond` and `[socket] exit wrote=N`
+        // (with N > 0), the worker died/wedged after read but before write.
+        let reasonTag = decision.reason ?? "-"
+        gavelLog("[hook] respond verdict=\(decision.verdict.rawValue) reason=\(reasonTag.prefix(80))")
         if let respond = respond,
            let data = decision.hookResponse.data(using: .utf8) {
             respond(data)

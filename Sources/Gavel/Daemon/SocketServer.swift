@@ -150,7 +150,12 @@ final class SocketServer {
     }
 
     private func handleConnection(fd: Int32) {
-        defer { close(fd) }
+        gavelLog("[socket] enter fd=\(fd)")
+        var bytesWritten = 0
+        defer {
+            gavelLog("[socket] exit fd=\(fd) wroteBytes=\(bytesWritten)")
+            close(fd)
+        }
 
         // Prevent SIGPIPE on this socket if client disconnects during write
         var noSigPipe: Int32 = 1
@@ -181,20 +186,23 @@ final class SocketServer {
         // Send an explicit fail-closed JSON instead so the hook surfaces a
         // diagnosable reason and the cascade has a chance to be debugged.
         guard !data.isEmpty else {
+            gavelLog("[socket] empty payload fd=\(fd) — sending fail-closed")
             let errMsg = #"{"verdict":"block","reason":"Gavel: empty hook payload (read timeout — daemon worker may be starved under burst load)"}"#
             let errData = Data(errMsg.utf8)
-            _ = errData.withUnsafeBytes { ptr in
+            let written = errData.withUnsafeBytes { ptr in
                 write(fd, ptr.baseAddress!, errData.count)
             }
+            if written > 0 { bytesWritten = written }
             return
         }
 
         // For PreToolUse hooks, we need to send a response back.
         // The handler determines whether to respond based on hook type.
         onEvent?(data) { responseData in
-            _ = responseData.withUnsafeBytes { ptr in
+            let written = responseData.withUnsafeBytes { ptr in
                 write(fd, ptr.baseAddress!, responseData.count)
             }
+            if written > 0 { bytesWritten = written }
         }
     }
 }
