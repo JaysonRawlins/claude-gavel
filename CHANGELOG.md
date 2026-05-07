@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.4.0...v1.5.0) (2026-05-07)
+
+
+### Features
+
+* **daemon:** per-session state persistence + diagnostic logging ([#56](https://github.com/JaysonRawlins/claude-gavel/issues/56)) ([4c95317](https://github.com/JaysonRawlins/claude-gavel/commit/4c9531765a6a1629a7505c6f2aae57b357438dbe))
+
 ## [1.4.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.3.0...v1.4.0) (2026-05-02)
 
 
