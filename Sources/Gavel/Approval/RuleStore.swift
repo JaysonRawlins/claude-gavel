@@ -55,7 +55,7 @@ final class RuleStore: ObservableObject {
     func evaluateUserPrompt(payload: PreToolUsePayload) -> Decision? {
         for i in rules.indices where rules[i].verdict == .prompt && !rules[i].builtIn && !rules[i].isDisabled {
             if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
-                return Decision(verdict: .block, reason: "Always prompt: \(rules[i].name)", askUser: true)
+                return Decision(verdict: .block, reason: "Always prompt: \(rules[i].name)", askUser: true, triggeringRuleId: rules[i].id)
             }
         }
         return nil
@@ -65,10 +65,14 @@ final class RuleStore: ObservableObject {
     func evaluateBuiltInPrompt(payload: PreToolUsePayload) -> Decision? {
         for i in rules.indices where rules[i].verdict == .prompt && rules[i].builtIn && !rules[i].isDisabled {
             if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
-                return Decision(verdict: .block, reason: "Default rule: \(rules[i].name)", askUser: true)
+                return Decision(verdict: .block, reason: "Default rule: \(rules[i].name)", askUser: true, triggeringRuleId: rules[i].id)
             }
         }
         return nil
+    }
+
+    func rule(for id: UUID) -> PersistentRule? {
+        rules.first { $0.id == id }
     }
 
     /// Toggle a rule's disabled state. Persists immediately so the change

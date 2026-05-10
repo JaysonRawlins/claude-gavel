@@ -153,6 +153,15 @@ final class HookRouter {
         let engineDecision = approvalEngine.evaluate(payload: payload, session: session)
         if engineDecision.verdict == .block {
             if engineDecision.askUser {
+                // Rule suppressed for session — covers the rule's full regex scope.
+                if let ruleId = engineDecision.triggeringRuleId,
+                   session.suppressedRuleIds.contains(ruleId) {
+                    session.stats.incrementAllow()
+                    emitFeed(.decision(badge: .allow, reason: "Rule suppressed for session", pid: session.pid, at: timestamp))
+                    sendResponse(Decision(verdict: .allow, reason: "Rule suppressed for session"), respond: respond)
+                    return
+                }
+
                 // Before forcing dialog, check if a session rule already covers this.
                 // Session Allow from a previous dialog should skip re-prompting.
                 if let rule = session.matchesSessionRule(
@@ -172,7 +181,8 @@ final class HookRouter {
                 let decision = approvalCoordinator.requestApproval(
                     payload: payload, session: session, timestamp: timestamp,
                     forceDialog: true,
-                    triggerReason: engineDecision.reason
+                    triggerReason: engineDecision.reason,
+                    triggeringRuleId: engineDecision.triggeringRuleId
                 )
                 switch decision.verdict {
                 case .allow, .prompt:

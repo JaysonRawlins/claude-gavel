@@ -12,6 +12,8 @@ final class ApprovalCoordinator: ObservableObject {
         case allow(context: String?, updatedCommand: String?, updatedInput: [String: AnyCodable]?)
         case deny(context: String?)
         case allowPatternForSession(pattern: String, context: String?, updatedCommand: String?, updatedInput: [String: AnyCodable]?)
+        /// Suppress firing prompt rule for session — covers the rule's full regex scope.
+        case suppressRuleForSession(ruleId: UUID, context: String?, updatedCommand: String?, updatedInput: [String: AnyCodable]?)
         case denyPatternForSession(pattern: String, explanation: String?)
         case alwaysDenyPattern(pattern: String, isRegex: Bool, explanation: String?)
         case alwaysAllowPattern(pattern: String, isRegex: Bool)
@@ -29,11 +31,12 @@ final class ApprovalCoordinator: ObservableObject {
         let session: Session
         let timestamp: Date
         let forceDialog: Bool
-        /// The reason from the engine decision when the dialog was forced
-        /// (e.g. "Crontab modification"). Nil for default-tier dialogs where no
-        /// rule fired. Surfaced in the panel so the user can see *why* they're
-        /// being asked, instead of rubber-stamping a context-free prompt.
+        /// Reason from the engine when dialog was forced. Nil for default-tier prompts.
         let triggerReason: String?
+        /// ID of the rule that fired, if any. Drives the "Allow rule for session" affordance.
+        let triggeringRuleId: UUID?
+        let triggeringRulePattern: String?
+        let triggeringRuleIsRegex: Bool
         let respond: (Decision) -> Void
     }
 
@@ -69,7 +72,8 @@ final class ApprovalCoordinator: ObservableObject {
         session: Session,
         timestamp: Date,
         forceDialog: Bool = false,
-        triggerReason: String? = nil
+        triggerReason: String? = nil,
+        triggeringRuleId: UUID? = nil
     ) -> Decision {
         if !forceDialog && session.isAutoApproveEnabled {
             return Decision(verdict: .allow, reason: "Auto-approved")
@@ -78,12 +82,16 @@ final class ApprovalCoordinator: ObservableObject {
         let semaphore = DispatchSemaphore(value: 0)
         var result = Decision(verdict: .block, reason: "Approval timed out — fail closed")
 
+        let firingRule = triggeringRuleId.flatMap { ruleStore?.rule(for: $0) }
         let pending = PendingApproval(
             payload: payload,
             session: session,
             timestamp: timestamp,
             forceDialog: forceDialog,
-            triggerReason: triggerReason
+            triggerReason: triggerReason,
+            triggeringRuleId: triggeringRuleId,
+            triggeringRulePattern: firingRule?.pattern,
+            triggeringRuleIsRegex: firingRule?.isRegex ?? false
         ) { decision in
             result = decision
             semaphore.signal()
@@ -149,6 +157,13 @@ final class ApprovalCoordinator: ObservableObject {
             let rule = SessionRule(toolName: current.payload.toolName, pattern: pattern)
             current.session.sessionRules.append(rule)
             current.respond(Decision(verdict: .allow, reason: "User approved (\(current.payload.toolName): \(pattern))", additionalContext: ctx, updatedInput: updated))
+
+        case .suppressRuleForSession(let ruleId, let context, let updatedCommand, let fieldUpdates):
+            ctx = context
+            updated = fieldUpdates ?? buildUpdatedInput(updatedCommand)
+            current.session.suppressedRuleIds.insert(ruleId)
+            let patternTag = current.triggeringRulePattern.map { " (\($0))" } ?? ""
+            current.respond(Decision(verdict: .allow, reason: "User approved — rule suppressed for session\(patternTag)", additionalContext: ctx, updatedInput: updated))
 
         case .denyPatternForSession(let pattern, let explanation):
             ctx = nil; updated = nil
@@ -272,6 +287,7 @@ final class ApprovalCoordinator: ObservableObject {
         case .allow: return "allow"
         case .deny: return "deny"
         case .allowPatternForSession: return "allowPatternForSession"
+        case .suppressRuleForSession: return "suppressRuleForSession"
         case .denyPatternForSession: return "denyPatternForSession"
         case .alwaysDenyPattern: return "alwaysDenyPattern"
         case .alwaysAllowPattern: return "alwaysAllowPattern"

@@ -26,6 +26,9 @@ final class Session: ObservableObject, Identifiable {
     // Session rules — wildcard patterns for approval or denial
     @Published var sessionRules: [SessionRule] = []
 
+    /// Prompt-rule IDs silenced for this session. Transient; cleared on revoke.
+    @Published var suppressedRuleIds: Set<UUID> = []
+
     // Worker-mutable state. NOT @Published on purpose — both are touched on
     // every PreToolUse hook from background threads, and `@Published`
     // mutations from non-main contend with SwiftUI's main-thread publish
@@ -72,6 +75,7 @@ final class Session: ObservableObject, Identifiable {
         isSubAgentInheritEnabled = false
         autoApproveUntil = nil
         sessionRules.removeAll()
+        suppressedRuleIds.removeAll()
     }
 
     /// Check if a tool call matches any session allow rule.

@@ -21,13 +21,16 @@ struct Decision: Codable {
     /// When true, the router should show the interactive dialog instead of hard blocking.
     /// Used for MCP tool blocks that users should be able to approve case-by-case.
     let askUser: Bool
+    /// Set when a persistent prompt rule fired — used by per-session rule suppression.
+    let triggeringRuleId: UUID?
 
-    init(verdict: DecisionVerdict, reason: String?, additionalContext: String? = nil, updatedInput: [String: AnyCodable]? = nil, askUser: Bool = false) {
+    init(verdict: DecisionVerdict, reason: String?, additionalContext: String? = nil, updatedInput: [String: AnyCodable]? = nil, askUser: Bool = false, triggeringRuleId: UUID? = nil) {
         self.verdict = verdict
         self.reason = reason
         self.additionalContext = additionalContext
         self.updatedInput = updatedInput
         self.askUser = askUser
+        self.triggeringRuleId = triggeringRuleId
     }
 
     /// Internal protocol JSON sent to the gavel-hook shim via socket.
