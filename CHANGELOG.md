@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.5.0...v1.6.0) (2026-05-11)
+
+
+### Features
+
+* **approval:** "Allow Rule" suppresses firing prompt rule for session ([#58](https://github.com/JaysonRawlins/claude-gavel/issues/58)) ([9fef8a4](https://github.com/JaysonRawlins/claude-gavel/commit/9fef8a463ac5857bd4f1a560545246448edc8b95))
+
 ## [1.5.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.4.0...v1.5.0) (2026-05-07)
 
 
