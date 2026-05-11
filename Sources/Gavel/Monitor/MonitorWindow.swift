@@ -962,6 +962,10 @@ struct SessionRulesView: View {
                     .foregroundColor(.red)
                 Text("Rules: \(session.sessionRules.count)")
                     .foregroundColor(.purple)
+                if !session.suppressedRuleIds.isEmpty {
+                    Text("Suppressed: \(session.suppressedRuleIds.count)")
+                        .foregroundColor(.indigo)
+                }
                 Text("Tainted: \(session.taintedPaths.count)")
                     .foregroundColor(.orange)
             }
@@ -1005,6 +1009,47 @@ struct SessionRulesView: View {
                                 .foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
+                    }
+                    .padding(.leading, 16)
+                }
+            }
+
+            if !session.suppressedRuleIds.isEmpty {
+                ForEach(Array(session.suppressedRuleIds), id: \.self) { ruleId in
+                    HStack(spacing: 6) {
+                        Text("SUPPRESSED")
+                            .font(.caption2.bold())
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.indigo)
+                            .cornerRadius(3)
+
+                        if let rule = viewModel.persistentRules.first(where: { $0.id == ruleId }) {
+                            Text(rule.toolName)
+                                .foregroundColor(.orange)
+                            if rule.isRegex { Text("/").foregroundColor(.orange) }
+                            Text(rule.pattern)
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                            if rule.isRegex { Text("/").foregroundColor(.orange) }
+                        } else {
+                            Text("(deleted rule)")
+                                .foregroundColor(.secondary)
+                                .italic()
+                        }
+
+                        Spacer()
+
+                        Button(action: {
+                            viewModel.unsuppressRule(session: session, ruleId: ruleId)
+                            viewModel.noteInteraction()
+                        }) {
+                            Image(systemName: "xmark.circle")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Stop suppressing this rule — it will prompt again on next match")
                     }
                     .padding(.leading, 16)
                 }
