@@ -126,6 +126,10 @@ final class MonitorViewModel: ObservableObject {
         approvalCoordinator.ruleStore?.setDisabled(id: id, isDisabled: isDisabled)
     }
 
+    func unsuppressRule(session: Session, ruleId: UUID) {
+        session.suppressedRuleIds.remove(ruleId)
+    }
+
     func exportRules(to url: URL) throws {
         guard let rules = approvalCoordinator.ruleStore?.rules else { return }
         let encoder = JSONEncoder()
