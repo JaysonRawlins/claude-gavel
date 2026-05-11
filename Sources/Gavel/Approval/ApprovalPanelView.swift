@@ -489,6 +489,24 @@ struct ApprovalPanelView: View {
                 .buttonStyle(.bordered)
                 .tint(.purple)
                 .keyboardShortcut("s", modifiers: [.command])
+
+                if let ruleId = approval.triggeringRuleId {
+                    Button(action: {
+                        coordinator.handleAction(.suppressRuleForSession(
+                            ruleId: ruleId,
+                            context: noteState.noteForAllowContext,
+                            updatedCommand: cmdIfModified,
+                            updatedInput: updatedInputIfModified
+                        ), on: sessionPanel)
+                        coordinator.sessionManager?.noteInteraction()
+                    }) {
+                        Label("Allow Rule", systemImage: "bell.slash")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.indigo)
+                    .keyboardShortcut("r", modifiers: [.command])
+                    .help(approval.triggeringRulePattern.map { "Suppress rule for session: \($0)" } ?? "Suppress firing rule for session")
+                }
             }
 
             // One-time actions
