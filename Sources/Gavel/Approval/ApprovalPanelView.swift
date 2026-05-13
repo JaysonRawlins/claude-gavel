@@ -147,7 +147,7 @@ struct ApprovalPanelView: View {
                     .cornerRadius(4)
             }
 
-            Text("PID \(approval.session.pid)")
+            Text(verbatim: "PID \(approval.session.pid)")
                 .font(.caption.monospaced())
                 .foregroundColor(.secondary)
         }
