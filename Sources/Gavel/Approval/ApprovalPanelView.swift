@@ -147,9 +147,16 @@ struct ApprovalPanelView: View {
                     .cornerRadius(4)
             }
 
-            Text(verbatim: "PID \(approval.session.pid)")
-                .font(.caption.monospaced())
-                .foregroundColor(.secondary)
+            Button(action: {
+                TerminalActivator.focusGhosttyTab(pid: approval.session.pid)
+            }) {
+                Text(verbatim: "PID \(approval.session.pid)")
+                    .font(.caption.monospaced())
+                    .foregroundColor(.accentColor)
+                    .underline()
+            }
+            .buttonStyle(.plain)
+            .help("Focus this session's Ghostty tab")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
