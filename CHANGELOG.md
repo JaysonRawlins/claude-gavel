@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.6.0...v1.7.0) (2026-05-13)
+
+
+### Features
+
+* **monitor+approval:** click PID to focus Ghostty tab ([#61](https://github.com/JaysonRawlins/claude-gavel/issues/61)) ([98ff022](https://github.com/JaysonRawlins/claude-gavel/commit/98ff0220e93cbef7c825d971fc18ad655cec8ecc))
+
 ## [1.6.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.5.0...v1.6.0) (2026-05-11)
 
 
