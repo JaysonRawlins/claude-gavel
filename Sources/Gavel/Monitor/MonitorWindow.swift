@@ -202,9 +202,18 @@ private struct SessionRow: View {
                 .frame(width: 8, height: 8)
 
             // verbatim avoids LocalizedStringKey's locale grouping (e.g. "12,345")
-            Text(verbatim: "PID \(session.pid)")
-                .font(.system(.caption, design: .monospaced))
-                .frame(width: 70, alignment: .leading)
+            Button(action: {
+                TerminalActivator.focusGhosttyTab(pid: session.pid)
+                viewModel.noteInteraction()
+            }) {
+                Text(verbatim: "PID \(session.pid)")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundColor(.accentColor)
+                    .underline()
+            }
+            .buttonStyle(.plain)
+            .frame(width: 70, alignment: .leading)
+            .help("Focus this session's Ghostty tab")
 
             if let cwd = session.cwd {
                 Text(cwd.split(separator: "/").suffix(2).joined(separator: "/"))
