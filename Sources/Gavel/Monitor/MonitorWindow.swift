@@ -5,6 +5,7 @@ struct MonitorWindow: View {
     @ObservedObject var viewModel: MonitorViewModel
     @State private var isPinned: Bool = false
     @State private var selectedTab: MonitorTab = .feed
+    @State private var sessionFilter: String = ""
 
     enum MonitorTab {
         case feed, rules, sessions, context, tester, reference
@@ -77,12 +78,20 @@ struct MonitorWindow: View {
 
     private var sessionControls: some View {
         VStack(spacing: 2) {
-            let sessions = Array(viewModel.sessionManager.sessions.values)
+            let allSessions = Array(viewModel.sessionManager.sessions.values)
                 .sorted { $0.startedAt > $1.startedAt }
+            let sessions = filterSessions(allSessions, query: sessionFilter)
 
-            if sessions.isEmpty {
+            if allSessions.isEmpty {
                 HStack {
                     Text("No active sessions")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                    Spacer()
+                }
+            } else if sessions.isEmpty {
+                HStack {
+                    Text("No sessions match \"\(sessionFilter)\"")
                         .foregroundColor(.secondary)
                         .font(.caption)
                     Spacer()
@@ -133,6 +142,8 @@ struct MonitorWindow: View {
                 .tint(.blue)
                 .help("Scan for Claude Code CLI processes that haven't fired a hook yet (e.g. started while gavel was down).")
 
+                sessionFilterField
+
                 Spacer()
 
                 inactivityPicker
@@ -153,6 +164,48 @@ struct MonitorWindow: View {
                 .controlSize(.small)
                 .help("New sessions start with auto-approve enabled. Deny rules, prompt rules, and sensitive paths still force dialogs.")
             }
+        }
+    }
+
+    private var sessionFilterField: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "magnifyingglass")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            TextField("Filter sessions…", text: $sessionFilter)
+                .textFieldStyle(.plain)
+                .font(.caption)
+                .frame(width: 140)
+            if !sessionFilter.isEmpty {
+                Button(action: { sessionFilter = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(Color(nsColor: .textBackgroundColor))
+        .cornerRadius(5)
+        .overlay(
+            RoundedRectangle(cornerRadius: 5)
+                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+        )
+        .help("Match against PID, session ID, working directory, or custom name")
+    }
+
+    /// Case-insensitive substring match across PID, session ID, cwd, label.
+    private func filterSessions(_ sessions: [Session], query: String) -> [Session] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return sessions }
+        return sessions.filter { session in
+            if String(session.pid).contains(q) { return true }
+            if let sid = session.sessionId, sid.lowercased().contains(q) { return true }
+            if let cwd = session.cwd, cwd.lowercased().contains(q) { return true }
+            if session.label.lowercased().contains(q) { return true }
+            return false
         }
     }
 
@@ -202,18 +255,10 @@ private struct SessionRow: View {
                 .frame(width: 8, height: 8)
 
             // verbatim avoids LocalizedStringKey's locale grouping (e.g. "12,345")
-            Button(action: {
-                TerminalActivator.focusGhosttyTab(pid: session.pid)
-                viewModel.noteInteraction()
-            }) {
-                Text(verbatim: "PID \(session.pid)")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundColor(.accentColor)
-                    .underline()
-            }
-            .buttonStyle(.plain)
-            .frame(width: 70, alignment: .leading)
-            .help("Focus this session's Ghostty tab")
+            Text(verbatim: "PID \(session.pid)")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundColor(.secondary)
+                .frame(width: 70, alignment: .leading)
 
             if let cwd = session.cwd {
                 Text(cwd.split(separator: "/").suffix(2).joined(separator: "/"))
