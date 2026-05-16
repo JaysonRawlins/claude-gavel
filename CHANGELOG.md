@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.8.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.7.0...v1.8.0) (2026-05-16)
+
+
+### Features
+
+* **monitor:** filter sessions by pid, id, cwd, or name ([#63](https://github.com/JaysonRawlins/claude-gavel/issues/63)) ([1f232d6](https://github.com/JaysonRawlins/claude-gavel/commit/1f232d69c4adac53fa01e284e6aeaad5cbd0d429))
+* **monitor:** sleep + resume sessions across daemon restart ([#65](https://github.com/JaysonRawlins/claude-gavel/issues/65)) ([592b455](https://github.com/JaysonRawlins/claude-gavel/commit/592b455fcdc07cf2274376074b621413ce3c524c))
+
 ## [1.7.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.6.0...v1.7.0) (2026-05-13)
 
 
