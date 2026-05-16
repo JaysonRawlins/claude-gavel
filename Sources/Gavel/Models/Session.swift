@@ -11,6 +11,7 @@ final class Session: ObservableObject, Identifiable {
     @Published var label: String = ""
     @Published var isPaused: Bool = false
     @Published var isAlive: Bool = true
+    @Published var endedAt: Date?
     @Published var isAutoApproveEnabled: Bool = false
     @Published var isSubAgentInheritEnabled: Bool = false
     @Published var lastPrompt: String?
@@ -52,6 +53,11 @@ final class Session: ObservableObject, Identifiable {
     var blockCount: Int { stats.blockCount }
 
     var id: Int { pid }
+
+    /// PID reuse can produce a live + dead session with the same PID; isAlive disambiguates.
+    var rowIdentity: String {
+        "\(pid)-\(isAlive ? "live" : "dead")-\(sessionId ?? "")"
+    }
 
     var isAutoApproveActive: Bool {
         guard let until = autoApproveUntil else { return false }

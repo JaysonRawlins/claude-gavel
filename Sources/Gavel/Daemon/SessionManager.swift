@@ -1,11 +1,9 @@
 import Foundation
 
-/// Manages all active Claude Code sessions.
-///
-/// Sessions are keyed by PID. The manager periodically checks for
-/// dead processes and cleans up their state.
+/// Live sessions keyed by PID; tombstones keyed by sessionId (so PID reuse can't clobber them).
 final class SessionManager: ObservableObject {
     @Published private(set) var sessions: [Int: Session] = [:]
+    @Published private(set) var deadSessions: [String: Session] = [:]
 
     private let lock = NSLock()
     private var cleanupTimer: DispatchSourceTimer?
@@ -26,20 +24,26 @@ final class SessionManager: ObservableObject {
 
     private var lastInteraction: Date = Date()
 
-    private static var defaultsPath: String {
-        FileManager.default.homeDirectoryForCurrentUser.path + "/.claude/gavel/session-defaults.json"
-    }
+    private let defaultsPath: String
+    private let sessionsPath: String
 
-    private static var sessionsPath: String {
-        FileManager.default.homeDirectoryForCurrentUser.path + "/.claude/gavel/active-sessions.json"
-    }
+    init(
+        homeDir: URL = FileManager.default.homeDirectoryForCurrentUser,
+        autoStartTimers: Bool = true,
+        autoDiscover: Bool = true
+    ) {
+        let base = homeDir.path + "/.claude/gavel"
+        self.defaultsPath = base + "/session-defaults.json"
+        self.sessionsPath = base + "/active-sessions.json"
+        try? FileManager.default.createDirectory(atPath: base, withIntermediateDirectories: true)
 
-    init() {
         loadDefaults()
         loadActiveSessions()
-        discoverRunningSessions()
-        startCleanupTimer()
-        startInactivityTimer()
+        if autoDiscover { discoverRunningSessions() }
+        if autoStartTimers {
+            startCleanupTimer()
+            startInactivityTimer()
+        }
     }
 
     deinit {
@@ -74,12 +78,12 @@ final class SessionManager: ObservableObject {
             "sessionLabels": sessionLabels
         ]
         if let json = try? JSONSerialization.data(withJSONObject: data, options: .prettyPrinted) {
-            FileManager.default.createFile(atPath: Self.defaultsPath, contents: json)
+            FileManager.default.createFile(atPath: defaultsPath, contents: json)
         }
     }
 
     private func loadDefaults() {
-        guard let data = FileManager.default.contents(atPath: Self.defaultsPath),
+        guard let data = FileManager.default.contents(atPath: defaultsPath),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         defaultAutoApprove = (json["autoApprove"] as? Bool) ?? false
         defaultSubAgentInherit = (json["subAgentInherit"] as? Bool) ?? false
@@ -88,10 +92,8 @@ final class SessionManager: ObservableObject {
         sessionLabels = (json["sessionLabels"] as? [String: String]) ?? [:]
     }
 
-    /// Bind a Claude Code session UUID to a Session and apply any saved label.
-    /// If the user typed a label before the sessionId was known, persist it now.
-    /// Called from socket-worker threads — `@Published` mutations on `session`
-    /// are dispatched to main per SwiftUI's main-thread invariant.
+    /// Worker-thread caller; @Published mutations dispatched to main.
+    /// A matching tombstone is dropped — same conversation, new PID.
     func recordSessionId(_ sid: String, on session: Session) {
         let changed = session.sessionId != sid
         let savedLabel = sessionLabels[sid]
@@ -108,6 +110,7 @@ final class SessionManager: ObservableObject {
         }
         if changed {
             lock.lock()
+            deadSessions.removeValue(forKey: sid)
             saveActiveSessionsLocked()
             lock.unlock()
         }
@@ -138,26 +141,25 @@ final class SessionManager: ObservableObject {
         saveDefaults()
     }
 
-    /// Remove a session (e.g., when the process exits).
-    func removeSession(pid: Int) {
+    func forgetTombstone(sessionId: String) {
         lock.lock()
-        sessions.removeValue(forKey: pid)
-        saveActiveSessionsLocked()
+        if deadSessions.removeValue(forKey: sessionId) != nil {
+            saveActiveSessionsLocked()
+        }
         lock.unlock()
     }
 
-    /// Drop any sessions whose process has exited. Triggered by the "Clear Dead"
-    /// monitor button so the user doesn't have to wait for the cleanup timer's
-    /// grace period.
     func clearDeadSessions() {
         lock.lock()
-        let toRemove = sessions.compactMap { (pid, session) -> Int? in
+        let strayPids = sessions.compactMap { (pid, session) -> Int? in
             (!session.isAlive || !isProcessAlive(pid: pid)) ? pid : nil
         }
-        for pid in toRemove {
+        for pid in strayPids {
             sessions.removeValue(forKey: pid)
         }
-        if !toRemove.isEmpty {
+        let hadTombstones = !deadSessions.isEmpty
+        deadSessions.removeAll()
+        if !strayPids.isEmpty || hadTombstones {
             saveActiveSessionsLocked()
         }
         lock.unlock()
@@ -165,10 +167,7 @@ final class SessionManager: ObservableObject {
 
     // MARK: - Active session persistence
 
-    /// Snapshot of a live session, persisted to active-sessions.json so the
-    /// daemon can rehydrate per-session toggle state across restarts/crashes.
-    /// New fields (auto/sub/paused) are optional so older on-disk files
-    /// load cleanly — missing values fall through to defaults.
+    /// Fields beyond `pid` are optional so older on-disk files load cleanly.
     private struct PersistedSession: Codable {
         let pid: Int
         let sessionId: String?
@@ -176,6 +175,13 @@ final class SessionManager: ObservableObject {
         let isAutoApproveEnabled: Bool?
         let isSubAgentInheritEnabled: Bool?
         let isPaused: Bool?
+        let label: String?
+        let endedAt: Date?
+    }
+
+    private struct PersistedState: Codable {
+        let live: [PersistedSession]
+        let dead: [PersistedSession]
     }
 
     /// Persist all live sessions and their per-session toggle state.
@@ -190,43 +196,80 @@ final class SessionManager: ObservableObject {
 
     /// Caller's responsibility: hold `lock` (or know that no concurrent writer can race).
     private func saveActiveSessionsLocked() {
-        let snapshot = sessions.values
+        let live = sessions.values
             .filter { $0.isAlive }
-            .map { PersistedSession(
-                pid: $0.pid,
-                sessionId: $0.sessionId,
-                cwd: $0.cwd,
-                isAutoApproveEnabled: $0.isAutoApproveEnabled,
-                isSubAgentInheritEnabled: $0.isSubAgentInheritEnabled,
-                isPaused: $0.isPaused
-            ) }
-        guard let json = try? JSONEncoder().encode(snapshot) else { return }
-        FileManager.default.createFile(atPath: Self.sessionsPath, contents: json)
+            .map { snapshotOf($0) }
+        let dead = deadSessions.values.map { snapshotOf($0) }
+        let state = PersistedState(live: Array(live), dead: Array(dead))
+        guard let json = try? JSONEncoder().encode(state) else { return }
+        FileManager.default.createFile(atPath: sessionsPath, contents: json)
     }
 
-    /// Rehydrate sessions seen by the daemon before restart. Filters out PIDs
-    /// whose process is no longer alive. Must run after loadDefaults() so that
-    /// labels are already populated and can be applied here.
-    private func loadActiveSessions() {
-        guard let data = FileManager.default.contents(atPath: Self.sessionsPath),
-              let snapshots = try? JSONDecoder().decode([PersistedSession].self, from: data) else { return }
+    private func snapshotOf(_ session: Session) -> PersistedSession {
+        PersistedSession(
+            pid: session.pid,
+            sessionId: session.sessionId,
+            cwd: session.cwd,
+            isAutoApproveEnabled: session.isAutoApproveEnabled,
+            isSubAgentInheritEnabled: session.isSubAgentInheritEnabled,
+            isPaused: session.isPaused,
+            label: session.label.isEmpty ? nil : session.label,
+            endedAt: session.endedAt
+        )
+    }
 
-        for snap in snapshots {
-            guard isProcessAlive(pid: snap.pid) else { continue }
-            let started = ProcessTree.startTime(of: Int32(snap.pid))
-            let session = Session(pid: snap.pid, cwd: snap.cwd, startedAt: started)
-            session.sessionId = snap.sessionId
-            // Apply persisted per-session settings if present, else fall back
-            // to defaults (covers older on-disk files written before this
-            // field set existed).
-            session.isAutoApproveEnabled = snap.isAutoApproveEnabled ?? defaultAutoApprove
-            session.isSubAgentInheritEnabled = snap.isSubAgentInheritEnabled ?? defaultSubAgentInherit
-            session.isPaused = snap.isPaused ?? defaultPaused
-            if let sid = snap.sessionId, let savedLabel = sessionLabels[sid] {
-                session.label = savedLabel
-            }
-            sessions[snap.pid] = session
+    /// Must run after loadDefaults() so labels are populated before they're applied here.
+    private func loadActiveSessions() {
+        guard let data = FileManager.default.contents(atPath: sessionsPath) else { return }
+        let decoder = JSONDecoder()
+
+        let live: [PersistedSession]
+        let dead: [PersistedSession]
+        if let state = try? decoder.decode(PersistedState.self, from: data) {
+            live = state.live
+            dead = state.dead
+        } else if let legacy = try? decoder.decode([PersistedSession].self, from: data) {
+            live = legacy
+            dead = []
+        } else {
+            return
         }
+
+        for snap in live + dead {
+            if isProcessAlive(pid: snap.pid) {
+                rehydrateLive(snap)
+            } else if let sid = snap.sessionId {
+                rehydrateTombstone(snap, sessionId: sid)
+            }
+        }
+    }
+
+    private func rehydrateLive(_ snap: PersistedSession) {
+        let started = ProcessTree.startTime(of: Int32(snap.pid))
+        let session = Session(pid: snap.pid, cwd: snap.cwd, startedAt: started)
+        session.sessionId = snap.sessionId
+        session.isAutoApproveEnabled = snap.isAutoApproveEnabled ?? defaultAutoApprove
+        session.isSubAgentInheritEnabled = snap.isSubAgentInheritEnabled ?? defaultSubAgentInherit
+        session.isPaused = snap.isPaused ?? defaultPaused
+        if let sid = snap.sessionId, let savedLabel = sessionLabels[sid] {
+            session.label = savedLabel
+        } else if let label = snap.label {
+            session.label = label
+        }
+        sessions[snap.pid] = session
+    }
+
+    private func rehydrateTombstone(_ snap: PersistedSession, sessionId: String) {
+        let session = Session(pid: snap.pid, cwd: snap.cwd, startedAt: snap.endedAt ?? Date())
+        session.sessionId = sessionId
+        session.isAlive = false
+        session.endedAt = snap.endedAt ?? Date()
+        if let savedLabel = sessionLabels[sessionId] {
+            session.label = savedLabel
+        } else if let label = snap.label {
+            session.label = label
+        }
+        deadSessions[sessionId] = session
     }
 
     /// Find Claude Code CLI processes running on this machine and add any we
@@ -272,23 +315,29 @@ final class SessionManager: ObservableObject {
         cleanupTimer = timer
     }
 
-    private func cleanupDeadSessions() {
+    /// Internal so tests can drive lifecycle without waiting on the timer.
+    func cleanupDeadSessions() {
         lock.lock()
         let pids = Array(sessions.keys)
         lock.unlock()
         for pid in pids {
-            if !isProcessAlive(pid: pid) {
-                lock.lock()
-                let session = sessions[pid]
+            guard !isProcessAlive(pid: pid) else { continue }
+            lock.lock()
+            guard let session = sessions[pid] else {
                 lock.unlock()
-                // `isAlive` is @Published; SwiftUI requires main-thread
-                // mutation. The cleanup timer runs on a global utility queue.
-                DispatchQueue.main.async {
-                    session?.isAlive = false
-                }
-                DispatchQueue.global().asyncAfter(deadline: .now() + GavelConstants.sessionRemovalGraceSeconds) { [weak self] in
-                    self?.removeSession(pid: pid)
-                }
+                continue
+            }
+            let now = Date()
+            sessions.removeValue(forKey: pid)
+            if let sid = session.sessionId {
+                deadSessions[sid] = session
+            }
+            saveActiveSessionsLocked()
+            lock.unlock()
+            // @Published mutations need main thread; this runs on a utility queue.
+            DispatchQueue.main.async {
+                session.isAlive = false
+                session.endedAt = now
             }
         }
     }

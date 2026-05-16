@@ -10,3 +10,4 @@ DerivedData/
 .claude-account
 .mcp.json
 dev/
+output.log

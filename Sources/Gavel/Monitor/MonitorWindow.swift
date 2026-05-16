@@ -6,6 +6,7 @@ struct MonitorWindow: View {
     @State private var isPinned: Bool = false
     @State private var selectedTab: MonitorTab = .feed
     @State private var sessionFilter: String = ""
+    @State private var hideTombstones: Bool = false
 
     enum MonitorTab {
         case feed, rules, sessions, context, tester, reference
@@ -78,8 +79,13 @@ struct MonitorWindow: View {
 
     private var sessionControls: some View {
         VStack(spacing: 2) {
-            let allSessions = Array(viewModel.sessionManager.sessions.values)
+            let liveSessions = Array(viewModel.sessionManager.sessions.values)
                 .sorted { $0.startedAt > $1.startedAt }
+            let deadSessions = hideTombstones
+                ? []
+                : Array(viewModel.sessionManager.deadSessions.values)
+                    .sorted { ($0.endedAt ?? .distantPast) > ($1.endedAt ?? .distantPast) }
+            let allSessions = liveSessions + deadSessions
             let sessions = filterSessions(allSessions, query: sessionFilter)
 
             if allSessions.isEmpty {
@@ -97,14 +103,18 @@ struct MonitorWindow: View {
                     Spacer()
                 }
             } else {
-                ForEach(Array(sessions.enumerated()), id: \.element.pid) { index, session in
-                    SessionRow(
-                        session: session,
-                        viewModel: viewModel,
-                        isPinned: viewModel.pinnedSessionPid == session.pid,
-                        alternate: index.isMultiple(of: 2)
-                    )
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVStack(spacing: 2) {
+                        ForEach(Array(sessions.enumerated()), id: \.element.rowIdentity) { index, session in
+                            SessionRow(
+                                session: session,
+                                viewModel: viewModel,
+                                alternate: index.isMultiple(of: 2)
+                            )
+                        }
+                    }
                 }
+                .frame(maxHeight: 320)
             }
 
             Divider()
@@ -126,13 +136,13 @@ struct MonitorWindow: View {
                 .tint(.yellow)
                 .help("One-click: clear auto on every session + reset defaults. Same as the menu bar action.")
 
-                Button("Clear Dead") {
+                Button("Forget All Sleeping") {
                     viewModel.sessionManager.clearDeadSessions()
                     viewModel.noteInteraction()
                 }
                 .buttonStyle(.bordered)
                 .tint(.gray)
-                .help("Drop sessions whose Claude Code process has exited.")
+                .help("Remove every sleeping (tombstoned) session from the monitor.")
 
                 Button("Discover") {
                     viewModel.sessionManager.discoverRunningSessions()
@@ -143,6 +153,8 @@ struct MonitorWindow: View {
                 .help("Scan for Claude Code CLI processes that haven't fired a hook yet (e.g. started while gavel was down).")
 
                 sessionFilterField
+
+                activeOnlyToggle
 
                 Spacer()
 
@@ -165,6 +177,20 @@ struct MonitorWindow: View {
                 .help("New sessions start with auto-approve enabled. Deny rules, prompt rules, and sensitive paths still force dialogs.")
             }
         }
+    }
+
+    private var activeOnlyToggle: some View {
+        HStack(spacing: 4) {
+            Text("Active only")
+                .font(.caption)
+                .lineLimit(1)
+            Toggle("", isOn: $hideTombstones)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(.green)
+                .controlSize(.small)
+        }
+        .help("Hide sleeping sessions from the list")
     }
 
     private var sessionFilterField: some View {
@@ -238,14 +264,10 @@ struct MonitorWindow: View {
 
 }
 
-/// One row in the session-controls strip. Extracted into its own View so it can
-/// observe the Session directly — the function-form predecessor only refreshed
-/// on the 2-second stats timer, which made Pause/Resume label changes feel
-/// laggy and made the per-tool-call flash highlight impossible.
+/// Observes Session directly so Pause/Resume labels and the per-tool-call flash repaint promptly.
 private struct SessionRow: View {
     @ObservedObject var session: Session
     let viewModel: MonitorViewModel
-    let isPinned: Bool
     let alternate: Bool
 
     var body: some View {
@@ -259,6 +281,7 @@ private struct SessionRow: View {
                 .font(.system(.caption, design: .monospaced))
                 .foregroundColor(.secondary)
                 .frame(width: 70, alignment: .leading)
+                .strikethrough(!session.isAlive)
 
             if let cwd = session.cwd {
                 Text(cwd.split(separator: "/").suffix(2).joined(separator: "/"))
@@ -276,8 +299,13 @@ private struct SessionRow: View {
 
             Spacer()
 
-            actionCluster
+            if session.isAlive {
+                actionCluster
+            } else {
+                tombstoneActionCluster
+            }
         }
+        .opacity(session.isAlive ? 1.0 : 0.55)
         .padding(.vertical, 3)
         .padding(.leading, 8)
         .padding(.trailing, 6)
@@ -287,27 +315,10 @@ private struct SessionRow: View {
                 Color.yellow.opacity(session.lastActivityAt != nil ? 0.20 : 0)
             }
         )
-        .overlay(alignment: .leading) {
-            if isPinned {
-                Rectangle()
-                    .fill(Color.accentColor)
-                    .frame(width: 3)
-            }
-        }
         .clipShape(RoundedRectangle(cornerRadius: 4))
-        // Hit-test the entire row, including padding/Spacer gaps. Buttons and
-        // toggles still consume their own taps (SwiftUI default), so only the
-        // identity area (status dot, PID, cwd, label gap) triggers the pin.
-        .contentShape(Rectangle())
-        .onTapGesture {
-            viewModel.togglePin(for: session)
-        }
         .animation(.easeOut(duration: 0.45), value: session.lastActivityAt)
-        .help(isPinned ? "Pinned — click again to unpin" : "Click to pin this row")
     }
 
-    /// Right-side controls in fixed widths so Sub/Auto/Prompt/Pause/Kill line up
-    /// across rows regardless of cwd or label length.
     @ViewBuilder
     private var actionCluster: some View {
         HStack(spacing: 6) {
@@ -374,21 +385,83 @@ private struct SessionRow: View {
             .tint(session.isPaused ? .green : .orange)
             .frame(width: 76)
 
-            Button("Kill") {
+            Button("Sleep") {
                 kill(Int32(session.pid), SIGINT)
                 viewModel.noteInteraction()
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
-            .tint(.red)
-            .frame(width: 56)
-            .help("Send SIGINT to this session's Claude Code process")
+            .tint(.indigo)
+            .frame(width: 60)
+            .help("SIGINT this Claude Code process so it saves to disk; resume later from the asleep row.")
         }
     }
 
+    /// Width must match actionCluster so live and dead rows align.
+    @ViewBuilder
+    private var tombstoneActionCluster: some View {
+        HStack(spacing: 6) {
+            if let ended = session.endedAt {
+                Text("asleep \(Self.relativeTime(ended))")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .frame(width: 222, alignment: .trailing)
+            } else {
+                Spacer().frame(width: 222)
+            }
+
+            Button("Resume") {
+                copyResumeCommand()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(.blue)
+            .frame(width: 76)
+            .disabled(session.sessionId == nil)
+            .help(resumeHelpText)
+
+            Button("Forget") {
+                if let sid = session.sessionId {
+                    viewModel.sessionManager.forgetTombstone(sessionId: sid)
+                    viewModel.noteInteraction()
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(.gray)
+            .frame(width: 56)
+            .help("Remove this tombstone from the monitor.")
+        }
+    }
+
+    private var resumeHelpText: String {
+        guard let sid = session.sessionId else { return "No session ID — can't resume" }
+        return "Copy `\(ResumeCommand.build(pid: session.pid, sessionId: sid, cwd: session.cwd))` to clipboard."
+    }
+
+    private func copyResumeCommand() {
+        guard let sid = session.sessionId else { return }
+        let cmd = ResumeCommand.build(pid: session.pid, sessionId: sid, cwd: session.cwd)
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(cmd, forType: .string)
+        viewModel.noteInteraction()
+        GavelNotifications.notify(
+            title: "Gavel — Resume command copied",
+            body: "Paste in any terminal"
+        )
+    }
+
+    private static func relativeTime(_ date: Date) -> String {
+        let secs = Int(-date.timeIntervalSinceNow)
+        if secs < 60 { return "\(secs)s ago" }
+        if secs < 3600 { return "\(secs / 60)m ago" }
+        if secs < 86400 { return "\(secs / 3600)h ago" }
+        return "\(secs / 86400)d ago"
+    }
+
     private var rowBackground: Color {
-        if isPinned { return Color.accentColor.opacity(0.10) }
-        return alternate ? Color.secondary.opacity(0.06) : Color.clear
+        alternate ? Color.secondary.opacity(0.06) : Color.clear
     }
 }
 
