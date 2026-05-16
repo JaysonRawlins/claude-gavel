@@ -32,9 +32,6 @@ enum GavelConstants {
     /// Session cleanup check interval in seconds.
     static let sessionCleanupInterval: TimeInterval = 5.0
 
-    /// Grace period before removing dead sessions.
-    static let sessionRemovalGraceSeconds: TimeInterval = 3.0
-
     /// Minimum content length to scan for dangerous patterns.
     /// Short content can't contain both file I/O and network code.
     static let minContentScanLength = 50

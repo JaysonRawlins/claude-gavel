@@ -164,7 +164,6 @@ final class Phase1RefactorTests: XCTestCase {
         XCTAssertEqual(GavelConstants.socketBufferSize, 65536)
         XCTAssertEqual(GavelConstants.socketReadTimeoutSeconds, 30)
         XCTAssertEqual(GavelConstants.sessionCleanupInterval, 5.0)
-        XCTAssertEqual(GavelConstants.sessionRemovalGraceSeconds, 3.0)
         XCTAssertEqual(GavelConstants.minContentScanLength, 50)
         XCTAssertEqual(GavelConstants.panelWidth, 640)
         XCTAssertEqual(GavelConstants.panelHeight, 480)
