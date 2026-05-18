@@ -155,18 +155,21 @@ if needsResponse {
             exit(0)
         }
 
-        // Codex's PreToolUseCommandOutputWire rejects permissionDecision:"allow"
-        // unless updatedInput is also present — omit it for Codex callers.
+        // Codex's PreToolUseHookSpecificOutputWire rejects both
+        // permissionDecision:"allow" and updatedInput as unsupported; the allow
+        // path is signaled by emitting hookEventName only (with optional
+        // additionalContext). Claude wants permissionDecision:"allow" and
+        // honors updatedInput. NOTE: this drops user-edited commands on Codex
+        // sessions silently — the edit UI should be gated agent-side.
         var output: [String: Any] = ["hookEventName": "PreToolUse"]
         if let ctx = json["additionalContext"] as? String, !ctx.isEmpty {
             output["additionalContext"] = ctx
         }
-        let updated = json["updatedInput"] as? [String: Any]
-        if let updated = updated {
-            output["updatedInput"] = updated
+        if !isCodexAgent {
             output["permissionDecision"] = "allow"
-        } else if !isCodexAgent {
-            output["permissionDecision"] = "allow"
+            if let updated = json["updatedInput"] as? [String: Any] {
+                output["updatedInput"] = updated
+            }
         }
         let wrapper: [String: Any] = ["hookSpecificOutput": output]
         if let data = try? JSONSerialization.data(withJSONObject: wrapper),
