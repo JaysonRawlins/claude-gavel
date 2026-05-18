@@ -67,4 +67,19 @@ final class ResumeCommandTests: XCTestCase {
         )
         XCTAssertEqual(cmd, "cd '/Users/jay/My Projects' && claude --name 1 --resume s")
     }
+
+    func testBuildCodexAgentEmitsCodexResume() {
+        let cmd = ResumeCommand.build(
+            pid: 9999,
+            sessionId: "019e38ed-2ed8-7cd2-ae18-e5f6eaec080b",
+            cwd: "/tmp/codex-spike-sandbox",
+            agent: .codex
+        )
+        XCTAssertEqual(cmd, "cd '/tmp/codex-spike-sandbox' && codex resume 019e38ed-2ed8-7cd2-ae18-e5f6eaec080b")
+    }
+
+    func testBuildCodexWithoutCwdOmitsCdPrefix() {
+        let cmd = ResumeCommand.build(pid: 7, sessionId: "abc", cwd: nil, agent: .codex)
+        XCTAssertEqual(cmd, "codex resume abc")
+    }
 }

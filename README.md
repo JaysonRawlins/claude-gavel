@@ -189,7 +189,7 @@ Gavel protects its own config files and Claude Code's hook configuration. Comman
 - **IPC**: Unix domain socket at `~/.claude/gavel/gavel.sock`
 - **Platform**: macOS 13+
 - **Binaries**: `gavel` (daemon, ~1MB) and `gavel-hook` (CLI shim, ~85KB, ~6ms overhead per hook)
-- **Tests**: 280 tests across 6 suites
+- **Tests**: 282 tests across 6 suites
 
 ## Using Gavel with Codex CLI
 

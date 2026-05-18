@@ -445,12 +445,12 @@ private struct SessionRow: View {
 
     private var resumeHelpText: String {
         guard let sid = session.sessionId else { return "No session ID — can't resume" }
-        return "Copy `\(ResumeCommand.build(pid: session.pid, sessionId: sid, cwd: session.cwd))` to clipboard."
+        return "Copy `\(ResumeCommand.build(pid: session.pid, sessionId: sid, cwd: session.cwd, agent: session.agent))` to clipboard."
     }
 
     private func copyResumeCommand() {
         guard let sid = session.sessionId else { return }
-        let cmd = ResumeCommand.build(pid: session.pid, sessionId: sid, cwd: session.cwd)
+        let cmd = ResumeCommand.build(pid: session.pid, sessionId: sid, cwd: session.cwd, agent: session.agent)
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(cmd, forType: .string)

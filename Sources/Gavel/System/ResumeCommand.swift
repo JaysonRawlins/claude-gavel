@@ -1,10 +1,16 @@
 import Foundation
 
 enum ResumeCommand {
-    static func build(pid: Int, sessionId: String, cwd: String?) -> String {
-        let claudeInvocation = "claude --name \(pid) --resume \(sessionId)"
-        guard let cwd = cwd else { return claudeInvocation }
-        return "cd \(shellQuote(cwd)) && \(claudeInvocation)"
+    static func build(pid: Int, sessionId: String, cwd: String?, agent: AgentKind = .claude) -> String {
+        let invocation: String
+        switch agent {
+        case .claude:
+            invocation = "claude --name \(pid) --resume \(sessionId)"
+        case .codex:
+            invocation = "codex resume \(sessionId)"
+        }
+        guard let cwd = cwd else { return invocation }
+        return "cd \(shellQuote(cwd)) && \(invocation)"
     }
 
     /// Bash single-quote escaping: close-quote, escape, reopen for each embedded apostrophe.
