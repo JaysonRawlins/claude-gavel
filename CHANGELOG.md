@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.9.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.8.0...v1.9.0) (2026-05-18)
+
+
+### Features
+
+* codex CLI support — hook compat + install + docs ([#66](https://github.com/JaysonRawlins/claude-gavel/issues/66)) ([dbefae7](https://github.com/JaysonRawlins/claude-gavel/commit/dbefae750764e97d3b6c102ee4af448ec7a68949))
+* **install:** codex SessionStart hook — context injection parity with claude ([#70](https://github.com/JaysonRawlins/claude-gavel/issues/70)) ([f0b4b5e](https://github.com/JaysonRawlins/claude-gavel/commit/f0b4b5e03663bcdfeb67eb40bf5331a7bf7ba5c7))
+* **monitor:** agent-aware Resume command -- codex sessions get `codex resume <sid>` ([#69](https://github.com/JaysonRawlins/claude-gavel/issues/69)) ([1236849](https://github.com/JaysonRawlins/claude-gavel/commit/1236849b0128eae2c8d03e2b330df9a1ecd8d24e))
+* **monitor:** codex sessions get their own row with agent tagging ([#68](https://github.com/JaysonRawlins/claude-gavel/issues/68)) ([26726d2](https://github.com/JaysonRawlins/claude-gavel/commit/26726d24af7441b4a46182381ae6c6c36d4f67fd))
+
 ## [1.8.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.7.0...v1.8.0) (2026-05-16)
 
 
