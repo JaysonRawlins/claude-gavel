@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 import Combine
 
-/// ViewModel for the monitor window. Bridges daemon events to the SwiftUI view.
+/// ViewModel for the monitor window — bridges daemon events into SwiftUI bindings the views observe.
 final class MonitorViewModel: ObservableObject {
     @Published var feedEntries: [FeedDisplayEntry] = []
     @Published var isPaused: Bool = false
@@ -11,7 +11,6 @@ final class MonitorViewModel: ObservableObject {
     @Published var statsText: String = "Tools: 0 | Allow: 0 | Block: 0"
     @Published var uptimeText: String = "0m"
 
-    // Regex tester state (persists across tab switches)
     @Published var testerPattern: String = ""
     @Published var testerTestString: String = ""
     @Published var testerIsRegex: Bool = true
@@ -41,16 +40,13 @@ final class MonitorViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Controls
-
     func toggleAutoApprove(for session: Session) {
         if session.isAutoApproveEnabled {
             approvalCoordinator.disableAutoApprove(for: session)
         } else {
             approvalCoordinator.enableAutoApprove(for: session)
         }
-        // Never persist auto-approve as default — new sessions must opt in explicitly.
-        // This prevents a minimized/hidden monitor from silently auto-approving new sessions.
+        // Never persist auto-approve as a new-session default — prevents a hidden/minimized monitor from silently auto-approving sessions the user didn't opt in.
         sessionManager.saveDefaults()
     }
 
@@ -68,21 +64,18 @@ final class MonitorViewModel: ObservableObject {
         sessionManager.saveActiveSessions()
     }
 
-    /// Revoke auto across every session + reset defaults + notify. The menu bar
-    /// "Prompt All Sessions" action and the inactivity timer both call through here.
+    /// Revoke auto across every session + reset defaults + notify. Called from the menu bar action and the inactivity timer.
     func promptAllSessions() {
         sessionManager.promptAllSessions()
     }
 
-    /// Revoke auto on a single session and record user activity.
-    /// One-click alternative to toggling both Auto and Sub off manually.
+    /// Revoke auto on a single session and record user activity — one-click alternative to toggling Auto + Sub off manually.
     func promptSession(_ session: Session) {
         session.revokeAutoApprove()
         sessionManager.saveActiveSessions()
         sessionManager.noteInteraction()
     }
 
-    /// Record any direct user interaction with gavel's UI. Resets the inactivity timer.
     func noteInteraction() {
         sessionManager.noteInteraction()
     }
@@ -123,7 +116,6 @@ final class MonitorViewModel: ObservableObject {
         try data.write(to: url)
     }
 
-    /// Import rules from a JSON file. Returns the number of rules imported.
     @discardableResult
     func importRules(from url: URL) throws -> Int {
         let data = try Data(contentsOf: url)
@@ -140,8 +132,6 @@ final class MonitorViewModel: ObservableObject {
         kill(Int32(session.pid), SIGINT)
         revokeAutoApprove()
     }
-
-    // MARK: - Stats
 
     private func startStatsTimer() {
         statsTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
@@ -169,13 +159,7 @@ final class MonitorViewModel: ObservableObject {
             allowRuleCount += session.sessionRules.filter { $0.verdict == .allow }.count
             denyRuleCount += session.sessionRules.filter { $0.verdict == .block }.count
             if session.isAutoApproveEnabled { autoCount += 1 }
-            // Counters and taintedPaths live in non-Combine thread-safe stores
-            // (SessionStats / TaintedPathStore) so worker-thread mutations
-            // never trip SwiftUI's main-thread invariant. The trade-off: the
-            // UI doesn't auto-refresh on each increment. Pump a manual publish
-            // here on the 2-second tick so monitor rows re-read the current
-            // counter / taint values during normal render. Two-second
-            // granularity is fine for stats; nothing here needs realtime.
+            // Stats and taintedPaths live in non-Combine thread-safe stores (see SessionStats), so SwiftUI doesn't auto-republish on each increment. Pump objectWillChange on the 2s tick so monitor rows re-read current counter/taint values.
             session.objectWillChange.send()
         }
 

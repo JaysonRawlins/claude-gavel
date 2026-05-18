@@ -1,7 +1,7 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// Discovers installed editors and remembers the user's choice.
+/// Discovers installed editors that can open `.md` and remembers the user's pick (UserDefaults key `preferredEditorBundleID`).
 enum EditorPreference {
     private static let key = "preferredEditorBundleID"
 
@@ -10,7 +10,7 @@ enum EditorPreference {
         set { UserDefaults.standard.set(newValue, forKey: key) }
     }
 
-    /// All apps that can open .md files, sorted with common editors first.
+    /// Editors that claim `.md` support, sorted with common editors (Zed/VSCode/Sublime/JetBrains/Xcode) first.
     static func availableEditors() -> [(name: String, bundleID: String, url: URL)] {
         let mdType = UTType(filenameExtension: "md") ?? .plainText
         let appURLs = NSWorkspace.shared.urlsForApplications(toOpen: mdType)
@@ -41,7 +41,7 @@ enum EditorPreference {
         }
     }
 
-    /// Open a file in the user's preferred editor, falling back to system default.
+    /// Open `url` in the user's preferred editor; falls back to the system default if the preference isn't set or the app is missing.
     static func open(_ url: URL) {
         if let bundleID = preferredBundleID,
            let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {

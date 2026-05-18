@@ -1,18 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// Coordinates interactive approval dialogs for PreToolUse events.
-///
-/// Each session (PID) gets its own floating panel so approvals from
-/// different projects don't block each other. The socket handler blocks
-/// (via semaphore) until the user responds on that session's panel.
+/// Per-session approval dialogs — each PID gets its own floating panel and semaphore so approvals from different projects don't block each other.
 final class ApprovalCoordinator: ObservableObject {
-
     enum Action {
         case allow(context: String?, updatedCommand: String?, updatedInput: [String: AnyCodable]?)
         case deny(context: String?)
         case allowPatternForSession(pattern: String, context: String?, updatedCommand: String?, updatedInput: [String: AnyCodable]?)
-        /// Suppress firing prompt rule for session — covers the rule's full regex scope.
+        /// Suppress firing prompt rule for the session — covers the rule's full regex scope, broader than a single pattern.
         case suppressRuleForSession(ruleId: UUID, context: String?, updatedCommand: String?, updatedInput: [String: AnyCodable]?)
         case denyPatternForSession(pattern: String, explanation: String?)
         case alwaysDenyPattern(pattern: String, isRegex: Bool, explanation: String?)
@@ -20,10 +15,8 @@ final class ApprovalCoordinator: ObservableObject {
         case alwaysPromptPattern(pattern: String, isRegex: Bool)
     }
 
-    /// RuleStore for persistent always-deny/always-allow rules.
     var ruleStore: RuleStore?
 
-    /// SessionManager reference for recording user-interaction signals (inactivity timer).
     weak var sessionManager: SessionManager?
 
     struct PendingApproval {
@@ -31,16 +24,13 @@ final class ApprovalCoordinator: ObservableObject {
         let session: Session
         let timestamp: Date
         let forceDialog: Bool
-        /// Reason from the engine when dialog was forced. Nil for default-tier prompts.
         let triggerReason: String?
-        /// ID of the rule that fired, if any. Drives the "Allow rule for session" affordance.
         let triggeringRuleId: UUID?
         let triggeringRulePattern: String?
         let triggeringRuleIsRegex: Bool
         let respond: (Decision) -> Void
     }
 
-    /// Per-session approval state. Each session gets its own panel and queue.
     final class SessionPanel: ObservableObject {
         let pid: Int
         @Published var currentApproval: PendingApproval?
@@ -51,13 +41,10 @@ final class ApprovalCoordinator: ObservableObject {
         init(pid: Int) { self.pid = pid }
     }
 
-    /// Active session panels, keyed by PID.
     private var sessionPanels: [Int: SessionPanel] = [:]
 
-    /// Currently focused session panel (for compatibility with single-panel callers).
     @Published var activeSessionPanel: SessionPanel?
 
-    /// Get or create a SessionPanel for a PID.
     private func sessionPanel(for pid: Int) -> SessionPanel {
         if let existing = sessionPanels[pid] { return existing }
         let sp = SessionPanel(pid: pid)
@@ -65,8 +52,7 @@ final class ApprovalCoordinator: ObservableObject {
         return sp
     }
 
-    /// Request approval for a tool use. Blocks the calling thread until the user decides.
-    /// Called from socket handler (background thread).
+    /// Blocks the calling thread until the user decides — called from the socket worker.
     func requestApproval(
         payload: PreToolUsePayload,
         session: Session,
@@ -117,16 +103,12 @@ final class ApprovalCoordinator: ObservableObject {
         return result
     }
 
-    /// Handle the user's decision from the approval panel.
     func handleAction(_ action: Action, on sessionPanel: SessionPanel) {
-        // Diagnostic breadcrumb. Critical signal: if `currentApprovalPresent`
-        // is ever `false` when a click arrives, we've found the wedge vector
-        // (click drops silently, semaphore never signals, hook waits forever).
+        // Diagnostic breadcrumb. `currentApproval == MISSING` here means a click dropped silently — semaphore never signals, hook waits forever.
         let presentMarker = sessionPanel.currentApproval == nil ? "MISSING" : "ok"
         gavelLog("[approval] action pid=\(sessionPanel.pid) currentApproval=\(presentMarker) action=\(actionLogTag(action))")
         guard let current = sessionPanel.currentApproval else { return }
 
-        // Build updatedInput if user modified the command
         func buildUpdatedInput(_ updatedCommand: String?) -> [String: AnyCodable]? {
             guard let cmd = updatedCommand, cmd != current.payload.command else { return nil }
             var input = current.payload.toolInput
@@ -202,26 +184,22 @@ final class ApprovalCoordinator: ObservableObject {
         advanceQueue(on: sessionPanel)
     }
 
-    /// Backward-compatible handleAction for callers that don't specify a session panel.
     func handleAction(_ action: Action) {
         guard let sp = activeSessionPanel else { return }
         handleAction(action, on: sp)
     }
 
-    /// Enable auto-approve for a session and flush its pending approvals.
-    /// Forced dialogs (from prompt rules / MCP blocks) are NOT flushed.
     func enableAutoApprove(for session: Session) {
         session.isAutoApproveEnabled = true
         sessionManager?.saveActiveSessions()
 
         guard let sp = sessionPanels[session.pid] else { return }
 
-        // Flush current if not forced
         if let current = sp.currentApproval, !current.forceDialog {
             current.respond(Decision(verdict: .allow, reason: "Auto-approved"))
             sp.currentApproval = nil
         }
-        // Flush queued items — but not forced ones
+
         let (flushable, remaining) = sp.pendingQueue.partitioned { !$0.forceDialog }
         for pending in flushable {
             pending.respond(Decision(verdict: .allow, reason: "Auto-approved"))
@@ -244,8 +222,6 @@ final class ApprovalCoordinator: ObservableObject {
         sessionManager?.saveActiveSessions()
     }
 
-    // MARK: - Per-Session Panel Management
-
     private func showApproval(_ approval: PendingApproval, on sp: SessionPanel) {
         gavelLog("[approval] show pid=\(sp.pid) tool=\(approval.payload.toolName) queueDepth=\(sp.pendingQueue.count) trigger=\(approval.triggerReason ?? "-")")
         sp.currentApproval = approval
@@ -255,7 +231,6 @@ final class ApprovalCoordinator: ObservableObject {
             createPanel(for: sp)
         }
 
-        // Update title with project context
         let cwdSuffix = approval.session.cwd.map { cwd in
             let parts = cwd.split(separator: "/").suffix(2).joined(separator: "/")
             return " — \(parts)"
@@ -279,9 +254,7 @@ final class ApprovalCoordinator: ObservableObject {
         }
     }
 
-    /// Compact tag for the action enum, used in diagnostic logs. Avoids
-    /// dumping the full enum (which would include user-typed notes) into
-    /// gavel.log.
+    /// Compact tag for gavel.log — avoids dumping the full enum (which contains user-typed notes) into the log file.
     private func actionLogTag(_ action: Action) -> String {
         switch action {
         case .allow: return "allow"
@@ -308,13 +281,7 @@ final class ApprovalCoordinator: ObservableObject {
         let contentView = ApprovalPanelView(coordinator: self, sessionPanel: sp)
         let hostingView = NSHostingView(rootView: contentView)
 
-        // Use a panel subclass that ignores plain Escape. Default NSPanel
-        // behavior: Escape (and Cmd+.) call `cancelOperation` which closes
-        // the panel. That orphans the pending approval (worker still
-        // blocked on its semaphore) and leaves the user with no UI to
-        // resolve it. The Deny button's `Cmd+Escape` shortcut still fires
-        // because it's handled at the SwiftUI level before reaching the
-        // window's cancelOperation.
+        // NoEscapeNSPanel: plain Escape would call `cancelOperation` and close the panel, orphaning the pending approval. Deny's Cmd+Escape SwiftUI shortcut still fires.
         let p = NoEscapeNSPanel(
             contentRect: NSRect(x: 0, y: 0, width: GavelConstants.panelWidth, height: GavelConstants.panelHeight),
             styleMask: [.titled, .closable, .resizable, .utilityWindow],
@@ -330,7 +297,6 @@ final class ApprovalCoordinator: ObservableObject {
         p.hidesOnDeactivate = false
         p.acceptsMouseMovedEvents = true
 
-        // Offset each session's panel so they don't stack on top of each other
         let offset = CGFloat(sessionPanels.count - 1) * 30
         if let frame = p.screen?.visibleFrame {
             p.setFrameOrigin(NSPoint(
@@ -342,7 +308,7 @@ final class ApprovalCoordinator: ObservableObject {
         sp.panel = p
     }
 
-    /// Replace typographic dashes (macOS smart dashes) with ASCII hyphens.
+    /// Replace typographic dashes with ASCII so saved patterns match input that arrives via clipboard/typing where macOS substituted them.
     static func sanitizeDashes(_ input: String) -> String {
         input.replacingOccurrences(of: "\u{2013}", with: "-")  // en-dash
              .replacingOccurrences(of: "\u{2014}", with: "--") // em-dash
@@ -353,8 +319,6 @@ final class ApprovalCoordinator: ObservableObject {
         sp.panel?.orderOut(nil)
     }
 }
-
-// MARK: - Array helper
 
 private extension Array {
     func partitioned(by predicate: (Element) -> Bool) -> (matching: [Element], rest: [Element]) {
@@ -368,17 +332,9 @@ private extension Array {
     }
 }
 
-// MARK: - Escape-resistant panel
-
-/// NSPanel that swallows the default `cancelOperation:` (plain Escape).
-/// Without this, pressing Escape in the approval dialog closes the panel
-/// without resolving the pending approval — the worker thread stays blocked
-/// on its semaphore and the user has no UI to dismiss it. The Deny button's
-/// Cmd+Escape SwiftUI shortcut still fires because it's intercepted before
-/// the keystroke reaches NSWindow's cancelOperation handling.
+/// NSPanel that swallows plain-Escape `cancelOperation:` — otherwise it'd close the panel and orphan the worker thread blocked on its semaphore. Deny's Cmd+Escape SwiftUI shortcut fires before reaching this method.
 private final class NoEscapeNSPanel: NSPanel {
     override func cancelOperation(_ sender: Any?) {
-        // intentional no-op — leave the dialog open so the user must
-        // explicitly choose Cmd+Return (allow) or Cmd+Escape (deny).
+        // Intentional no-op — user must explicitly choose Cmd+Return (allow) or Cmd+Escape (deny).
     }
 }

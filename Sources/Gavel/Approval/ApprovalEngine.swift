@@ -1,22 +1,6 @@
 import Foundation
 
-/// Core approval logic. Evaluates a PreToolUse event against a strict priority chain:
-///
-/// 1. Hard-blocked dangerous patterns (always block, not overridable)
-/// 2. Persistent DENY rules from RuleStore (block even under auto-approve)
-/// 3. Session pause state
-/// 4. User PROMPT rules (force dialog even under auto-approve)
-/// 5. Sensitive paths — gavel config, hooks, shell config (force dialog, not overridable)
-/// 6. Persistent ALLOW rules from RuleStore
-/// 7. Built-in PROMPT rules (seeded MCP exfil defaults, overridable by allow rules)
-/// 8. Timed auto-approve
-/// 9. Default: pass through to interactive approval
-///
-/// Key invariants:
-/// - Deny rules ALWAYS win over auto-approve.
-/// - Sensitive paths ALWAYS force a dialog — even with a broad allow rule like `Read: *`.
-/// - Built-in prompt rules are overridable by user allow rules (Stage 6 beats Stage 7).
-/// - User prompt rules are NOT overridable by allow rules (Stage 4 beats Stage 6).
+/// Strict priority chain: dangerous → deny → pause → user-prompt → sensitive-path → allow → builtin-prompt → auto → pass-through. Deny always beats auto; sensitive-paths always force a dialog.
 final class ApprovalEngine {
     let patternMatcher: PatternMatcher
     let ruleStore: RuleStore
@@ -27,48 +11,47 @@ final class ApprovalEngine {
     }
 
     func evaluate(payload: PreToolUsePayload, session: Session) -> Decision {
-        // 1. Hard-coded dangerous patterns (always block, no override)
+        // 1. Hard-coded dangerous patterns — non-overridable.
         if let reason = patternMatcher.matchDangerous(payload: payload) {
             return Decision(verdict: .block, reason: reason)
         }
 
-        // 2. Persistent DENY rules — block even under auto-approve
+        // 2. Persistent DENY rules — block even under auto-approve.
         if let decision = ruleStore.evaluateDeny(payload: payload) {
             return decision
         }
 
-        // 3. Session pause state
+        // 3. Session pause.
         if session.isPaused {
             return Decision(verdict: .block, reason: "Session paused via Gavel")
         }
 
-        // 4. User PROMPT rules (builtIn=false) — force dialog, beats allow rules
+        // 4. User PROMPT rules — force dialog, beats allow rules below.
         if let decision = ruleStore.evaluateUserPrompt(payload: payload) {
             return decision
         }
 
-        // 5. Sensitive paths — gavel config, hooks, shell config (force dialog)
-        //    Checked BEFORE allow rules so broad rules like `Read: *` can't bypass self-protection.
+        // 5. Sensitive paths — checked BEFORE allow rules so a broad `Read: *` can't bypass self-protection.
         if let reason = patternMatcher.matchSensitivePath(payload: payload) {
             return Decision(verdict: .block, reason: reason, askUser: true)
         }
 
-        // 6. Persistent ALLOW rules
+        // 6. Persistent ALLOW rules.
         if let decision = ruleStore.evaluateAllow(payload: payload) {
             return decision
         }
 
-        // 7. Built-in PROMPT rules (builtIn=true) — overridable by allow rules above
+        // 7. Built-in PROMPT rules — overridable by Stage 6 allow rules above.
         if let decision = ruleStore.evaluateBuiltInPrompt(payload: payload) {
             return decision
         }
 
-        // 8. Timed auto-approve
+        // 8. Timed auto-approve.
         if session.isAutoApproveActive {
             return Decision(verdict: .allow, reason: "AUTO-APPROVED (timed)")
         }
 
-        // 9. Default: pass through (HookRouter decides: auto-approve, session rules, or dialog)
+        // 9. Pass-through — HookRouter applies auto-approve, session rules, or dialog.
         return Decision(verdict: .allow, reason: nil)
     }
 }

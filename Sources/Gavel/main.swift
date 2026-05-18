@@ -3,14 +3,6 @@ import Carbon.HIToolbox
 import Combine
 import SwiftUI
 
-/// Gavel — Native macOS daemon for Claude Code session monitoring and approval.
-///
-/// Runs as a menu bar app. Listens on a Unix socket for hook events,
-/// evaluates approval rules, and displays a live activity monitor.
-/// In interactive mode, pops up an approval dialog for each tool call.
-
-// MARK: - App Delegate
-
 class GavelAppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var monitorWindow: NSWindow?
@@ -35,7 +27,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
     var socketServer: SocketServer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Disable macOS smart dashes/quotes — gavel needs exact ASCII for patterns
+        // Disable macOS smart dashes/quotes/completion — gavel needs exact ASCII for pattern matching in rule editors.
         UserDefaults.standard.set(false, forKey: "NSAutomaticDashSubstitutionEnabled")
         UserDefaults.standard.set(false, forKey: "NSAutomaticQuoteSubstitutionEnabled")
         UserDefaults.standard.set(false, forKey: "NSAutomaticTextCompletionEnabled")
@@ -55,12 +47,11 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
 
         registerGlobalHotKeys()
 
-        NSApp.setActivationPolicy(.accessory) // Menu bar only, no dock icon
+        NSApp.setActivationPolicy(.accessory) // Menu bar only — no dock icon.
     }
 
     private func registerGlobalHotKeys() {
-        // Cmd+Opt+Shift+P — system-wide "Prompt All Sessions" panic button.
-        // Mirrors the menu item shortcut but fires even when another app is frontmost.
+        // Cmd+Opt+Shift+P — system-wide "Prompt All Sessions" panic button, fires even when another app is frontmost.
         let modifiers = UInt32(cmdKey | optionKey | shiftKey)
         GlobalHotKey.register(keyCode: UInt32(kVK_ANSI_P), modifiers: modifiers) { [weak self] in
             self?.viewModel.promptAllSessions()
@@ -71,19 +62,15 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         socketServer?.stop()
     }
 
-    // MARK: - Main Menu (needed for Cmd+V/C/X/A in text fields)
-
     private func setupMainMenu() {
         let mainMenu = NSMenu()
 
-        // App menu
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(NSMenuItem(title: "Quit Gavel", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
-        // Edit menu — enables standard text editing shortcuts
         let editMenuItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
         editMenu.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
@@ -98,8 +85,6 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
 
         NSApp.mainMenu = mainMenu
     }
-
-    // MARK: - Menu Bar
 
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -188,7 +173,6 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         guard let bundleID = sender.representedObject as? String else { return }
         EditorPreference.preferredBundleID = bundleID
 
-        // Rebuild submenu to update checkmark
         if let contextItem = statusItem.menu?.items.first(where: { $0.title == "Edit Session Context" }) {
             contextItem.submenu = buildEditorSubmenu()
         }
@@ -201,7 +185,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         EditorPreference.open(contextPath)
     }
 
-    /// Copy the default session-context.md if none exists.
+    /// Copy the default session-context.md to `~/.claude/gavel/` if none exists — first-run scaffolding for the editor menu.
     private func seedSessionContext() {
         let dest = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/gavel/session-context.md")
@@ -246,9 +230,9 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func reloadBinary() {
+        // Clean exit — LaunchAgent's KeepAlive restarts us with the updated binary.
         gavelLog("Reload requested — exiting for LaunchAgent restart")
         socketServer?.stop()
-        // Clean exit — LaunchAgent's KeepAlive restarts us with the updated binary
         exit(0)
     }
 
@@ -256,8 +240,6 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         socketServer?.stop()
         NSApp.terminate(nil)
     }
-
-    // MARK: - Socket Server
 
     private func setupSocketServer() {
         let socketDir = FileManager.default.homeDirectoryForCurrentUser
@@ -271,8 +253,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
             try socketServer?.start()
             print("Gavel listening on \(socketPath)")
         } catch GavelError.daemonAlreadyRunning(let path) {
-            // TOCTOU: a peer daemon came up between our top-level probe and
-            // this bind. Refuse to clobber it.
+            // TOCTOU: a peer daemon came up between the top-level probe and this bind. Refuse to clobber it.
             gavelLog("Refusing to start: another gavel daemon is already serving \(path) (TOCTOU)")
             FileHandle.standardError.write(Data("gavel: another daemon is already running on \(path)\n".utf8))
             exit(1)
@@ -296,9 +277,6 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// MARK: - Launch
-
-// Crash logging — write last words before dying
 let logPath = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".claude/gavel/gavel.log").path
 
@@ -314,22 +292,17 @@ func gavelLog(_ msg: String) {
     }
 }
 
-// Catch uncaught exceptions
 NSSetUncaughtExceptionHandler { exception in
     gavelLog("CRASH: \(exception.name.rawValue) — \(exception.reason ?? "no reason")")
     gavelLog("STACK: \(exception.callStackSymbols.prefix(10).joined(separator: "\n  "))")
 }
 
-// Argv handling — runs BEFORE any daemon setup. Without this, an unknown
-// arg like `gavel --version` falls through to NSApplication.run() and
-// silently launches a second daemon that fights the real one for the socket
-// (split-brain). Diagnostic invocations should never bind the socket.
+// Must run BEFORE NSApplication.run() — unknown args (`gavel --version`) would otherwise fall through and silently start a second daemon that fights for the socket.
 parseArgsOrExit(Array(CommandLine.arguments.dropFirst()))
 
-// Ignore SIGPIPE — clients disconnect, we don't want to die
+// Clients disconnect mid-write; don't let SIGPIPE kill the daemon.
 signal(SIGPIPE, SIG_IGN)
 
-// Catch fatal signals
 for sig: Int32 in [SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE] {
     signal(sig) { signum in
         gavelLog("SIGNAL: \(signum)")
@@ -339,11 +312,7 @@ for sig: Int32 in [SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE] {
 
 gavelLog("Gavel starting")
 
-// Single-instance guard: probe the socket BEFORE NSApplication.run() so a
-// duplicate launch never shows a menu bar icon and never registers as a
-// running daemon. SocketServer.start() also enforces this, but probing
-// here keeps the foot-gun symptoms (split-brain, ghost menu bar) off the
-// screen entirely.
+// Single-instance guard BEFORE NSApplication.run() — SocketServer.start() also enforces this, but probing here keeps split-brain symptoms (ghost menu bar) off the screen entirely.
 let socketPath = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".claude/gavel/gavel.sock").path
 if SocketServer.probeAlive(socketPath: socketPath) {
@@ -357,11 +326,7 @@ let delegate = GavelAppDelegate()
 app.delegate = delegate
 app.run()
 
-// MARK: - Argv parsing
-
-/// Returns normally only when the binary should proceed to daemon launch.
-/// Calls `exit()` for `--version`/`--help` and any unknown argument, so the
-/// process never reaches `NSApplication.run()` and never binds the socket.
+/// Returns only when the binary should proceed to daemon launch; calls `exit()` on `--version`/`--help`/unknown so the process never binds the socket.
 func parseArgsOrExit(_ args: [String]) {
     if args.isEmpty { return }
     if args.count > 1 {

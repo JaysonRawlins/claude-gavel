@@ -114,8 +114,6 @@ struct FeedRow: View {
     }
 }
 
-// MARK: - Display Model
-
 struct FeedDisplayEntry: Identifiable {
     let id: UUID
     let timestamp: String

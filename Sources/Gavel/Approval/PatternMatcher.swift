@@ -1,78 +1,39 @@
 import Foundation
 
-/// Matches tool calls against dangerous patterns that should always be blocked.
-///
-/// Two categories:
-/// 1. **Bash command patterns** — regex matching against command strings
-/// 2. **Protected path patterns** — block Write/Edit to sensitive file paths
+/// Matches tool calls against dangerous bash commands and sensitive file paths.
 struct PatternMatcher {
-
-    /// Pre-compiled dangerous bash command patterns — hard block.
     private let bashPatterns: [(regex: NSRegularExpression, reason: String)]
 
-    /// Pre-compiled bash patterns that force dialog — destructive but sometimes legitimate.
     private let askUserBashPatterns: [(regex: NSRegularExpression, reason: String)]
 
-    /// Pre-compiled protected file path patterns — hard block (credentials, persistence).
     private let protectedPaths: [(regex: NSRegularExpression, reason: String)]
 
-    /// Pre-compiled protected file path patterns — force dialog (config, hooks, shell).
     private let askUserPaths: [(regex: NSRegularExpression, reason: String)]
 
-    /// Pre-compiled sensitive read patterns — hard block (actual secrets).
     private let sensitiveReads: [(regex: NSRegularExpression, reason: String)]
 
-    /// Pre-compiled sensitive read patterns — force dialog (configuration).
     private let askUserReads: [(regex: NSRegularExpression, reason: String)]
 
     init() {
         let rawBash: [(pattern: String, reason: String)] = [
-            // ── Credential exfiltration (expanded) ──
-            // curl with any data-sending flag. Short flags must be case-sensitive
-            // (`(?-i:...)`) because curl distinguishes `-d`/`-D`, `-F`/`-f`, `-T`/`-t`:
-            // `-D` is `--dump-header` (receive), `-f` is `--fail`, `-t` is
-            // `--telnet-option` — none of which send data. The surrounding rule set
-            // is compiled `.caseInsensitive`, which previously made `-D`/`-f`/`-t`
-            // false-trigger this exfil rule on benign downloads like
-            // `curl -D - -o file URL`.
+            // `(?-i:...)` keeps short flags case-sensitive — curl's `-D`/`-f`/`-t` (download/fail/telnet) must not match the `.caseInsensitive`-compiled rule set.
             ("\\bcurl\\b.*(?-i:-d|--data|--data-raw|--data-binary|--data-urlencode|-F|--form|--upload-file|-T)\\b", "Potential data exfiltration via curl"),
-            // curl with URL containing variable/subshell expansion (exfil via URL).
-            // Anchored to command position so `MY_CURL=$(which curl)` (a benign var
-            // assignment that captures the curl path) doesn't trip on `\bcurl\b`
-            // matching the all-caps env var name under case-insensitive matching.
+            // Anchored to command position so env-var assignments like `MY_CURL=$(...)` don't false-trigger under case-insensitive matching.
             ("(^|[|&;(])\\s*curl\\s+.*\\$\\(", "Potential exfiltration via curl with command substitution"),
-            // wget POST
             ("\\bwget\\b.*--post-(data|file)", "Potential data exfiltration via wget"),
-            // python/ruby/perl network exfil
             ("\\b(python3?|ruby|perl)\\b.*\\b(urlopen|urllib|requests\\.|Net::HTTP|socket\\.connect|TCPSocket|IO\\.popen)", "Scripting language network exfiltration"),
-            // openssl data exfil
             ("\\bopenssl\\b.*s_client.*connect", "Potential exfiltration via openssl"),
-            // scp/rsync to remote. Anchored to command position so a `SCP=...`
-            // env-var assignment doesn't match `\bSCP\b` (case-insensitive) and
-            // false-trigger on a colon appearing later in the same line (URLs,
-            // time strings, etc.).
+            // Anchored: `SCP=...` env-var prefix would otherwise match `\bSCP\b` under case-insensitive matching.
             ("(^|[|&;(])\\s*(scp|rsync)\\s+.*:", "Potential file exfiltration via scp/rsync"),
-            // dns exfiltration
-            // Anchor to command position to avoid matching shell variables like
-            // `DIG=$(...)` — case-insensitive matching makes `DIG` look like `dig`,
-            // and the unanchored `\\b` form treated `=` as a word boundary.
-            // Real `dig`/`nslookup`/`host` invocations sit at the start of a
-            // command, after a chain operator, or inside a subshell, followed by
-            // a whitespace-separated argument list that contains `$(`.
+            // Anchored: `DIG=$(...)` env-var prefix would otherwise match `\bDIG\b` under case-insensitive matching.
             ("(^|[|&;(])\\s*(dig|nslookup|host)\\s+.*\\$\\(", "Potential DNS exfiltration"),
 
-            // ── Environment variable theft (expanded) ──
-            // env/printenv/set anchored to command position. Without anchoring,
-            // case-insensitive `\bENV\b` matched the leading `ENV=production ...`
-            // env-var assignment that's common in shell pipelines (e.g.
-            // `ENV=prod node server > /tmp/server.log`), false-blocking benign work.
+            // Anchored: `ENV=prod node ...` env-var prefix is common in shell pipelines and would otherwise false-block.
             ("(^|[|&;(])\\s*(env|printenv|set)\\s+.*[|].*\\b(curl|wget|nc|ncat|python|ruby|perl)\\b", "Piping environment to network command"),
             ("(^|[|&;(])\\s*(env|printenv|set)\\s+.*>\\s*/tmp/", "Environment variables written to temp file"),
-            // curl + -d + $(env|printenv|set) — short flag must stay case-sensitive
-            // (see L38 rationale).
+            // `(?-i:-d)` must stay case-sensitive — see curl-data rationale above.
             ("\\bcurl\\b.*(?-i:-d).*\\$\\(\\s*(env|printenv|set)\\b", "Environment exfiltration via curl subshell"),
 
-            // ── Reverse shells (expanded) ──
             ("\\bbash\\s+-i\\s+>&", "Reverse shell pattern detected"),
             ("/dev/tcp/", "Reverse shell via /dev/tcp"),
             ("\\b(nc|ncat)\\b.*(-e|--exec|--sh-exec)\\s+/", "Netcat reverse shell"),
@@ -81,108 +42,73 @@ struct PatternMatcher {
             ("\\bzsh\\s+-i\\s+>&", "Zsh reverse shell"),
             ("\\bphp\\b.*fsockopen.*exec", "PHP reverse shell"),
 
-            // ── Persistence mechanisms (expanded) ──
-            // crontab anchored to command position with whitespace/EOL after the
-            // name so a `CRONTAB=/etc/crontab` env-var assignment (which has `=`
-            // after the name, a `\b` boundary but not `\s`) doesn't false-match.
+            // Anchored + `\s` follower: `CRONTAB=...` env-var assignment has `=` after the name (not whitespace), so it can't false-match.
             ("(^|[|&;(])\\s*crontab(\\s+|$)", "Crontab modification"),
             ("\\blaunchctl\\b\\s+(load|unload|submit|bootstrap|bootout|enable|disable|kickstart)", "LaunchAgent/Daemon modification"),
-            // `at` command: require a segment boundary AND a recognizable timespec.
-            // The previous `\bat\b\s+` matched any prose "at " — e.g. heredoc bodies
-            // inside `gh pr create`, or commit messages like "fix bug at line 42".
-            // Real `at` invocations live at the start of a command or after a pipe /
-            // chain operator, followed by a time keyword, clock time (`HH:MM`), or
-            // relative offset (`+ N ...`).
+            // Anchored + requires a real timespec — bare "at " in prose (commit messages, heredocs) would otherwise match.
             ("(^|[|&;])\\s*at\\s+(-[a-zA-Z]\\s+\\S+\\s+)?(now\\b|noon\\b|midnight\\b|teatime\\b|\\d{1,2}:\\d{2}|\\+\\s*\\d)", "at job scheduling"),
 
-            // ── Destructive operations (catastrophic, non-recoverable) ──
             ("\\bmkfs\\b", "Filesystem format command"),
             ("\\bdd\\b\\s+.*of=/dev/", "Direct disk write"),
 
-            // ── SSH/GPG key access (expanded) ──
             ("\\b(cat|head|tail|less|more|cp|mv|base64|xxd|openssl)\\b.*\\.ssh/(id_|authorized|known_hosts)", "SSH key/config access"),
             ("\\b(cat|head|tail|less|more|cp|mv|base64)\\b.*\\.gnupg/", "GPG key access"),
 
-            // ── Gavel self-protection ──
             ("\\b(pkill|killall)\\b.*\\bgav", "Attempt to kill Gavel daemon"),
             ("\\bkill\\b.*\\b(pgrep|pidof)\\b.*gav", "Attempt to kill Gavel daemon"),
             ("\\brm\\b.*gavel\\.sock", "Attempt to remove Gavel socket"),
             ("\\brm\\b.*\\.claude/gavel/", "Attempt to delete Gavel config"),
-            // Block killing by PID if the command discovers the PID first
+
             ("\\bkill\\b.*\\$\\(.*gav", "Attempt to kill Gavel via PID lookup"),
 
-            // ── Command obfuscation ──
             ("\\beval\\b.*\\$\\(.*\\b(base64|b64decode)\\b", "Obfuscated command via eval+base64"),
             ("\\bbase64\\s+-[dD]\\b.*\\|.*\\b(bash|sh|zsh)\\b", "Base64 decoded pipe to shell"),
             ("\\$\\(.*\\bbase64\\s+-[dD]\\b", "Base64 decode in subshell (command obfuscation)"),
             ("\\$\\(.*\\bbase64\\b.*--decode", "Base64 decode in subshell (command obfuscation)"),
             ("\\bbash\\s*<<", "Heredoc execution (potential obfuscation)"),
 
-            // ── Compiled/scripted exfiltration via temp files ──
-            // Compiling in temp directories
             ("\\b(gcc|g\\+\\+|clang|clang\\+\\+|rustc|javac|swiftc)\\b.*/tmp/", "Compiling code in temp directory"),
             ("\\b(go\\s+build|go\\s+run)\\b.*/tmp/", "Building/running Go code from temp directory"),
             ("\\bcargo\\s+(build|run)\\b.*--manifest-path.*/tmp/", "Building Rust code from temp directory"),
-            // Executing scripts from temp directories
+
             ("\\b(perl|ruby|node|swift|php|lua)\\b\\s+/tmp/", "Running script from temp directory"),
-            // Running any executable from /tmp (direct execution)
+
             ("^\\s*/tmp/\\S+", "Running executable from temp directory"),
             ("&&\\s*/tmp/\\S+", "Running executable from temp directory (chained)"),
             ("\\|\\s*/tmp/\\S+", "Running executable from temp directory (piped)"),
             (";\\s*/tmp/\\S+", "Running executable from temp directory (sequential)"),
-            // cd to /tmp then execute (bypass /tmp/ path check)
+
             ("\\bcd\\s+/tmp\\b.*&&", "Changing to temp directory and executing"),
-            // chmod +x on temp files (making them executable)
+
             ("\\bchmod\\b.*\\+x.*/tmp/", "Making temp file executable"),
         ]
 
-        // Destructive/sensitive bash commands — force dialog instead of hard block
         let rawAskUserBash: [(pattern: String, reason: String)] = [
-            // Recursive delete
             ("\\brm\\s+-\\w*[rR]\\w*\\s+/(?!tmp\\b)", "Recursive delete from root path"),
             ("\\brm\\s+-\\w*[rR]\\w*\\s+\\./", "Recursive delete from current directory"),
             ("\\brm\\s+-\\w*[rR]\\w*\\s+\\.\\./", "Recursive delete from parent directory"),
             ("\\brm\\s+--recursive", "Recursive delete (long flag)"),
-            // Cloud CLI write operations
             ("\\baz\\s+.*\\b(update|create|delete|set|add|remove|start|stop|restart)\\b", "Azure CLI write operation"),
             ("\\baws\\s+.*\\b(create|delete|update|put|remove|terminate|stop|start|modify|run)\\b(?!.*--dry-run)", "AWS CLI write operation"),
             ("\\bgcloud\\s+.*\\b(create|delete|update|add|remove|start|stop|deploy)\\b", "GCloud CLI write operation"),
-            // ── Bypass-coverage fallbacks ──
-            // The hard-block versions of these (rawBash above) anchor to command
-            // position to avoid env-var-prefix false positives. That leaves a gap
-            // for `bash -c "curl $(...)"`-style invocations where the dangerous
-            // command isn't at command position. Mirror the broader, unanchored
-            // pattern here at ask-user tier so the user gets a dialog instead of
-            // silent allow. Patterns selected for ask-user only when their FP
-            // shape is rare in practice (env-var-prefix idioms like `ENV=prod cmd`
-            // are too common to prompt on, so those gaps stay accepted).
+            // Broad fallbacks for the anchored hard-block patterns above — catches `bash -c "curl $(...)"` style where the command isn't at command position.
             ("\\bcurl\\b.*\\$\\(", "curl with command substitution (broad — review)"),
             ("\\bcrontab\\b", "crontab reference (broad — review)"),
         ]
 
-        // Hard block — credentials and persistence vectors that should never be written
         let rawPaths: [(pattern: String, reason: String)] = [
-            // SSH keys and config
             ("\\.ssh/(id_|authorized_keys|config)", "Protected: SSH keys/config"),
-            // GPG keys
             ("\\.gnupg/", "Protected: GPG keys"),
-            // LaunchAgents (persistence vector)
             ("LaunchAgents/", "Protected: LaunchAgent (persistence risk)"),
             ("LaunchDaemons/", "Protected: LaunchDaemon (persistence risk)"),
-            // AWS/cloud credentials
             ("\\.aws/(credentials|config)", "Protected: AWS credentials"),
             ("\\.kube/config", "Protected: Kubernetes config"),
-            // Environment files
             ("\\.env$", "Protected: Environment file"),
         ]
 
-        // Ask user — config and tools that may legitimately need editing
         let rawAskUserPaths: [(pattern: String, reason: String)] = [
-            // Gavel's own config
             ("\\.claude/gavel/(rules\\.json|session-defaults\\.json|hooks/|bin/)", "Sensitive: Gavel config"),
-            // Claude Code hooks and settings
             ("\\.claude/(settings\\.json|settings\\.local\\.json|hooks/)", "Sensitive: Claude Code settings/hooks"),
-            // Shell config
             ("\\.(bash_profile|bashrc|zshrc|zprofile|profile|zshenv)$", "Sensitive: Shell config"),
         ]
 
@@ -214,30 +140,20 @@ struct PatternMatcher {
             return (regex, entry.reason)
         }
 
-        // Hard block — actual secrets that should never be read
         let rawSensitiveReads: [(pattern: String, reason: String)] = [
-            // SSH private keys
             ("\\.ssh/(id_|id_rsa|id_ed25519|id_ecdsa)", "Blocked: SSH private key read"),
-            // GPG private keys
             ("\\.gnupg/(private-keys|secring|trustdb)", "Blocked: GPG private key read"),
-            // AWS credentials
             ("\\.aws/credentials", "Blocked: AWS credentials read"),
-            // Kubernetes secrets
             ("\\.kube/config", "Blocked: Kubernetes config read"),
-            // Environment files with secrets
             ("\\.env$", "Blocked: Environment file read"),
             ("\\.env\\.local$", "Blocked: Local environment file read"),
-            // Keychain
             ("Keychains/", "Blocked: Keychain access"),
-            // Token/credential files
             ("\\.(token|secret|credentials|key)$", "Blocked: Credential file read"),
-            // NPM/Docker/Hub tokens
             ("\\.npmrc$", "Blocked: NPM config (may contain tokens)"),
             ("\\.docker/config\\.json", "Blocked: Docker config (may contain tokens)"),
             ("\\.netrc$", "Blocked: netrc credentials"),
         ]
 
-        // Ask user — configuration that may need reading for self-mutation
         let rawAskUserReads: [(pattern: String, reason: String)] = [
             ("\\.claude/gavel(/|$)", "Sensitive: Gavel config read"),
             ("\\.claude/(settings|settings\\.local)\\.json", "Sensitive: Claude Code settings read"),
@@ -257,17 +173,8 @@ struct PatternMatcher {
             }
             return (regex, entry.reason)
         }
-
     }
 
-    // MCP exfiltration patterns are now seeded as persistent rules in RuleStore.
-    // See RuleStore.seededDefaults for the patterns (Slack, Playwright, Email, Webhooks, HTTP).
-
-    /// Check if a PreToolUse payload matches any dangerous pattern.
-    /// Returns a reason string if dangerous, nil if safe.
-    ///
-    /// MCP exfiltration patterns are handled separately as seeded persistent rules
-    /// in RuleStore (visible in the Rules tab, overridable by allow rules).
     func matchDangerous(payload: PreToolUsePayload) -> String? {
         switch payload.toolName {
         case "Bash":
@@ -276,10 +183,7 @@ struct PatternMatcher {
             if let pathBlock = matchProtectedPath(payload.filePath) {
                 return pathBlock
             }
-            // Only scan content for files in temp directories — project source files
-            // contain pattern strings as literals that trigger false positives.
-            // Skip documentation extensions: scanner targets polyglot exfil scripts,
-            // not prose that happens to mention credentials and contain hyperlinks.
+
             if let path = payload.filePath, Self.isTempPath(path), !Self.isDocumentationPath(path) {
                 let contentToScan = payload.toolInput["content"]?.stringValue
                     ?? payload.toolInput["new_string"]?.stringValue
@@ -295,10 +199,7 @@ struct PatternMatcher {
         }
     }
 
-    /// Check sensitive paths that require user confirmation (gavel config, hooks, shell config).
-    /// Called from ApprovalEngine AFTER allow rules — returns askUser decision.
     func matchSensitivePath(payload: PreToolUsePayload) -> String? {
-        // Bash: check askUser destructive patterns (rm -rf etc.)
         if payload.toolName == "Bash", let command = payload.command {
             if let reason = checkAskUserBash(command) { return reason }
             let expanded = Self.expandInlineVariables(command)
@@ -310,7 +211,6 @@ struct PatternMatcher {
         guard let path = payload.filePath else { return nil }
         let range = NSRange(path.startIndex..., in: path)
 
-        // Write/Edit: check askUser write paths
         if ["Write", "Edit", "MultiEdit"].contains(payload.toolName) {
             for (regex, reason) in askUserPaths {
                 if regex.firstMatch(in: path, range: range) != nil {
@@ -319,8 +219,6 @@ struct PatternMatcher {
             }
         }
 
-        // Read/Glob/Grep: check askUser read paths (config files needed for self-mutation)
-        // Grep can leak file contents via pattern matching; Glob reveals file existence.
         if ["Read", "Glob", "Grep"].contains(payload.toolName) {
             for (regex, reason) in askUserReads {
                 if regex.firstMatch(in: path, range: range) != nil {
@@ -343,15 +241,11 @@ struct PatternMatcher {
         return nil
     }
 
-    // MARK: - Bash command matching
-
     private func matchBashCommand(_ command: String?) -> String? {
         guard let command = command else { return nil }
 
         if let reason = checkBashPatterns(command) { return reason }
 
-        // Fallback: expand inline variables and re-check.
-        // Catches: D="doppler"; S="secrets"; $D $S → doppler secrets
         let expanded = Self.expandInlineVariables(command)
         if expanded != command, let reason = checkBashPatterns(expanded) {
             return reason + " (variable expansion detected)"
@@ -374,19 +268,10 @@ struct PatternMatcher {
         return nil
     }
 
-    /// Strip message/string-literal content to reduce false positives.
-    /// Strips heredoc content, quoted args after message flags, and echo/printf args.
-    /// Does NOT strip code arguments (python -c, ruby -e, perl -e).
-    ///
-    ///     "git commit -m 'fixed curl issue'" → "git commit -m ''"
-    ///     "echo 'curl -d foo'" → "echo ''"
-    ///     "git commit -m \"$(cat <<'EOF'\ndoppler secrets\nEOF\n)\"" → heredoc content removed
+    /// Strip heredoc bodies and `-m`/`--message`/`echo`/`printf` quoted args so prose can't trigger command pattern matches.
     static func stripQuotedContent(_ command: String) -> String {
         var result = command
 
-        // Strip heredoc content: <<'EOF'\n...\nEOF → <<'EOF'\nEOF
-        // Heredocs are string literals (commit messages, PR bodies) — not executable.
-        // Note: `bash <<EOF` (heredoc execution) is caught by a separate pattern BEFORE stripping.
         if let regex = try? NSRegularExpression(
             pattern: #"<<-?'?"?(\w+)"?'?\s*\n.*?\n\s*\1"#,
             options: [.dotMatchesLineSeparators]
@@ -394,7 +279,6 @@ struct PatternMatcher {
             result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "<<$1\n$1")
         }
 
-        // Strip quoted content after message flags: -m, --message, --body, --title
         if let regex = try? NSRegularExpression(pattern: #"(-m|--message|--body|--title)\s+"([^"\\]|\\.)*""#) {
             result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "$1 \"\"")
         }
@@ -402,7 +286,6 @@ struct PatternMatcher {
             result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "$1 ''")
         }
 
-        // Strip echo/printf arguments
         if let regex = try? NSRegularExpression(pattern: #"\b(echo|printf)\s+"([^"\\]|\\.)*""#) {
             result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "$1 \"\"")
         }
@@ -412,8 +295,6 @@ struct PatternMatcher {
 
         return result
     }
-
-    // MARK: - Protected path matching (Write/Edit)
 
     private func matchProtectedPath(_ filePath: String?) -> String? {
         guard let path = filePath else { return nil }
@@ -427,8 +308,6 @@ struct PatternMatcher {
         return nil
     }
 
-    // MARK: - Sensitive read matching (Read tool)
-
     private func matchSensitiveRead(_ filePath: String?) -> String? {
         guard let path = filePath else { return nil }
 
@@ -441,18 +320,12 @@ struct PatternMatcher {
         return nil
     }
 
-    // MARK: - Dangerous content scanning (Write tool)
-
-    /// Scans file content for code that both accesses credentials AND sends data over the network.
-    /// Blocks polyglot exfil scripts (Rust, C, Go, Perl, etc.) written to temp files.
     private func matchDangerousContent(_ content: String?) -> String? {
         guard let content = content, content.count > GavelConstants.minContentScanLength else { return nil }
 
         let range = NSRange(content.startIndex..., in: content)
 
-        // Check for credential/sensitive path references in the content.
-        // Path-shaped indicators only — bare nouns like "credentials" cause FPs in any
-        // documentation that mentions auth (e.g. Microsoft/AWS docs with hyperlinks).
+        // Path-shaped indicators only — bare nouns like "credentials" trigger FPs in docs that mention auth.
         let credPatterns = [
             "\\.ssh/", "\\.aws/", "\\.gnupg/", "\\.env\\b",
             "\\.kube/config", "\\.npmrc", "\\.netrc", "\\.docker/config",
@@ -466,33 +339,32 @@ struct PatternMatcher {
                 break
             }
         }
-        // Also check for generic file-read + network combo (runtime exfil wrappers)
-        // e.g., C code with fopen/fread + system("curl") or socket
+
+        // No path-shaped credential reference — fall back to the generic "reads arbitrary file + has network capability" exfil-wrapper heuristic.
         if !hasCredRef {
-            // Check for generic file-read patterns (any language)
             let fileReadKeywords = [
-                "\\bfopen\\b", "\\bfread\\b",              // C
-                "\\bopen\\b.*O_RDONLY",                    // C low-level
-                "\\bfs::read\\b", "\\bfs::read_to_string", // Rust
-                "\\bFile\\.read\\b",                       // Ruby
-                "\\bioutil\\.ReadFile\\b",                 // Go (old)
-                "\\bos\\.ReadFile\\b",                     // Go (new)
-                "\\bos\\.Open\\b",                         // Go
-                "\\bcontentsOfFile\\b",                    // Swift
-                "\\bcontentsOf:\\b",                       // Swift
-                "\\bFileManager\\b.*\\bcontents\\b",       // Swift
-                "\\bopen\\s*\\(",                           // Python open()
-                "\\bPath\\s*\\(.*\\.read_text\\b",         // Python pathlib
-                "\\bfs\\.readFileSync\\b",                 // Node.js
-                "\\bfs\\.readFile\\b",                     // Node.js
-                "\\bfs\\.promises\\.readFile\\b",          // Node.js async
-                "\\bfile_get_contents\\b",                 // PHP
-                "\\bio\\.open\\b",                         // Lua
-                "\\bFiles\\.readString\\b",                // Java
-                "\\bFiles\\.readAllBytes\\b",              // Java
-                "\\bBufferedReader\\b",                    // Java
-                "\\breadFileAlloc\\b",                     // Zig
-                "\\bstd\\.fs\\b",                          // Zig
+                "\\bfopen\\b", "\\bfread\\b",
+                "\\bopen\\b.*O_RDONLY",
+                "\\bfs::read\\b", "\\bfs::read_to_string",
+                "\\bFile\\.read\\b",
+                "\\bioutil\\.ReadFile\\b",
+                "\\bos\\.ReadFile\\b",
+                "\\bos\\.Open\\b",
+                "\\bcontentsOfFile\\b",
+                "\\bcontentsOf:\\b",
+                "\\bFileManager\\b.*\\bcontents\\b",
+                "\\bopen\\s*\\(",
+                "\\bPath\\s*\\(.*\\.read_text\\b",
+                "\\bfs\\.readFileSync\\b",
+                "\\bfs\\.readFile\\b",
+                "\\bfs\\.promises\\.readFile\\b",
+                "\\bfile_get_contents\\b",
+                "\\bio\\.open\\b",
+                "\\bFiles\\.readString\\b",
+                "\\bFiles\\.readAllBytes\\b",
+                "\\bBufferedReader\\b",
+                "\\breadFileAlloc\\b",
+                "\\bstd\\.fs\\b",
             ]
             var hasFileRead = false
             for pattern in fileReadKeywords {
@@ -502,40 +374,26 @@ struct PatternMatcher {
                     break
                 }
             }
-            // If has generic file read + ANY network capability → suspicious exfil wrapper
+
             if hasFileRead {
                 let networkKeywords = [
-                    // C: system/popen with network tools
                     "\\bsystem\\s*\\(", "\\bpopen\\s*\\(",
-                    // Direct network tool references
                     "\\bcurl\\b", "\\bwget\\b", "\\bnc\\b", "\\bncat\\b",
-                    // Go network
                     "\\bhttp\\.Post\\b", "\\bhttp\\.Get\\b", "\\bhttp\\.NewRequest\\b",
                     "\\bnet\\.Dial\\b", "\"net/http\"",
-                    // Swift network
                     "\\bURLSession\\b", "\\bURLRequest\\b",
-                    // Rust network
                     "\\breqwest\\b", "\\bhyper\\b", "\\bTcpStream\\b",
-                    // Ruby network
                     "\\bNet::HTTP\\b", "\\bTCPSocket\\b",
-                    // Perl network
                     "\\bIO::Socket\\b", "\\bLWP::", "\\bHTTP::Request\\b",
-                    // Python network
                     "\\burllib\\.request\\b", "\\brequests\\.", "\\burlopen\\b",
-                    // Node.js network
                     "\\bhttps?\\.request\\b", "\\bfetch\\s*\\(",
                     "require\\s*\\(\\s*['\"]https?['\"]\\s*\\)",
-                    // PHP network
                     "\\bcurl_init\\b", "\\bcurl_exec\\b",
                     "\\bfile_get_contents\\s*\\(\\s*['\"]http",
-                    // Lua network
                     "\\bsocket\\.http\\b",
-                    // Java network
                     "\\bHttpURLConnection\\b", "\\bHttpClient\\b",
                     "\\bjava\\.net\\.",
-                    // Zig network
                     "\\bstd\\.http\\.Client\\b",
-                    // Generic
                     "\\bsocket\\b.*\\bconnect\\b",
                 ]
                 for pattern in networkKeywords {
@@ -548,20 +406,19 @@ struct PatternMatcher {
             return nil
         }
 
-        // Check for network/exfil code in the content
         let networkPatterns = [
             "\\b(socket|connect|send|recv|TcpStream|UdpSocket)\\b",
-            "\\b(https?|ftp)://\\S+",  // URL with scheme — anchored to require host after ://
+            "\\b(https?|ftp)://\\S+",
             "\\b(urlopen|requests\\.|fetch|HttpClient|reqwest)\\b",
             "\\b(POST|PUT)\\b.*\\b(http|url|uri|endpoint)\\b",
             "\\b(curl|wget|nc|ncat)\\b",
-            "\\bIO::Socket\\b",  // Perl
-            "\\bNet::(HTTP|FTP)\\b",  // Ruby/Perl
-            "\\bnet\\.(Dial|Listen|http)\\b",  // Go
-            "\\bURLSession\\b",  // Swift
-            "\\bsystem\\s*\\(.*\\b(curl|wget|nc)\\b",  // C/C++ system() with network cmd
-            "\\bexec[lv]?p?\\s*\\(.*\\b(curl|wget|nc)\\b",  // C exec family
-            "\\bpopen\\s*\\(.*\\b(curl|wget|nc)\\b",  // C popen
+            "\\bIO::Socket\\b",
+            "\\bNet::(HTTP|FTP)\\b",
+            "\\bnet\\.(Dial|Listen|http)\\b",
+            "\\bURLSession\\b",
+            "\\bsystem\\s*\\(.*\\b(curl|wget|nc)\\b",
+            "\\bexec[lv]?p?\\s*\\(.*\\b(curl|wget|nc)\\b",
+            "\\bpopen\\s*\\(.*\\b(curl|wget|nc)\\b",
         ]
         for pattern in networkPatterns {
             if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
@@ -573,37 +430,23 @@ struct PatternMatcher {
         return nil
     }
 
-    // MARK: - Temp path detection
-
-    /// Returns true if the path is in a temp-like directory where exfil scripts get dropped.
-    /// Project source files are excluded to avoid false positives from pattern string literals.
+    /// True if `path` lives in a temp-like prefix where dropped exfil scripts get scanned (project source is excluded to avoid pattern-literal FPs).
     static func isTempPath(_ path: String) -> Bool {
         GavelConstants.tempDirectoryPrefixes.contains { path.hasPrefix($0) }
     }
 
-    /// Documentation file extensions — prose, not executable code. Excluded from exfil
-    /// content scanning to avoid FPs on docs that hyperlink to URLs and mention auth.
+    /// True for prose files (md/txt/html/etc) — excluded from exfil content scanning so docs mentioning auth + hyperlinks don't false-block.
     static func isDocumentationPath(_ path: String) -> Bool {
         let lower = path.lowercased()
         let docExtensions = [".md", ".mdx", ".markdown", ".txt", ".rst", ".adoc", ".asciidoc", ".html", ".htm"]
         return docExtensions.contains { lower.hasSuffix($0) }
     }
 
-    // MARK: - Shell variable expansion
-
-    /// Expand inline shell variable assignments in a command string.
-    /// Catches the indirection bypass where variables hide sensitive keywords from regex matching.
-    ///
-    ///     "D=\"doppler\"; S=\"secrets\"; $D $S -p test"
-    ///     → "D=\"doppler\"; S=\"secrets\"; doppler secrets -p test"
-    ///
-    /// Only expands variables assigned within the same command string (not env vars).
-    /// Subshell assignments like `VAR=$(...)` are skipped (can't evaluate).
+    /// Expand inline shell variable assignments (`D="doppler"; $D ...` → `doppler ...`) so indirection can't hide sensitive keywords from regex matching.
     static func expandInlineVariables(_ command: String) -> String {
         var vars: [String: String] = [:]
         let range = NSRange(command.startIndex..., in: command)
 
-        // Match: VAR="value", VAR='value', VAR=value (with optional export/local prefix)
         let patterns: [(String, Int, Int)] = [
             (#"(?:^|[;&\s])(?:export\s+|local\s+)?([A-Za-z_]\w*)="([^"]*)""#, 1, 2),
             (#"(?:^|[;&\s])(?:export\s+|local\s+)?([A-Za-z_]\w*)='([^']*)'"#, 1, 2),
@@ -621,7 +464,6 @@ struct PatternMatcher {
 
         guard !vars.isEmpty else { return command }
 
-        // Substitute $VAR and ${VAR} references
         var result = command
         for (name, value) in vars {
             result = result.replacingOccurrences(of: "${\(name)}", with: value)

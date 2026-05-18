@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Static regex quick reference card.
+/// Static regex/glob quick-reference card.
 struct RegexCheatSheetView: View {
     var body: some View {
         ScrollView {
@@ -76,8 +76,6 @@ struct RegexCheatSheetView: View {
         .background(Color(nsColor: .textBackgroundColor))
     }
 
-    // MARK: - Helpers
-
     private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
@@ -122,8 +120,6 @@ struct RegexCheatSheetView: View {
             .foregroundColor(.secondary)
             .italic()
     }
-
-    // MARK: - Tool-Specific Example Sections
 
     private var bashExamples: some View {
         section("Bash Examples") {

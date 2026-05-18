@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Editor for ~/.claude/gavel/session-context.md — injected into every Claude Code session.
+/// Editor for `~/.claude/gavel/session-context.md` — injected at SessionStart into every Claude/Codex session.
 struct SessionContextView: View {
     @State private var content: String = ""
     @State private var savedContent: String = ""

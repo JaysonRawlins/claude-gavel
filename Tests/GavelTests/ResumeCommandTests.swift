@@ -2,9 +2,6 @@ import XCTest
 @testable import Gavel
 
 final class ResumeCommandTests: XCTestCase {
-
-    // MARK: - shellQuote
-
     func testQuotesSimplePath() {
         XCTAssertEqual(ResumeCommand.shellQuote("/Users/jay/code"), "'/Users/jay/code'")
     }
@@ -17,7 +14,6 @@ final class ResumeCommandTests: XCTestCase {
     }
 
     func testEscapesEmbeddedApostrophe() {
-        // bash form: 'foo'\''bar' represents the string foo'bar
         XCTAssertEqual(
             ResumeCommand.shellQuote("/Users/jay/foo'bar"),
             "'/Users/jay/foo'\\''bar'"
@@ -36,14 +32,11 @@ final class ResumeCommandTests: XCTestCase {
     }
 
     func testQuotesPathWithDollarAndBackticksLiterally() {
-        // Single quotes neutralize $ and ` in bash, so no escape needed.
         XCTAssertEqual(
             ResumeCommand.shellQuote("/tmp/$HOME/`whoami`"),
             "'/tmp/$HOME/`whoami`'"
         )
     }
-
-    // MARK: - build
 
     func testBuildWithCwd() {
         let cmd = ResumeCommand.build(

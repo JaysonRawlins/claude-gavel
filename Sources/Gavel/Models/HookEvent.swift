@@ -1,6 +1,6 @@
 import Foundation
 
-/// The type of hook that fired.
+/// The type of hook that fired in the agent CLI.
 enum HookType: String, Codable {
     case preToolUse = "PreToolUse"
     case postToolUse = "PostToolUse"
@@ -15,11 +15,7 @@ enum HookType: String, Codable {
     case unknown
 }
 
-/// Incoming event from a gavel-hook subprocess (Claude Code or Codex CLI).
-///
-/// The gavel-hook binary wraps the agent's raw stdin JSON in this envelope,
-/// adding the PID, hook type, and agent kind. Envelopes without `agent`
-/// (older binaries) default to `.claude` for backward compatibility.
+/// Envelope wrapping the agent's stdin JSON with PID, hook type, and agent kind. Older binaries without `agent` decode as `.claude` for backward compat.
 struct HookEvent: Codable {
     let hookType: HookType
     let sessionPid: Int
@@ -49,7 +45,7 @@ struct HookEvent: Codable {
     }
 }
 
-/// The hook-specific payload, matching Claude Code's hook stdin schema.
+/// Hook-specific payload — matches Claude Code's stdin schema.
 enum HookPayload: Codable {
     case preToolUse(PreToolUsePayload)
     case postToolUse(PostToolUsePayload)
@@ -58,7 +54,7 @@ enum HookPayload: Codable {
     case userPromptSubmit(UserPromptSubmitPayload)
     case notification(NotificationPayload)
     case stopFailure(StopFailurePayload)
-    case passthrough(String) // Unhandled event types — store hook_event_name
+    case passthrough(String) // Unhandled event types — carries hook_event_name through.
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -99,8 +95,6 @@ enum HookPayload: Codable {
         }
     }
 }
-
-// MARK: - Payload types
 
 struct PreToolUsePayload: Codable {
     let toolName: String
@@ -165,7 +159,7 @@ struct PostToolUsePayload: Codable {
 struct SessionStartPayload: Codable {
     let sessionId: String?
     let cwd: String?
-    let source: String?  // startup, resume, clear, compact
+    let source: String?
     let model: String?
 
     enum CodingKeys: String, CodingKey {
@@ -209,8 +203,6 @@ struct StopFailurePayload: Codable {
         case sessionId = "session_id"
     }
 }
-
-// MARK: - AnyCodable helper for dynamic JSON
 
 struct AnyCodable: Codable {
     let value: Any

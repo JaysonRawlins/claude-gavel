@@ -1,27 +1,21 @@
 import Foundation
 
-/// The outcome of running a PreToolUse event through the approval engine.
+/// Approval engine outcome for a PreToolUse event.
 enum DecisionVerdict: String, Codable {
     case allow
     case block
-    case prompt  // Always show interactive dialog, even under auto-approve
+    case prompt  // Always show interactive dialog, even under auto-approve.
 }
 
-/// A decision returned to the hook shim via the Unix socket.
-///
-/// The gavel-hook binary parses this JSON and translates to Claude Code's
-/// expected format:
-///   - allow → stdout with hookSpecificOutput, exit 0
-///   - block → stderr "reason", exit 2
+/// Wire format to the gavel-hook shim: allow → stdout+exit 0, block → stderr "reason"+exit 2.
 struct Decision: Codable {
     let verdict: DecisionVerdict
     let reason: String?
     let additionalContext: String?
     let updatedInput: [String: AnyCodable]?
-    /// When true, the router should show the interactive dialog instead of hard blocking.
-    /// Used for MCP tool blocks that users should be able to approve case-by-case.
+    /// When true, router shows a dialog instead of hard-blocking — used for MCP-tier blocks that the user should approve case-by-case.
     let askUser: Bool
-    /// Set when a persistent prompt rule fired — used by per-session rule suppression.
+    /// Set when a persistent prompt rule fired — drives per-session rule suppression.
     let triggeringRuleId: UUID?
 
     init(verdict: DecisionVerdict, reason: String?, additionalContext: String? = nil, updatedInput: [String: AnyCodable]? = nil, askUser: Bool = false, triggeringRuleId: UUID? = nil) {
@@ -33,11 +27,10 @@ struct Decision: Codable {
         self.triggeringRuleId = triggeringRuleId
     }
 
-    /// Internal protocol JSON sent to the gavel-hook shim via socket.
+    /// Protocol JSON the daemon writes back to the gavel-hook subprocess via socket.
     var hookResponse: String {
         switch verdict {
         case .allow:
-            // Build JSON with optional fields
             var obj: [String: Any] = ["verdict": "allow"]
             if let ctx = additionalContext, !ctx.isEmpty {
                 obj["additionalContext"] = ctx
@@ -65,13 +58,12 @@ struct Decision: Codable {
             }
             return #"{"verdict":"block","reason":"Blocked by Gavel"}"#
         case .prompt:
-            // Prompt rules are handled in the router (show dialog) — should never reach hookResponse
+            // Prompt verdicts are handled in the router (show dialog) — should never reach hookResponse, but fail-closed if we ever do.
             return #"{"verdict":"block","reason":"Requires approval"}"#
         }
     }
 }
 
-/// A record of a decision for the activity feed.
 struct DecisionRecord {
     let timestamp: Date
     let sessionPid: Int

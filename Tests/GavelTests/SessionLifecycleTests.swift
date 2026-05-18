@@ -1,15 +1,12 @@
 import XCTest
 @testable import Gavel
 
-/// Tombstone lifecycle: live → dead migration, promotion back to live,
-/// per-row forget, bulk clear, and persistence round-trip.
+/// Tombstone lifecycle: live → dead migration, promotion back to live, per-row forget, bulk clear, persistence round-trip.
 final class SessionLifecycleTests: XCTestCase {
-
     private var tmpHome: URL!
     private var manager: SessionManager!
 
-    /// A PID effectively guaranteed not to exist on macOS. macOS reserves up
-    /// to ~99999; anything above that range is unused by any real process.
+    /// PID effectively guaranteed not to exist on macOS — kernel reserves up to ~99999; anything above is unused.
     private let deadPid = 1_999_999
 
     override func setUp() {
@@ -25,8 +22,6 @@ final class SessionLifecycleTests: XCTestCase {
         try? FileManager.default.removeItem(at: tmpHome)
         super.tearDown()
     }
-
-    // MARK: - Migration
 
     func testDeadSessionWithSessionIdMigratesToTombstone() {
         let sid = "test-session-uuid-1"
@@ -44,15 +39,12 @@ final class SessionLifecycleTests: XCTestCase {
     func testDeadSessionWithoutSessionIdIsDropped() {
         let session = manager.session(for: deadPid)
         session.cwd = "/tmp/test-project"
-        // No sessionId set — not resumable.
 
         manager.cleanupDeadSessions()
 
         XCTAssertNil(manager.sessions[deadPid], "Live dict should drop")
         XCTAssertTrue(manager.deadSessions.isEmpty, "No sessionId means no tombstone")
     }
-
-    // MARK: - Removal controls
 
     func testForgetTombstoneRemovesOnlyThatEntry() {
         let sidA = "uuid-A"
@@ -77,7 +69,6 @@ final class SessionLifecycleTests: XCTestCase {
         manager.cleanupDeadSessions()
         XCTAssertEqual(manager.deadSessions.count, 1)
 
-        // Live session (own PID is alive — XCTest is running)
         let livePid = Int(getpid())
         _ = manager.session(for: livePid)
         XCTAssertNotNil(manager.sessions[livePid])
@@ -88,8 +79,6 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertNotNil(manager.sessions[livePid], "Live session must survive clearDead")
     }
 
-    // MARK: - Promotion
-
     func testRecordSessionIdPromotesMatchingTombstoneToLive() {
         let sid = "uuid-promote"
         let original = manager.session(for: deadPid)
@@ -97,14 +86,10 @@ final class SessionLifecycleTests: XCTestCase {
         manager.cleanupDeadSessions()
         XCTAssertNotNil(manager.deadSessions[sid])
 
-        // Simulate a new live `claude --resume <sid>` arriving on a different PID.
         let newPid = Int(getpid())
         let revived = manager.session(for: newPid)
         manager.recordSessionId(sid, on: revived)
 
-        // recordSessionId mutates @Published sessionId via DispatchQueue.main.async
-        // so the binding plumbing matches SwiftUI's main-thread invariant.
-        // Drain the main queue before asserting.
         let drained = expectation(description: "main queue drained")
         DispatchQueue.main.async { drained.fulfill() }
         wait(for: [drained], timeout: 1.0)
@@ -113,14 +98,10 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertEqual(manager.sessions[newPid]?.sessionId, sid)
     }
 
-    // MARK: - Persistence
-
     func testPersistenceRoundTripsBothLiveAndDead() {
         let sidDead = "uuid-dead"
         let sidLive = "uuid-live"
 
-        // Live session keyed on this test process's own PID so the reload
-        // path classifies it as alive.
         let livePid = Int(getpid())
         let live = manager.session(for: livePid)
         live.sessionId = sidLive
@@ -128,7 +109,6 @@ final class SessionLifecycleTests: XCTestCase {
         live.label = "my live one"
         manager.recordSessionId(sidLive, on: live)
 
-        // Dead session: insert + migrate.
         let dead = manager.session(for: deadPid)
         dead.sessionId = sidDead
         dead.cwd = "/tmp/dead-project"
@@ -136,7 +116,6 @@ final class SessionLifecycleTests: XCTestCase {
 
         manager.saveActiveSessions()
 
-        // Spin up a fresh manager pointing at the same tmp home.
         let reloaded = SessionManager(homeDir: tmpHome, autoStartTimers: false, autoDiscover: false)
 
         XCTAssertNotNil(reloaded.sessions[livePid], "Live session must rehydrate")
@@ -168,7 +147,6 @@ final class SessionLifecycleTests: XCTestCase {
     }
 
     func testPersistenceBackwardCompatLegacyArrayFormat() throws {
-        // Old format: bare array of live sessions, no tombstones.
         let livePid = Int(getpid())
         let legacy: [[String: Any]] = [
             ["pid": livePid, "sessionId": "legacy-sid", "cwd": "/tmp/legacy"]

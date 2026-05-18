@@ -2,9 +2,6 @@ import XCTest
 @testable import Gavel
 
 final class PersistentRuleTests: XCTestCase {
-
-    // MARK: - Glob patterns
-
     func testGlobMatchesWildcard() {
         var rule = PersistentRule(toolName: "Bash", pattern: "swift build*", verdict: .allow)
         XCTAssertTrue(rule.matches(toolName: "Bash", command: "swift build -c release", filePath: nil))
@@ -21,13 +18,11 @@ final class PersistentRuleTests: XCTestCase {
         XCTAssertFalse(rule.matches(toolName: "Edit", command: "ls -la", filePath: nil))
     }
 
-    // MARK: - Regex patterns
-
     func testRegexNegativeLookahead() {
         var rule = PersistentRule(toolName: "Bash", pattern: "doppler\\s+secrets\\b(?!.*--only-names)", isRegex: true, verdict: .block)
-        // Without --only-names → matches (blocked)
+
         XCTAssertTrue(rule.matches(toolName: "Bash", command: "doppler secrets -p test -c dev", filePath: nil))
-        // With --only-names → no match (allowed through)
+
         XCTAssertFalse(rule.matches(toolName: "Bash", command: "doppler secrets --only-names -p test", filePath: nil))
         XCTAssertFalse(rule.matches(toolName: "Bash", command: "doppler secrets -p test --only-names", filePath: nil))
     }
@@ -46,8 +41,6 @@ final class PersistentRuleTests: XCTestCase {
         XCTAssertFalse(rule.matches(toolName: "Bash", command: "doppler run -- python app.py", filePath: nil))
     }
 
-    // MARK: - Backward compatibility
-
     func testDecodesOldRulesWithoutIsRegex() throws {
         let json = """
         {
@@ -64,33 +57,26 @@ final class PersistentRuleTests: XCTestCase {
         XCTAssertEqual(rule.pattern, "git*")
     }
 
-    // MARK: - Em-dash sanitization in match targets
-
     func testEmDashSanitizedInTarget() {
         var rule = PersistentRule(toolName: "Bash", pattern: "doppler\\s+secrets\\b.*--only-names", isRegex: true, verdict: .allow)
-        // Em-dash in command should be sanitized to ASCII before matching
+
         let cmdWithEmDash = "doppler secrets \u{2014}only-names"
         XCTAssertTrue(rule.matches(toolName: "Bash", command: cmdWithEmDash, filePath: nil))
     }
 
-    // MARK: - Priority chain (deny wins over allow)
-
     func testDenyWinsOverAllow() {
         let store = RuleStore(configPath: "/dev/null")
-        // Add allow rule
+
         store.addRule(PersistentRule(toolName: "Bash", pattern: "doppler*", verdict: .allow))
-        // Add deny rule
+
         store.addRule(PersistentRule(toolName: "Bash", pattern: "doppler\\s+secrets\\b(?!.*--only-names)", isRegex: true, verdict: .block))
 
         let payload = PreToolUsePayload(toolName: "Bash", toolInput: ["command": AnyCodable("doppler secrets")])
 
-        // Deny should fire first
         let deny = store.evaluateDeny(payload: payload)
         XCTAssertNotNil(deny)
         XCTAssertEqual(deny?.verdict, .block)
     }
-
-    // MARK: - Engine integration: persistent allow skips dialog
 
     func testEngineReturnsAllowWithReasonForPersistentRule() {
         let store = RuleStore(configPath: "/dev/null")
@@ -105,17 +91,15 @@ final class PersistentRuleTests: XCTestCase {
         XCTAssertNotNil(decision.reason) // non-nil reason = skip dialog in HookRouter
     }
 
-    // MARK: - Wildcard rules match MCP tool names
-
     func testWildcardRuleMatchesMcpToolName() {
         var rule = PersistentRule(toolName: "*", pattern: "mcp__LinkedIn__(linkedin_create|linkedin_post)", isRegex: true, verdict: .prompt)
-        // MCP tools have no command/filePath — pattern should match against the tool name
+
         XCTAssertTrue(rule.matches(toolName: "mcp__LinkedIn__linkedin_create_post", command: nil, filePath: nil))
     }
 
     func testWildcardRuleNoFalsePositiveOnToolName() {
         var rule = PersistentRule(toolName: "*", pattern: "mcp__LinkedIn__linkedin_create", isRegex: true, verdict: .prompt)
-        // Should not match a different tool
+
         XCTAssertFalse(rule.matches(toolName: "mcp__engram__search", command: nil, filePath: nil))
     }
 
@@ -133,12 +117,9 @@ final class PersistentRuleTests: XCTestCase {
     }
 
     func testNonWildcardRuleDoesNotMatchToolName() {
-        // When toolName is specific (not *), it should NOT fall back to tool name matching
         var rule = PersistentRule(toolName: "Bash", pattern: "mcp__LinkedIn__linkedin_create", isRegex: true, verdict: .prompt)
         XCTAssertFalse(rule.matches(toolName: "mcp__LinkedIn__linkedin_create_post", command: nil, filePath: nil))
     }
-
-    // MARK: - Built-in flag
 
     func testBuiltInDefaultsFalse() {
         let rule = PersistentRule(toolName: "Bash", pattern: "git *", verdict: .allow)
@@ -146,7 +127,6 @@ final class PersistentRuleTests: XCTestCase {
     }
 
     func testBuiltInFlagBackwardCompat() throws {
-        // Old rules.json without builtIn field should decode as false
         let json = """
         {
             "id": "22222222-2222-2222-2222-222222222222",
@@ -179,14 +159,11 @@ final class PersistentRuleTests: XCTestCase {
         XCTAssertTrue(rule.isRegex)
     }
 
-    // MARK: - Seeding
-
     func testSeededDefaultsArePresent() {
         let store = RuleStore(configPath: "/dev/null")
         let builtInRules = store.rules.filter { $0.builtIn }
         XCTAssertEqual(builtInRules.count, RuleStore.seededDefaults.count)
-        // v7: 5 MCP exfil + 1 Bash self-protection + 1 apply_patch self-protection
-        //     + 1 scripting + 3 sandbox escape + 2 git safety + 3 scheduler = 16
+        // v7 breakdown: 5 MCP exfil + 1 Bash + 1 apply_patch self-protect + 1 scripting + 3 sandbox-escape + 2 git + 3 scheduler = 16. Update this when adjusting `seededDefaults`.
         XCTAssertEqual(builtInRules.count, 16)
     }
 
@@ -197,8 +174,6 @@ final class PersistentRuleTests: XCTestCase {
             XCTAssertEqual(rule.verdict, .prompt)
         }
     }
-
-    // MARK: - Scripting execution built-in
 
     func testScriptingPromptMatchesPython() {
         let store = RuleStore(configPath: "/dev/null")
@@ -219,15 +194,12 @@ final class PersistentRuleTests: XCTestCase {
     }
 
     func testScriptingPromptDoesNotMatchPythonScript() {
-        // Running a .py file is not inline execution
         let store = RuleStore(configPath: "/dev/null")
         let payload = PreToolUsePayload(toolName: "Bash", toolInput: [
             "command": AnyCodable("python3 test_script.py")
         ])
         XCTAssertNil(store.evaluateBuiltInPrompt(payload: payload))
     }
-
-    // MARK: - Codex apply_patch self-protection built-in
 
     func testApplyPatchPromptMatchesGavelConfigWrite() {
         let store = RuleStore(configPath: "/dev/null")
@@ -258,11 +230,9 @@ final class PersistentRuleTests: XCTestCase {
         XCTAssertNil(store.evaluateBuiltInPrompt(payload: payload), "Benign apply_patch should not match self-protection rule")
     }
 
-    // MARK: - Split prompt evaluation
-
     func testEvaluateUserPromptSkipsBuiltIn() {
         let store = RuleStore(configPath: "/dev/null")
-        // All seeded rules are builtIn — evaluateUserPrompt should skip them
+
         let payload = PreToolUsePayload(toolName: "mcp__SlackLocal__send_message", toolInput: [:])
         XCTAssertNil(store.evaluateUserPrompt(payload: payload))
     }
@@ -280,13 +250,11 @@ final class PersistentRuleTests: XCTestCase {
         let store = RuleStore(configPath: "/dev/null")
         store.addRule(PersistentRule(toolName: "*", pattern: "mcp__custom__deploy", isRegex: true, verdict: .prompt))
         let payload = PreToolUsePayload(toolName: "mcp__custom__deploy", toolInput: [:])
-        // evaluateBuiltInPrompt should NOT match user-created prompt rule
+
         XCTAssertNil(store.evaluateBuiltInPrompt(payload: payload))
-        // evaluateUserPrompt SHOULD match it
+
         XCTAssertNotNil(store.evaluateUserPrompt(payload: payload))
     }
-
-    // MARK: - Scheduler tool built-in rules (issue #29)
 
     func testCronCreatePrompts() {
         let store = RuleStore(configPath: "/dev/null")
@@ -321,15 +289,12 @@ final class PersistentRuleTests: XCTestCase {
     }
 
     func testCronListDoesNotPrompt() {
-        // Read-only — no rule, falls through to normal flow.
         let store = RuleStore(configPath: "/dev/null")
         let payload = PreToolUsePayload(toolName: "CronList", toolInput: [:])
         XCTAssertNil(store.evaluateBuiltInPrompt(payload: payload))
     }
 
     func testUserAllowOverridesSchedulerPrompt() {
-        // Stage 6 (user allow) beats Stage 7 (built-in prompt) in ApprovalEngine.
-        // A user who trusts CronCreate should be able to add a matching allow rule.
         let store = RuleStore(configPath: "/dev/null")
         store.addRule(PersistentRule(toolName: "CronCreate", pattern: "*", isRegex: false, verdict: .allow))
         let engine = ApprovalEngine(ruleStore: store)
@@ -339,11 +304,9 @@ final class PersistentRuleTests: XCTestCase {
             "prompt": AnyCodable("daily check")
         ])
         let decision = engine.evaluate(payload: payload, session: session)
-        // Allow rule wins — no block, no askUser prompt.
+
         XCTAssertNotEqual(decision.verdict, .block)
     }
-
-    // MARK: - Self-protection built-in rules
 
     func testCatOnGavelRulesPrompts() {
         let store = RuleStore(configPath: "/dev/null")

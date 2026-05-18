@@ -3,7 +3,6 @@ import Darwin
 @testable import Gavel
 
 final class SocketServerProbeTests: XCTestCase {
-
     private func tempSocketPath() -> String {
         let dir = NSTemporaryDirectory()
         let name = "gavel-probe-\(UUID().uuidString.prefix(8)).sock"
@@ -40,13 +39,9 @@ final class SocketServerProbeTests: XCTestCase {
     }
 
     func testProbeFalseOnStaleSocketFile() throws {
-        // Simulate the case where a daemon crashed: socket file lingers, but
-        // no listener is bound. probeAlive should return false (ECONNREFUSED).
         let path = tempSocketPath()
         defer { unlink(path) }
 
-        // Create a socket file via bind, then close the fd without listening.
-        // Connect attempts to this path will fail with ECONNREFUSED.
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         XCTAssertGreaterThanOrEqual(fd, 0)
         var addr = sockaddr_un()
@@ -63,7 +58,7 @@ final class SocketServerProbeTests: XCTestCase {
             }
         }
         XCTAssertEqual(bindResult, 0)
-        close(fd) // No listen() call → file exists but no listener.
+        close(fd)
 
         XCTAssertFalse(SocketServer.probeAlive(socketPath: path))
     }

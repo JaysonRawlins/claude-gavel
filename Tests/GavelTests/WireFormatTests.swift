@@ -2,13 +2,7 @@ import XCTest
 @testable import Gavel
 
 final class WireFormatTests: XCTestCase {
-
-    /// Build an ApprovalEngine that does NOT load the user's real rules.json.
-    /// Without this, any prompt rule the user has installed (e.g. "always
-    /// prompt on doppler secrets") matches the test payload and the dialog
-    /// blocks the test forever waiting for a click that never comes. The
-    /// returned engine and its tempdir-scoped store should be discarded by
-    /// the caller (FileManager removeItem in a defer).
+    /// Tempdir-scoped engine — without this, the user's real rules.json prompt patterns would block tests on dialogs that never resolve. Caller cleans up the returned path in a defer.
     private func makeIsolatedEngine() -> (ApprovalEngine, String) {
         let path = NSTemporaryDirectory() + "wireformat-rules-\(UUID().uuidString).json"
         let engine = ApprovalEngine(
@@ -17,8 +11,6 @@ final class WireFormatTests: XCTestCase {
         )
         return (engine, path)
     }
-
-    // MARK: - Decision hookResponse (daemon → shim protocol)
 
     func testAllowDecisionJson() throws {
         let decision = Decision(verdict: .allow, reason: nil)
@@ -41,8 +33,6 @@ final class WireFormatTests: XCTestCase {
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         XCTAssertEqual(json["reason"] as? String, #"Command contains "dangerous" pattern"#)
     }
-
-    // MARK: - HookEvent decoding (shim → daemon envelope)
 
     func testDecodePreToolUseEnvelope() throws {
         let json = """
@@ -289,14 +279,12 @@ final class WireFormatTests: XCTestCase {
         XCTAssertEqual(eventName, "CwdChanged")
     }
 
-    // MARK: - HookRouter integration
-
     func testRouterAllowsNormalCommand() {
         let (engine, ruleStorePath) = makeIsolatedEngine()
         defer { try? FileManager.default.removeItem(atPath: ruleStorePath) }
         let manager = SessionManager()
         let coordinator = ApprovalCoordinator()
-        // Pre-create session with auto-approve so router doesn't block on dialog
+
         let session = manager.session(for: 33333)
         session.isAutoApproveEnabled = true
         let router = HookRouter(sessionManager: manager, approvalEngine: engine, approvalCoordinator: coordinator)
@@ -329,7 +317,7 @@ final class WireFormatTests: XCTestCase {
         defer { try? FileManager.default.removeItem(atPath: ruleStorePath) }
         let manager = SessionManager()
         let coordinator = ApprovalCoordinator()
-        // Dangerous commands are blocked before reaching interactive approval
+
         let router = HookRouter(sessionManager: manager, approvalEngine: engine, approvalCoordinator: coordinator)
 
         let json = """
@@ -458,10 +446,6 @@ final class WireFormatTests: XCTestCase {
         """
         router.handle(data: json.data(using: .utf8)!) { _ in }
 
-        // sessionId/cwd are @Published; SessionManager dispatches the writes
-        // to the main queue (worker → main per SwiftUI invariant). Pump the
-        // current run loop briefly so the dispatched writes land before we
-        // assert.
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
 
         XCTAssertEqual(session.sessionId, "enrichment-test")

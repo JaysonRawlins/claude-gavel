@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Status bar at the top of the monitor window.
+/// Status bar at the top of the monitor — auto-approve state, session count, uptime, totals.
 struct StatusView: View {
     @ObservedObject var viewModel: MonitorViewModel
 

@@ -7,8 +7,7 @@ final class ApprovalEngineTests: XCTestCase {
     var ruleStorePath: String!
 
     override func setUp() {
-        // Isolated rule store so the user's real rules.json never leaks into
-        // the engine and breaks tests with their own prompt patterns.
+        // Isolated tempdir-scoped rule store — without this, the user's real rules.json leaks in and their prompt patterns block the test on a dialog that never comes.
         ruleStorePath = NSTemporaryDirectory() + "engine-tests-\(UUID().uuidString).json"
         engine = ApprovalEngine(
             patternMatcher: PatternMatcher(),
@@ -70,8 +69,6 @@ final class ApprovalEngineTests: XCTestCase {
         let decision = engine.evaluate(payload: payload(command: "echo hello"), session: session)
         XCTAssertEqual(decision.verdict, .allow)
     }
-
-    // MARK: - Session Deny Rules
 
     func testSessionDenyRuleBlocks() {
         let rule = SessionRule(toolName: "Edit", pattern: "*/production.yml", verdict: .block, explanation: "Protected during deployment")

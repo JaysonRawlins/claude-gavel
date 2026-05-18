@@ -1,6 +1,6 @@
 import Foundation
 
-/// Live sessions keyed by PID; tombstones keyed by sessionId (so PID reuse can't clobber them).
+/// Live sessions keyed by PID; tombstones keyed by sessionId so PID reuse can't clobber them.
 final class SessionManager: ObservableObject {
     @Published private(set) var sessions: [Int: Session] = [:]
     @Published private(set) var deadSessions: [String: Session] = [:]
@@ -9,17 +9,13 @@ final class SessionManager: ObservableObject {
     private var cleanupTimer: DispatchSourceTimer?
     private var inactivityTimer: DispatchSourceTimer?
 
-    /// Default settings applied to new sessions (survives daemon restarts).
     @Published var defaultAutoApprove: Bool = false
     @Published var defaultSubAgentInherit: Bool = false
     @Published var defaultPaused: Bool = false
 
-    /// Inactivity threshold in minutes. 0 disables the timer.
-    /// When the user hasn't interacted with gavel for this long, auto-approval
-    /// is revoked across all sessions (walk-away defense).
+    /// Walk-away defense — revoke auto-approval across all sessions after this many minutes of no user interaction. 0 disables.
     @Published var inactivityTimeoutMinutes: Int = 15
 
-    /// User-typed labels keyed by Claude Code session UUID. Survives daemon restarts.
     @Published private var sessionLabels: [String: String] = [:]
 
     private var lastInteraction: Date = Date()
@@ -51,8 +47,6 @@ final class SessionManager: ObservableObject {
         inactivityTimer?.cancel()
     }
 
-    /// Get or create a session for the given PID and agent kind.
-    /// New sessions inherit the default Auto/Sub settings.
     func session(for pid: Int, agent: AgentKind = .claude) -> Session {
         lock.lock()
         defer { lock.unlock() }
@@ -68,7 +62,6 @@ final class SessionManager: ObservableObject {
         return session
     }
 
-    /// Save current defaults to disk (called when user toggles).
     func saveDefaults() {
         let data: [String: Any] = [
             "autoApprove": defaultAutoApprove,
@@ -92,8 +85,7 @@ final class SessionManager: ObservableObject {
         sessionLabels = (json["sessionLabels"] as? [String: String]) ?? [:]
     }
 
-    /// Worker-thread caller; @Published mutations dispatched to main.
-    /// A matching tombstone is dropped — same conversation, new PID.
+    /// Worker-thread caller; @Published mutations dispatched to main. A matching tombstone is dropped (same conversation, new PID).
     func recordSessionId(_ sid: String, on session: Session) {
         let changed = session.sessionId != sid
         let savedLabel = sessionLabels[sid]
@@ -116,7 +108,6 @@ final class SessionManager: ObservableObject {
         }
     }
 
-    /// Update the cwd for a session and persist the change.
     /// Worker-thread caller; @Published mutation dispatched to main.
     func recordCwd(_ cwd: String, on session: Session) {
         let changed = session.cwd != cwd
@@ -130,7 +121,6 @@ final class SessionManager: ObservableObject {
         }
     }
 
-    /// Save (or clear) the label for a session UUID. Empty/whitespace removes the entry.
     func setLabel(_ label: String, for sessionId: String) {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
@@ -165,9 +155,7 @@ final class SessionManager: ObservableObject {
         lock.unlock()
     }
 
-    // MARK: - Active session persistence
-
-    /// Fields beyond `pid` are optional so older on-disk files load cleanly.
+    /// Fields beyond `pid` are optional so older on-disk files load cleanly under schema evolution.
     private struct PersistedSession: Codable {
         let pid: Int
         let sessionId: String?
@@ -185,10 +173,7 @@ final class SessionManager: ObservableObject {
         let dead: [PersistedSession]
     }
 
-    /// Persist all live sessions and their per-session toggle state.
-    /// Call after any change a user expects to survive a daemon restart
-    /// (auto/sub/pause toggle, inactivity-driven auto-revoke, etc.).
-    /// Internal locking handled here so callers don't have to remember.
+    /// Call after any change a user expects to survive a daemon restart (auto/sub/pause toggle, inactivity-driven revoke, etc.).
     func saveActiveSessions() {
         lock.lock()
         defer { lock.unlock() }
@@ -220,7 +205,7 @@ final class SessionManager: ObservableObject {
         )
     }
 
-    /// Must run after loadDefaults() so labels are populated before they're applied here.
+    /// Must run after `loadDefaults()` — labels are looked up from `sessionLabels` populated there.
     private func loadActiveSessions() {
         guard let data = FileManager.default.contents(atPath: sessionsPath) else { return }
         let decoder = JSONDecoder()
@@ -274,10 +259,7 @@ final class SessionManager: ObservableObject {
         deadSessions[sessionId] = session
     }
 
-    /// Find Claude Code CLI processes running on this machine and add any we
-    /// don't already track. Solves the "started while gavel was down" gap that
-    /// persistence alone can't cover. Discovered sessions get a PID and cwd
-    /// immediately; their sessionId is filled in by the next hook event.
+    /// Adopt Claude CLI processes started while gavel was down — closes the gap that persistence alone can't cover.
     @discardableResult
     func discoverRunningSessions() -> Int {
         let discovered = ProcessTree.findClaudeCliSessions()
@@ -299,12 +281,9 @@ final class SessionManager: ObservableObject {
         return added
     }
 
-    /// Check if a PID is still alive using kill(0).
     func isProcessAlive(pid: Int) -> Bool {
         kill(Int32(pid), 0) == 0 || errno == EPERM
     }
-
-    // MARK: - Cleanup
 
     private func startCleanupTimer() {
         let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
@@ -317,7 +296,6 @@ final class SessionManager: ObservableObject {
         cleanupTimer = timer
     }
 
-    /// Internal so tests can drive lifecycle without waiting on the timer.
     func cleanupDeadSessions() {
         lock.lock()
         let pids = Array(sessions.keys)
@@ -336,7 +314,7 @@ final class SessionManager: ObservableObject {
             }
             saveActiveSessionsLocked()
             lock.unlock()
-            // @Published mutations need main thread; this runs on a utility queue.
+
             DispatchQueue.main.async {
                 session.isAlive = false
                 session.endedAt = now
@@ -344,11 +322,6 @@ final class SessionManager: ObservableObject {
         }
     }
 
-    // MARK: - Bulk prompt mode
-
-    /// Revokes auto-approval on every active session and clears global defaults.
-    /// Called by the "Prompt All Sessions" menu item, the per-session Prompt button
-    /// (for its own session only — this is the fan-out variant), and the inactivity timer.
     func promptAllSessions(reason: String = "Prompt All") {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -358,18 +331,13 @@ final class SessionManager: ObservableObject {
             self.defaultAutoApprove = false
             self.defaultSubAgentInherit = false
             self.saveDefaults()
-            // Persist the per-session revoke too so an inactivity-driven flip
-            // (or "Prompt All" click) survives a daemon restart. Otherwise
-            // the user wakes up to gavel restoring the OLD auto state.
+
             self.saveActiveSessions()
             GavelNotifications.notify(title: "Gavel — Prompt Mode", body: reason)
             self.noteInteraction()
         }
     }
 
-    // MARK: - Inactivity
-
-    /// Records the user's most recent interaction with gavel. Resets the inactivity timer.
     func noteInteraction() {
         lock.lock()
         lastInteraction = Date()
@@ -377,8 +345,6 @@ final class SessionManager: ObservableObject {
     }
 
     private func startInactivityTimer() {
-        // Check once per minute. Cheaper than per-second and good enough for a
-        // threshold measured in minutes.
         let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
         timer.schedule(deadline: .now() + 60, repeating: 60)
         timer.setEventHandler { [weak self] in
@@ -398,7 +364,6 @@ final class SessionManager: ObservableObject {
 
         guard idle >= Double(minutes) * 60 else { return }
 
-        // Only fire if anything is currently auto-approving — no point nagging otherwise.
         let anyAuto = defaultAutoApprove
             || sessions.values.contains { $0.isAutoApproveEnabled || $0.isAutoApproveActive || $0.isSubAgentInheritEnabled }
         guard anyAuto else { return }

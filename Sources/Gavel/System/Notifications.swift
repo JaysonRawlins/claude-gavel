@@ -1,31 +1,25 @@
 import Foundation
 
-/// Native macOS notification support.
-///
-/// UNUserNotificationCenter requires a proper app bundle with a bundle identifier.
-/// When running as a bare executable (e.g. from .build/release/), we fall back
-/// to osascript which works without a bundle.
+/// Native macOS notifications — UNUserNotificationCenter when running inside a .app bundle; osascript fallback when running as a bare executable from .build/release/.
 struct GavelNotifications {
-
-    /// Whether we're running inside a proper .app bundle.
     private static var hasBundleIdentifier: Bool {
         Bundle.main.bundleIdentifier != nil
     }
 
     static func requestPermission() {
         guard hasBundleIdentifier else { return }
-        // Lazy import to avoid crash when no bundle exists
+        // Lazy/dynamic dispatch — avoids a crash on bare-binary runs where UNUserNotificationCenter is unavailable.
+
         if let center = NSClassFromString("UNUserNotificationCenter") as? NSObject.Type,
            let obj = center.perform(NSSelectorFromString("currentNotificationCenter"))?.takeUnretainedValue() {
             let sel = NSSelectorFromString("requestAuthorizationWithOptions:completionHandler:")
-            // Best effort — if this fails, osascript fallback still works
+
             _ = (obj as AnyObject).perform(sel, with: 6 as NSNumber, with: { (_: Bool, _: Error?) in } as @convention(block) (Bool, Error?) -> Void)
         }
     }
 
-    /// Post a native macOS notification.
+    /// Post a notification via osascript — works whether or not we have a bundle, so it's the universal path.
     static func notify(title: String, body: String, sound: Bool = true) {
-        // osascript works universally — no bundle required
         let soundClause = sound ? #" sound name "Glass""# : ""
         let escaped_title = title.replacingOccurrences(of: "\"", with: "\\\"")
         let escaped_body = body.replacingOccurrences(of: "\"", with: "\\\"")
@@ -37,6 +31,5 @@ struct GavelNotifications {
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
         try? task.run()
-        // Fire and forget — don't wait
     }
 }

@@ -1,11 +1,6 @@
 import Foundation
 
-/// Routes incoming hook data to the appropriate handler.
-///
-/// This is the central dispatch point. Raw bytes come in from the socket,
-/// get decoded, routed to the approval engine or monitor, and (for PreToolUse)
-/// a response is sent back — either immediately (dangerous/auto) or after
-/// user interaction via the approval panel.
+/// Central dispatch for incoming hook events — decodes, routes to approval/monitor, and (for PreToolUse) sends a verdict response.
 final class HookRouter {
     let sessionManager: SessionManager
     let approvalEngine: ApprovalEngine
@@ -21,8 +16,7 @@ final class HookRouter {
         self.approvalCoordinator = approvalCoordinator
     }
 
-    /// Handle raw data from a socket connection.
-    /// The `respond` closure is non-nil for PreToolUse (synchronous hooks).
+    /// `respond` is non-nil only for synchronous PreToolUse — other hooks fire-and-forget.
     func handle(data: Data, respond: ((Data) -> Void)?) {
         guard let event = try? decoder.decode(HookEvent.self, from: data) else {
             handleRawHookInput(data: data, respond: respond)
@@ -37,8 +31,7 @@ final class HookRouter {
             if let sid = payload.sessionId { sessionManager.recordSessionId(sid, on: session) }
             if let cwd = payload.cwd { sessionManager.recordCwd(cwd, on: session) }
 
-            // AskUserQuestion and ExitPlanMode are user interaction tools —
-            // don't intercept, let Claude's built-in UI handle them
+            // AskUserQuestion / ExitPlanMode are user-interaction tools — pass through so Claude's built-in UI handles them.
             if GavelConstants.userInteractionTools.contains(payload.toolName) {
                 if let respond = respond,
                    let data = "{}".data(using: .utf8) {
@@ -56,8 +49,9 @@ final class HookRouter {
         case .sessionStart(let payload):
             if let sid = payload.sessionId { sessionManager.recordSessionId(sid, on: session) }
             if let cwd = payload.cwd { sessionManager.recordCwd(cwd, on: session) }
-            // Worker thread → main for the @Published write.
+
             let model = payload.model
+            // Worker thread → main for the @Published write.
             DispatchQueue.main.async { session.model = model }
             let source = payload.source ?? "startup"
             emitFeed(.system("Session \(source)", pid: session.pid, at: ts))
@@ -86,8 +80,6 @@ final class HookRouter {
         }
     }
 
-    // MARK: - PreToolUse
-
     private func handlePreToolUse(
         payload: PreToolUsePayload,
         session: Session,
@@ -96,13 +88,7 @@ final class HookRouter {
     ) {
         session.stats.incrementToolCall()
 
-        // Flash the row in the monitor so the user can see which session is
-        // working without reading PIDs. Auto-clears after 5s; SwiftUI animates
-        // the fade. Stamp comparison protects against bursts — only the most
-        // recent activity's clear actually fires (so a burst extends the visible
-        // window rather than truncating it). 5s is the sweet spot at ~12+
-        // sessions: long enough that human glance-and-find can't miss it, short
-        // enough that it doesn't pile up across rows during normal traffic.
+        // 5s activity flash for monitor row visibility. Stamp comparison protects bursts — only the most recent activity's clear fires.
         let stamp = Date()
         DispatchQueue.main.async {
             session.lastActivityAt = stamp
@@ -121,7 +107,7 @@ final class HookRouter {
             at: timestamp
         ))
 
-        // Stage 0: Taint tracking — detect multi-step exfiltration
+        // Stage 0: Taint tracking — detect multi-step exfiltration before any allow rule can let it through.
         if ["Write", "Edit", "MultiEdit"].contains(payload.toolName), let path = payload.filePath {
             session.taintedPaths.insert(path)
         }
@@ -136,7 +122,7 @@ final class HookRouter {
             TaintTracker.recordTaints(command: command, into: session.taintedPaths)
         }
 
-        // Stage 0.5: Session deny rules — checked early so they block even under auto-approve
+        // Stage 0.5: Session deny rules — checked early so they block even under auto-approve.
         if let rule = session.matchesSessionDeny(
             toolName: payload.toolName,
             command: payload.command,
@@ -149,11 +135,10 @@ final class HookRouter {
             return
         }
 
-        // Stage 1: Check engine (dangerous patterns, persistent deny/allow, pause)
+        // Stage 1: Approval engine (dangerous patterns, persistent deny/allow, pause).
         let engineDecision = approvalEngine.evaluate(payload: payload, session: session)
         if engineDecision.verdict == .block {
             if engineDecision.askUser {
-                // Rule suppressed for session — covers the rule's full regex scope.
                 if let ruleId = engineDecision.triggeringRuleId,
                    session.suppressedRuleIds.contains(ruleId) {
                     session.stats.incrementAllow()
@@ -162,8 +147,6 @@ final class HookRouter {
                     return
                 }
 
-                // Before forcing dialog, check if a session rule already covers this.
-                // Session Allow from a previous dialog should skip re-prompting.
                 if let rule = session.matchesSessionRule(
                     toolName: payload.toolName,
                     command: payload.command,
@@ -175,7 +158,6 @@ final class HookRouter {
                     return
                 }
 
-                // MCP-style block: jump straight to interactive dialog
                 emitFeed(.decision(badge: .block, reason: "Needs approval: \(engineDecision.reason ?? "")", pid: session.pid, at: timestamp))
 
                 let decision = approvalCoordinator.requestApproval(
@@ -195,7 +177,6 @@ final class HookRouter {
                 sendResponse(decision, respond: respond)
                 return
             } else {
-                // Hard block: dangerous patterns, persistent deny, pause
                 session.stats.incrementBlock()
                 let badge: DecisionBadge = session.isPaused ? .paused : .block
                 emitFeed(.decision(badge: badge, reason: engineDecision.reason, pid: session.pid, at: timestamp))
@@ -203,7 +184,7 @@ final class HookRouter {
                 return
             }
         }
-        // Persistent allow rules (have a reason) skip the dialog
+
         if engineDecision.reason != nil {
             session.stats.incrementAllow()
             emitFeed(.decision(badge: .allow, reason: engineDecision.reason, pid: session.pid, at: timestamp))
@@ -211,7 +192,7 @@ final class HookRouter {
             return
         }
 
-        // Stage 2: Check auto-approve and session wildcard rules (skip dialog)
+        // Stage 2: Auto-approve and session wildcard rules — skip the dialog.
         if session.isAutoApproveActive {
             session.stats.incrementAllow()
             emitFeed(.decision(badge: .autoApprove, reason: engineDecision.reason, pid: session.pid, at: timestamp))
@@ -230,8 +211,7 @@ final class HookRouter {
             return
         }
 
-        // Stage 2.5: Sub-agent inheritance — auto-approve sub-agent calls
-        // (deny rules already checked in Stage 1, so blocks are respected)
+        // Stage 2.5: Sub-agent inheritance — auto-allow (deny rules already enforced in Stage 0.5/1, so blocks stand).
         if payload.isSubAgent && session.isSubAgentInheritEnabled {
             session.stats.incrementAllow()
             emitFeed(.decision(badge: .autoApprove, reason: "Sub-agent: \(payload.agentType ?? "unknown")", pid: session.pid, at: timestamp))
@@ -239,7 +219,7 @@ final class HookRouter {
             return
         }
 
-        // Stage 3: Interactive approval (blocks until user responds)
+        // Stage 3: Interactive approval — blocks until user responds.
         let decision = approvalCoordinator.requestApproval(
             payload: payload,
             session: session,
@@ -257,8 +237,6 @@ final class HookRouter {
 
         sendResponse(decision, respond: respond)
     }
-
-    // MARK: - PostToolUse
 
     private func handlePostToolUse(
         payload: PostToolUsePayload,
@@ -281,13 +259,8 @@ final class HookRouter {
         }
     }
 
-    // MARK: - Helpers
-
     private func sendResponse(_ decision: Decision, respond: ((Data) -> Void)?) {
-        // Diagnostic breadcrumb: every hook response that reaches the worker
-        // should produce a `[hook] respond ...` line. If a `[socket] enter`
-        // ever lacks a matching `[hook] respond` and `[socket] exit wrote=N`
-        // (with N > 0), the worker died/wedged after read but before write.
+        // Diagnostic breadcrumb — every `[socket] enter` should have a matching `[hook] respond`. Missing one means the worker died after read but before write.
         let reasonTag = decision.reason ?? "-"
         gavelLog("[hook] respond verdict=\(decision.verdict.rawValue) reason=\(reasonTag.prefix(80))")
         if let respond = respond,
@@ -297,12 +270,10 @@ final class HookRouter {
     }
 
     private func handleRawHookInput(data: Data, respond: ((Data) -> Void)?) {
-        // Try to extract at least the tool name to make a basic decision
+        // Full HookEvent decode failed (likely large-payload truncation). Block Bash since we can't inspect the command; allow other tools.
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let payload = json["payload"] as? [String: Any],
            let toolName = payload["tool_name"] as? String {
-            // Got tool name but full decode failed (likely large payload truncation)
-            // Allow non-Bash tools, block Bash (since we can't inspect the command)
             if toolName == "Bash" {
                 if let respond = respond,
                    let responseData = #"{"verdict":"block","reason":"Gavel: could not parse Bash command"}"#.data(using: .utf8) {
@@ -311,7 +282,7 @@ final class HookRouter {
                 return
             }
         }
-        // Non-Bash or completely unparseable — allow to avoid blocking legitimate writes
+
         if let respond = respond,
            let responseData = #"{"verdict":"allow"}"#.data(using: .utf8) {
             respond(responseData)
@@ -324,8 +295,6 @@ final class HookRouter {
         }
     }
 }
-
-// MARK: - Feed Entries
 
 enum FeedEntry {
     case toolCall(tool: String, summary: String, pid: Int, at: Date)

@@ -1,16 +1,9 @@
 import Foundation
 import Darwin
 
-/// Native macOS process tree utilities.
-///
-/// Uses sysctl/proc_pidinfo instead of shelling out to `ps`,
-/// eliminating ~80ms of subprocess overhead per hook invocation.
+/// Native process-tree utilities via sysctl/proc_pidinfo — replaces shelling out to `ps`, saving ~80ms of subprocess overhead per hook.
 struct ProcessTree {
-
-    /// Walk up the process tree from `pid` looking for an ancestor whose
-    /// short process name (case-insensitive) contains `needle`. Returns
-    /// that PID or nil after 8 hops. Used to attribute hook calls back
-    /// to their owning agent process.
+    /// Walk up to 8 hops from `pid` looking for an ancestor whose `p_comm` (case-insensitive) contains `needle`. Returns nil if not found within the hop budget.
     static func findAncestorPid(from pid: Int32, named needle: String) -> Int32? {
         let target = needle.lowercased()
         var current = pid
@@ -27,19 +20,14 @@ struct ProcessTree {
         return nil
     }
 
-    /// Convenience wrapper preserved for existing call sites.
     static func findClaudePid(from pid: Int32) -> Int32? {
         findAncestorPid(from: pid, named: "claude")
     }
 
-    /// Codex's hook subprocess is spawned directly by the codex binary, so the
-    /// immediate parent already matches — but we still walk a few hops to be
-    /// resilient to wrapper scripts.
     static func findCodexPid(from pid: Int32) -> Int32? {
         findAncestorPid(from: pid, named: "codex")
     }
 
-    /// Get the parent PID of a process using sysctl.
     static func parentPid(of pid: Int32) -> Int32? {
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.size
@@ -52,7 +40,6 @@ struct ProcessTree {
         return ppid > 0 ? ppid : nil
     }
 
-    /// Get the process name using sysctl.
     static func processName(pid: Int32) -> String? {
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.size
@@ -68,18 +55,16 @@ struct ProcessTree {
         }
     }
 
-    /// Check if a process is alive.
     static func isAlive(pid: Int32) -> Bool {
         kill(pid, 0) == 0 || errno == EPERM
     }
 
-    /// Enumerate every process ID on the system via sysctl(KERN_PROC_ALL).
     static func enumerateAllPids() -> [Int32] {
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
         var size: size_t = 0
         guard sysctl(&mib, 4, nil, &size, nil, 0) == 0, size > 0 else { return [] }
 
-        // sysctl can grow between the size query and the data fetch — pad and retry once.
+        // Process table can grow between size-query and data-fetch — pad and accept the resulting partial fill.
         var buffer = [UInt8](repeating: 0, count: size + 4096)
         var actualSize = buffer.count
         let result = buffer.withUnsafeMutableBufferPointer { ptr in
@@ -103,9 +88,7 @@ struct ProcessTree {
         return pids
     }
 
-    /// Return the kernel-recorded start time of `pid`. Used to order rehydrated
-    /// or discovered sessions by when their Claude Code process actually started,
-    /// not when gavel happened to notice them.
+    /// Kernel-recorded process start time — used to order rehydrated/discovered sessions by when the agent actually started, not when gavel noticed.
     static func startTime(of pid: Int32) -> Date? {
         var info = proc_bsdinfo()
         let bytes = proc_pidinfo(
@@ -121,9 +104,6 @@ struct ProcessTree {
         return Date(timeIntervalSince1970: secs + micros)
     }
 
-    /// Return the current working directory of `pid`, using proc_pidinfo
-    /// (the same API `lsof` uses internally for `cwd`). Nil if the process
-    /// is gone or we lack permission to inspect it.
     static func cwd(of pid: Int32) -> String? {
         var info = proc_vnodepathinfo()
         let bytes = proc_pidinfo(
@@ -143,9 +123,7 @@ struct ProcessTree {
         }
     }
 
-    /// Discover live CLI sessions whose `p_comm` matches `processName` exactly.
-    /// Exact-match (not substring) so we don't pick up helper processes whose
-    /// truncated paths happen to contain the agent name.
+    /// Discover live CLI sessions whose `p_comm` matches `target` exactly — exact-match (not substring) so we don't pick up helper processes whose truncated paths happen to contain the agent name.
     static func findCliSessions(processName target: String) -> [(pid: Int32, cwd: String)] {
         var results: [(Int32, String)] = []
         for pid in enumerateAllPids() {
@@ -156,7 +134,6 @@ struct ProcessTree {
         return results
     }
 
-    /// Convenience wrapper preserved for existing call sites.
     static func findClaudeCliSessions() -> [(pid: Int32, cwd: String)] {
         findCliSessions(processName: "claude")
     }

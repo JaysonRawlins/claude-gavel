@@ -1,11 +1,9 @@
 import XCTest
 @testable import Gavel
 
-/// Tests for Phase 1 refactors: PatternCompiler, GavelConstants wiring, content scanner false positive fix.
+/// Phase 1 refactor coverage: PatternCompiler, GavelConstants wiring, and the content-scanner FP fix.
 final class Phase1RefactorTests: XCTestCase {
     let matcher = PatternMatcher()
-
-    // MARK: - PatternCompiler (deduplicated glob matching)
 
     func testPatternCompilerGlobMatchesWildcard() {
         let regex = PatternCompiler.compileGlob("swift build*")!
@@ -55,8 +53,6 @@ final class Phase1RefactorTests: XCTestCase {
         XCTAssertNil(result.error)
     }
 
-    // MARK: - PersistentRule still works through PatternCompiler
-
     func testPersistentRuleGlobStillWorks() {
         var rule = PersistentRule(toolName: "Bash", pattern: "npm run*", verdict: .allow)
         XCTAssertTrue(rule.matches(toolName: "Bash", command: "npm run build", filePath: nil))
@@ -76,16 +72,12 @@ final class Phase1RefactorTests: XCTestCase {
         XCTAssertNil(result.error)
     }
 
-    // MARK: - SessionRule still works through PatternCompiler
-
     func testSessionRuleGlobStillWorks() {
         let session = Session(pid: 88888)
         session.sessionRules.append(SessionRule(toolName: "Bash", pattern: "npm *"))
         XCTAssertNotNil(session.matchesSessionRule(toolName: "Bash", command: "npm install", filePath: nil))
         XCTAssertNil(session.matchesSessionRule(toolName: "Bash", command: "yarn install", filePath: nil))
     }
-
-    // MARK: - isTempPath
 
     func testIsTempPathRecognizesTmp() {
         XCTAssertTrue(PatternMatcher.isTempPath("/tmp/exfil.c"))
@@ -115,11 +107,7 @@ final class Phase1RefactorTests: XCTestCase {
         XCTAssertFalse(PatternMatcher.isTempPath("/home/user/Documents/report.txt"))
     }
 
-    // MARK: - Content scanner skips non-temp paths
-
     func testWriteToProjectSourceSkipsContentScan() {
-        // Content with file-read + network patterns in a project source dir should pass
-        // (content scan only applies to temp directories)
         let content = buildExfilContent()
         let payload = PreToolUsePayload(
             toolName: "Write",
@@ -132,7 +120,6 @@ final class Phase1RefactorTests: XCTestCase {
     }
 
     func testWriteToTmpStillScansContent() {
-        // Same content in /tmp should be blocked
         let content = buildExfilContent()
         let payload = PreToolUsePayload(
             toolName: "Write",
@@ -145,7 +132,6 @@ final class Phase1RefactorTests: XCTestCase {
     }
 
     func testProtectedPathStillBlockedRegardlessOfContent() {
-        // Protected path blocks are NOT affected by the temp-path check
         let payload = PreToolUsePayload(
             toolName: "Write",
             toolInput: [
@@ -155,8 +141,6 @@ final class Phase1RefactorTests: XCTestCase {
         )
         XCTAssertNotNil(matcher.matchSensitivePath(payload: payload))
     }
-
-    // MARK: - GavelConstants values are reasonable
 
     func testConstantsExist() {
         XCTAssertEqual(GavelConstants.approvalTimeoutSeconds, 86400)
@@ -170,10 +154,6 @@ final class Phase1RefactorTests: XCTestCase {
         XCTAssertFalse(GavelConstants.tempDirectoryPrefixes.isEmpty)
     }
 
-    // MARK: - Helpers
-
-    /// Build content that triggers the content scanner (credential refs + network code).
-    /// Assembled at runtime to avoid triggering gavel's own content scanner on this test file.
     private func buildExfilContent() -> String {
         let credRef = ".ssh" + "/id_rsa"
         let networkRef = "URLSession" + ".shared"

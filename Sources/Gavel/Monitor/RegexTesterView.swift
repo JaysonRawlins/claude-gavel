@@ -1,12 +1,11 @@
 import SwiftUI
 
-/// Interactive regex/glob tester with match highlighting.
+/// Interactive regex/glob tester with live match highlighting.
 struct RegexTesterView: View {
     @ObservedObject var viewModel: MonitorViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Pattern input
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("Pattern")
@@ -32,7 +31,6 @@ struct RegexTesterView: View {
                 }
             }
 
-            // Test string input
             VStack(alignment: .leading, spacing: 4) {
                 Text("Test String")
                     .font(.caption.bold())
@@ -52,7 +50,6 @@ struct RegexTesterView: View {
 
             Divider()
 
-            // Results
             if !viewModel.testerPattern.isEmpty && !viewModel.testerTestString.isEmpty {
                 matchResults
             } else {
@@ -84,7 +81,6 @@ struct RegexTesterView: View {
         case .success(let regex):
             let matches = findMatches(regex: regex, in: viewModel.testerTestString)
 
-            // Match/No Match badge
             HStack(spacing: 8) {
                 if matches.isEmpty {
                     badge(text: "NO MATCH", color: .gray)
@@ -99,7 +95,6 @@ struct RegexTesterView: View {
                 }
             }
 
-            // Highlighted test string
             if !matches.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Highlighted Matches")
@@ -112,7 +107,6 @@ struct RegexTesterView: View {
                         .background(Color(nsColor: .controlBackgroundColor))
                         .cornerRadius(6)
 
-                    // Show matched substrings
                     ForEach(Array(matches.enumerated()), id: \.offset) { idx, match in
                         HStack(spacing: 4) {
                             Text("Match \(idx + 1):")
@@ -131,8 +125,6 @@ struct RegexTesterView: View {
             }
         }
     }
-
-    // MARK: - Matching
 
     private struct MatchResult {
         let value: String
@@ -171,8 +163,6 @@ struct RegexTesterView: View {
         }
     }
 
-    // MARK: - Highlighted Text
-
     private func highlightedText(_ string: String, matches: [MatchResult]) -> some View {
         let attributed = buildAttributedString(string, matches: matches)
         return Text(attributed)
@@ -189,7 +179,6 @@ struct RegexTesterView: View {
             let matchStart = match.range.location
             let matchEnd = matchStart + match.range.length
 
-            // Plain text before this match
             if matchStart > lastEnd {
                 let before = nsString.substring(with: NSRange(location: lastEnd, length: matchStart - lastEnd))
                 var part = AttributedString(before)
@@ -197,7 +186,6 @@ struct RegexTesterView: View {
                 result.append(part)
             }
 
-            // Highlighted match
             let matched = nsString.substring(with: match.range)
             var part = AttributedString(matched)
             part.font = .system(.body, design: .monospaced).bold()
@@ -208,7 +196,6 @@ struct RegexTesterView: View {
             lastEnd = matchEnd
         }
 
-        // Remaining text
         if lastEnd < nsString.length {
             let remainder = nsString.substring(from: lastEnd)
             var part = AttributedString(remainder)

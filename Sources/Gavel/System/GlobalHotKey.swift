@@ -1,25 +1,18 @@
 import Carbon.HIToolbox
 import Foundation
 
-/// System-wide hotkey registration via the Carbon HotKey API.
-///
-/// Unlike NSEvent.addGlobalMonitorForEvents, this consumes the keypress
-/// (other apps won't receive it) and does not require Accessibility permission.
+/// System-wide hotkey via Carbon — consumes the keypress (other apps don't see it) and needs no Accessibility permission. `NSEvent.addGlobalMonitorForEvents` does neither.
 enum GlobalHotKey {
     private static var hotKeyRef: EventHotKeyRef?
     private static var handler: (() -> Void)?
     private static var eventHandlerRef: EventHandlerRef?
 
-    /// Register a global hotkey. Returns true on success.
-    ///
-    /// - keyCode: a `kVK_*` virtual keycode from Carbon.HIToolbox.
-    /// - modifiers: OR of Carbon modifier masks (cmdKey, optionKey, shiftKey, controlKey).
     @discardableResult
     static func register(keyCode: UInt32, modifiers: UInt32, onFire: @escaping () -> Void) -> Bool {
         unregister()
         handler = onFire
 
-        // 'GVLP' as signature — a stable 4-char identifier for gavel's hotkey.
+        // 'GVLP' as 4-char signature — stable identifier for gavel's hotkey across registrations.
         let hotKeyID = EventHotKeyID(signature: 0x47564C50, id: 1)
         var ref: EventHotKeyRef?
         let regStatus = RegisterEventHotKey(keyCode, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &ref)

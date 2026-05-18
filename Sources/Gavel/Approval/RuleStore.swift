@@ -1,20 +1,13 @@
 import Foundation
 
-/// Persistent rule storage for approval decisions.
-///
-/// Rules are loaded from a JSON config file and can be modified
-/// at runtime via the approval panel ("Always Deny" / "Always Allow").
-/// Deny rules take absolute priority — they block even under auto-approve.
-///
-/// On first load, default MCP exfiltration rules are seeded into rules.json
-/// so they're visible, searchable, and editable in the Rules tab.
+/// Persistent rule storage — deny/allow/prompt rules in rules.json, mutable via the approval panel. Deny rules block even under auto-approve.
 final class RuleStore: ObservableObject {
     @Published private(set) var rules: [PersistentRule] = []
     private var deletedBuiltInPatterns: [String] = []
     private var fileVersion: Int = 0
     private let configPath: String
 
-    /// Current seed version — bump when adding new default rules.
+    /// Bump when adding new default rules so existing installs pick them up on next launch.
     private static let seedVersion = 7
 
     init(configPath: String? = nil) {
@@ -26,8 +19,6 @@ final class RuleStore: ObservableObject {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/.claude/gavel/rules.json"
     }
-
-    // MARK: - Evaluation (split by verdict for priority ordering)
 
     func evaluateDeny(payload: PreToolUsePayload) -> Decision? {
         for i in rules.indices where rules[i].verdict == .block && !rules[i].isDisabled {
@@ -51,7 +42,7 @@ final class RuleStore: ObservableObject {
         return nil
     }
 
-    /// User-created prompt rules — high priority, checked before allow rules.
+    /// User-created prompt rules — checked before allow rules so they can't be silently bypassed.
     func evaluateUserPrompt(payload: PreToolUsePayload) -> Decision? {
         for i in rules.indices where rules[i].verdict == .prompt && !rules[i].builtIn && !rules[i].isDisabled {
             if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
@@ -61,7 +52,7 @@ final class RuleStore: ObservableObject {
         return nil
     }
 
-    /// Built-in prompt rules — lower priority, checked after allow rules so users can override.
+    /// Built-in prompt rules — lower priority than user rules and allow rules so users can override seeded defaults.
     func evaluateBuiltInPrompt(payload: PreToolUsePayload) -> Decision? {
         for i in rules.indices where rules[i].verdict == .prompt && rules[i].builtIn && !rules[i].isDisabled {
             if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
@@ -75,15 +66,11 @@ final class RuleStore: ObservableObject {
         rules.first { $0.id == id }
     }
 
-    /// Toggle a rule's disabled state. Persists immediately so the change
-    /// survives a daemon restart (and stays visible in the UI as "off").
     func setDisabled(id: UUID, isDisabled: Bool) {
         guard let idx = rules.firstIndex(where: { $0.id == id }) else { return }
         rules[idx].isDisabled = isDisabled
         saveRules()
     }
-
-    // MARK: - Rule Management
 
     func addRule(_ rule: PersistentRule) {
         rules.append(rule)
@@ -116,12 +103,7 @@ final class RuleStore: ObservableObject {
         rules.filter { $0.verdict == .allow }
     }
 
-    // MARK: - Seeded Defaults
-
-    /// Default prompt rules seeded into rules.json — visible, searchable, editable.
-    /// Two categories: MCP exfiltration vectors and Gavel self-protection.
     static let seededDefaults: [PersistentRule] = [
-        // ── MCP exfiltration vectors ──
         PersistentRule(
             toolName: "*",
             pattern: "mcp__.*[Ss]lack.*(send|update|delete|upload)",
@@ -163,7 +145,6 @@ final class RuleStore: ObservableObject {
             builtIn: true
         ),
 
-        // ── Gavel/Claude self-protection: any Bash command referencing config paths ──
         PersistentRule(
             toolName: "Bash",
             pattern: "\\.claude/(gavel/|settings|hooks/)",
@@ -173,7 +154,6 @@ final class RuleStore: ObservableObject {
             builtIn: true
         ),
 
-        // ── Codex apply_patch self-protection ──
         PersistentRule(
             toolName: "apply_patch",
             pattern: "\\.claude/(gavel/|settings|hooks/)|\\.codex/(config|hooks)|\\.(zshrc|bashrc|bash_profile|profile)\\b",
@@ -183,7 +163,6 @@ final class RuleStore: ObservableObject {
             builtIn: true
         ),
 
-        // ── Scripting language code execution ──
         PersistentRule(
             toolName: "Bash",
             pattern: "\\b(python3?|ruby|perl|node|php|lua)\\b\\s+(-[ce]|--eval)\\b",
@@ -193,7 +172,6 @@ final class RuleStore: ObservableObject {
             builtIn: true
         ),
 
-        // ── AppleScript / open command (sandbox escape) ──
         PersistentRule(
             toolName: "Bash",
             pattern: "\\bosascript\\b",
@@ -211,7 +189,6 @@ final class RuleStore: ObservableObject {
             builtIn: true
         ),
 
-        // ── Local file read via curl (config exfil) ──
         PersistentRule(
             toolName: "Bash",
             pattern: "\\bcurl\\b.*\\bfile://",
@@ -221,7 +198,6 @@ final class RuleStore: ObservableObject {
             builtIn: true
         ),
 
-        // ── Git safety: destructive reset and push to main ──
         PersistentRule(
             toolName: "Bash",
             pattern: "\\bgit\\s+(reset\\s+--hard|checkout\\s+--\\s+\\.|clean\\s+-[fd]|restore\\s+--staged\\s+\\.)",
@@ -239,11 +215,7 @@ final class RuleStore: ObservableObject {
             builtIn: true
         ),
 
-        // ── Persistence-creating scheduler tools ──
-        // These plant future execution that fires while the user may not be watching.
-        // Prompt even under auto-approve so the user sees and confirms each one.
-        // Using toolName="*" with an anchored regex pattern gives each rule a
-        // unique pattern string — needed because seed-migration dedupes on pattern.
+        // Scheduler tools: `toolName="*"` + anchored regex is intentional — seed dedup keys on pattern, so each rule needs a unique pattern string.
         PersistentRule(
             toolName: "*",
             pattern: "^CronCreate$",
@@ -270,8 +242,6 @@ final class RuleStore: ObservableObject {
         ),
     ]
 
-    // MARK: - Persistence
-
     private func loadRules() {
         guard FileManager.default.fileExists(atPath: configPath),
               let data = FileManager.default.contents(atPath: configPath) else {
@@ -279,7 +249,7 @@ final class RuleStore: ObservableObject {
             return
         }
 
-        // Try new envelope format first, fall back to bare array (migration)
+        // Envelope format first; bare-array fallback handles rules.json files written by versions before seedVersion existed.
         if let file = try? JSONDecoder().decode(RulesFile.self, from: data) {
             rules = file.rules
             fileVersion = file.version
@@ -325,22 +295,14 @@ final class RuleStore: ObservableObject {
     }
 }
 
-// MARK: - Rules File Envelope
-
-/// Versioned envelope for rules.json — wraps rules with metadata for seeding.
+/// On-disk rules.json envelope — wraps rules with seed-version metadata.
 struct RulesFile: Codable {
     var version: Int
     var deletedBuiltInPatterns: [String]
     var rules: [PersistentRule]
 }
 
-// MARK: - Persistent Rule
-
-/// A persistent approval rule saved to rules.json.
-///
-/// Supports two pattern modes:
-/// - **Glob** (default): `*` matches any characters. E.g. `swift build*`
-/// - **Regex**: Full regex with lookaheads etc. Toggle Regex in the UI.
+/// A persisted approval rule. `pattern` is a glob (default) or regex (when `isRegex` is true).
 struct PersistentRule: Codable, Identifiable {
     let id: UUID
     let name: String
@@ -349,17 +311,10 @@ struct PersistentRule: Codable, Identifiable {
     let isRegex: Bool
     let verdict: DecisionVerdict
     let createdAt: Date
-    /// Explanation shown to Claude when a deny rule fires (e.g. "use --only-names flag instead").
     let explanation: String?
-    /// True for seeded default rules (MCP exfil patterns). User rules are always false.
     let builtIn: Bool
-    /// Skip this rule during evaluation when true. Persisted so the disable
-    /// survives daemon restarts (so a forgotten "temporarily off" rule still
-    /// surfaces in the UI rather than silently re-engaging on reboot). Toggle
-    /// from the Rules tab; defaults to false (rule active).
     var isDisabled: Bool
 
-    /// Pre-compiled regex (rebuilt on first access, not persisted).
     private var _compiledRegex: NSRegularExpression?
     var compiledRegex: NSRegularExpression? {
         mutating get {
@@ -374,8 +329,6 @@ struct PersistentRule: Codable, Identifiable {
         case id, name, toolName, pattern, isRegex, verdict, createdAt, explanation, builtIn, isDisabled
     }
 
-    /// Backward-compatible decoding — isRegex, explanation, builtIn, isDisabled
-    /// all default for old rules.json files lacking the field.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -412,7 +365,6 @@ struct PersistentRule: Codable, Identifiable {
         self._compiledRegex = Self.compilePattern(pattern, isRegex: isRegex)
     }
 
-    /// Update a rule's editable fields while preserving identity (id, toolName, createdAt, builtIn).
     init(replacing old: PersistentRule, pattern: String, isRegex: Bool, verdict: DecisionVerdict, explanation: String?) {
         self.id = old.id
         self.toolName = old.toolName
@@ -440,7 +392,6 @@ struct PersistentRule: Codable, Identifiable {
             raw = command ?? filePath ?? ""
         }
 
-        // Sanitize typographic dashes so patterns match consistently
         let target = raw
             .replacingOccurrences(of: "\u{2013}", with: "-")
             .replacingOccurrences(of: "\u{2014}", with: "--")
@@ -448,20 +399,16 @@ struct PersistentRule: Codable, Identifiable {
 
         guard let regex = compiledRegex else { return false }
 
-        // Match against command/filePath
         if matchesRegex(regex, in: target) {
-            // For Bash: verify it's not a false positive inside a heredoc or quoted string
-            if toolName == "Bash" {
-                let stripped = PatternMatcher.stripQuotedContent(target)
-                if !matchesRegex(regex, in: stripped) { /* false positive */ }
-                else { return true }
-            } else {
+            if toolName != "Bash" {
+                return true
+            }
+            let stripped = PatternMatcher.stripQuotedContent(target)
+            if matchesRegex(regex, in: stripped) {
                 return true
             }
         }
 
-        // For Bash: expand inline variables and re-check.
-        // Catches: D="doppler"; $D secrets → doppler secrets
         if toolName == "Bash" && !raw.isEmpty {
             let expanded = PatternMatcher.expandInlineVariables(raw)
             if expanded != raw {
@@ -476,9 +423,6 @@ struct PersistentRule: Codable, Identifiable {
             }
         }
 
-        // For wildcard rules, also match against the tool name itself.
-        // MCP tools carry their identity in the name (e.g. mcp__LinkedIn__linkedin_create_post)
-        // and typically have no command or filePath.
         if self.toolName == "*" {
             return regex.firstMatch(in: toolName, range: NSRange(toolName.startIndex..., in: toolName)) != nil
         }
@@ -490,12 +434,10 @@ struct PersistentRule: Codable, Identifiable {
         regex.firstMatch(in: string, range: NSRange(string.startIndex..., in: string)) != nil
     }
 
-    /// Compile a pattern to regex. Glob patterns are converted; regex patterns used as-is.
     static func compilePattern(_ pattern: String, isRegex: Bool) -> NSRegularExpression? {
         PatternCompiler.compilePattern(pattern, isRegex: isRegex)
     }
 
-    /// Test a pattern against a sample string. Returns match result and any regex error.
     static func testPattern(_ pattern: String, isRegex: Bool, against sample: String) -> (matches: Bool, error: String?) {
         PatternCompiler.testPattern(pattern, isRegex: isRegex, against: sample)
     }

@@ -1,10 +1,6 @@
 import Foundation
 
-/// Listens on a Unix domain socket for hook events.
-///
-/// Each hook shim connects, sends a JSON payload, and (for PreToolUse)
-/// waits for a JSON response. The server handles connections concurrently
-/// using GCD, so multiple agents can send events simultaneously.
+/// Unix-domain-socket listener for hook events — concurrent GCD per-connection, so multiple agents can fire simultaneously.
 final class SocketServer {
     private let socketPath: String
     private var fileDescriptor: Int32 = -1
@@ -18,23 +14,14 @@ final class SocketServer {
     }
 
     func start() throws {
-        // SO_NOSIGPIPE on the per-connection fd handles the daemon's normal
-        // path, but tests instantiate SocketServer outside the daemon's
-        // signal-handler setup in main.swift. Belt-and-suspenders: ignore
-        // SIGPIPE process-wide so a write to a peer-closed socket can never
-        // crash the host process regardless of context.
+        // Belt-and-suspenders: SO_NOSIGPIPE on per-conn fd covers the daemon, but tests construct SocketServer outside main.swift's signal setup.
         signal(SIGPIPE, SIG_IGN)
 
-        // Single-instance guard: if a live peer is already serving this socket,
-        // refuse to take it over. Without this, the second daemon would
-        // unlink+bind and silently steal the path while the first daemon's
-        // listening fd survives — split-brain. Hook connections then land on
-        // whichever bound last, with whichever rule set that process loaded.
+        // Single-instance guard: without this, second daemon unlinks+binds and silently steals the path — split-brain across two rule sets.
         if Self.probeAlive(socketPath: socketPath) {
             throw GavelError.daemonAlreadyRunning(path: socketPath)
         }
 
-        // Clean up stale socket
         unlink(socketPath)
 
         fileDescriptor = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -66,7 +53,6 @@ final class SocketServer {
             throw GavelError.bindFailed(errno: errno)
         }
 
-        // Restrict socket permissions
         chmod(socketPath, 0o600)
 
         guard listen(fileDescriptor, GavelConstants.socketListenBacklog) == 0 else {
@@ -105,21 +91,13 @@ final class SocketServer {
                 continue
             }
 
-            // Handle each connection concurrently
             queue.async { [weak self] in
                 self?.handleConnection(fd: clientFd)
             }
         }
     }
 
-    /// Returns true iff a peer is currently `accept()`-ing on `socketPath`.
-    ///
-    /// Classification (kept narrow on purpose):
-    /// - `connect()` succeeds → live daemon → true.
-    /// - `ENOENT` → no socket file → false.
-    /// - `ECONNREFUSED` → stale socket file with no listener → false.
-    /// - Any other errno → conservative *true* so we fail closed and don't
-    ///   accidentally clobber a running daemon over an EPERM/EACCES quirk.
+    /// True iff a peer is `accept()`-ing on `socketPath`. Errno semantics: ENOENT/ECONNREFUSED → false; anything else → fail-closed *true* so an EPERM quirk can't clobber a live daemon.
     static func probeAlive(socketPath: String) -> Bool {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }
@@ -157,15 +135,12 @@ final class SocketServer {
             close(fd)
         }
 
-        // Prevent SIGPIPE on this socket if client disconnects during write
         var noSigPipe: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
 
-        // Set read timeout
         var timeout = timeval(tv_sec: GavelConstants.socketReadTimeoutSeconds, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
-        // Read all data
         var data = Data()
         let bufSize = GavelConstants.socketBufferSize
         let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: bufSize)
@@ -175,16 +150,11 @@ final class SocketServer {
             let bytesRead = read(fd, buf, bufSize)
             if bytesRead <= 0 { break }
             data.append(buf, count: bytesRead)
-            // If we got less than buffer size, likely done
+
             if bytesRead < bufSize { break }
         }
 
-        // Empty data means the client connected but never sent anything (or the
-        // read timed out before any bytes arrived). Failing silently here makes
-        // the hook see EOF and emit "daemon returned invalid response", which
-        // Claude Code then treats as a tool error and cancels parallel siblings.
-        // Send an explicit fail-closed JSON instead so the hook surfaces a
-        // diagnosable reason and the cascade has a chance to be debugged.
+        // Empty payload = client connected but sent nothing (or read timed out). Failing silently makes the hook see EOF → "invalid response" → Claude cancels parallel siblings. Send explicit fail-closed JSON so the cascade is diagnosable.
         guard !data.isEmpty else {
             gavelLog("[socket] empty payload fd=\(fd) — sending fail-closed")
             let errMsg = #"{"verdict":"block","reason":"Gavel: empty hook payload (read timeout — daemon worker may be starved under burst load)"}"#
@@ -196,8 +166,6 @@ final class SocketServer {
             return
         }
 
-        // For PreToolUse hooks, we need to send a response back.
-        // The handler determines whether to respond based on hook type.
         onEvent?(data) { responseData in
             let written = responseData.withUnsafeBytes { ptr in
                 write(fd, ptr.baseAddress!, responseData.count)

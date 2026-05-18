@@ -1,12 +1,8 @@
 import XCTest
 @testable import Gavel
 
-/// HookRouter-level coverage for the two session-allow paths:
-///   1. pattern-bound SessionRule (allowPatternForSession)
-///   2. rule-suppression by ID (suppressRuleForSession) — covers the rule's
-///      full regex scope (e.g. one prompt rule spanning many MCP tool names).
+/// HookRouter coverage for the two session-allow paths: pattern-bound SessionRule (narrow) and rule-suppression by ID (covers the rule's full regex scope, e.g. one prompt rule spanning many MCP tools).
 final class PromptOverrideTest: XCTestCase {
-
     private func runRouter(
         session: Session,
         store: RuleStore,
@@ -74,8 +70,6 @@ final class PromptOverrideTest: XCTestCase {
                        "Session allow should override built-in prompt rule. Got: \(String(describing: response))")
     }
 
-    /// Suppress-by-ID covers the full regex scope: one Playwright prompt rule
-    /// spans many MCP tool names; suppressing the rule covers all sibling methods.
     func testSuppressedRuleCoversSiblingMcpToolNames() {
         let path = NSTemporaryDirectory() + "promptoverride-\(UUID().uuidString).json"
         defer { try? FileManager.default.removeItem(atPath: path) }
@@ -102,8 +96,6 @@ final class PromptOverrideTest: XCTestCase {
         XCTAssertEqual(r3?["verdict"] as? String, "allow")
     }
 
-    /// Pattern-bound SessionRule does NOT cover sibling MCP methods —
-    /// motivates the suppress-by-ID path.
     func testPatternBoundSessionRuleDoesNotCoverSiblings() {
         let path = NSTemporaryDirectory() + "promptoverride-\(UUID().uuidString).json"
         defer { try? FileManager.default.removeItem(atPath: path) }
@@ -117,16 +109,12 @@ final class PromptOverrideTest: XCTestCase {
         ))
 
         let session = Session(pid: 88884)
-        // Simulates clicking "Session Allow" on a click event with default pattern "*".
+
         session.sessionRules.append(SessionRule(toolName: "mcp__Playwright__browser_click", pattern: "*"))
 
         let click = runRouter(session: session, store: store, toolName: "mcp__Playwright__browser_click", toolInputJson: "{}")
         XCTAssertEqual(click?["verdict"] as? String, "allow", "Same tool name should match the pattern-bound rule")
 
-        // Sibling method has no SessionRule for it, so the prompt rule still fires.
-        // The test runner can't open the dialog — match path takes the dialog branch
-        // and times out. We verify the lack of allow path differently: pattern rule
-        // for *_click does not match _navigate by toolName check.
         let navRule = SessionRule(toolName: "mcp__Playwright__browser_click", pattern: "*")
         XCTAssertNil(
             navRule.matches(toolName: "mcp__Playwright__browser_navigate", command: nil, filePath: nil) ? navRule : nil,

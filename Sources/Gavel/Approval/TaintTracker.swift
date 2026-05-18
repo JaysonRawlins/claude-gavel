@@ -1,32 +1,18 @@
 import Foundation
 
-/// Tracks sensitive data flow across tool calls to detect multi-step exfiltration.
-///
-/// When a command copies sensitive data (SSH keys, AWS creds, etc.) to a temp/intermediate
-/// file, that path is "tainted." If a later command sends a tainted file over the network
-/// or executes a tainted binary, it is blocked.
-///
-/// This catches attacks that split "read credentials" and "send data" across separate
-/// Bash calls where each individual call looks innocent.
+/// Detects multi-step exfiltration: tracks paths that received sensitive data, then blocks later commands that send/execute those tainted files.
 struct TaintTracker {
-
-    /// File paths that contain sensitive data -- when referenced in a command
-    /// that redirects/copies output, the destination becomes tainted.
     private static let sensitiveSourcePatterns = [
         "\\.ssh/", "\\.gnupg/", "\\.aws/", "\\.kube/config",
         "\\.env$", "\\.npmrc$", "\\.netrc$", "\\.docker/config",
     ]
 
-    /// Commands that can send data over the network -- used to detect
-    /// exfiltration of tainted files.
     private static let networkExfilPatterns = [
         "\\bcurl\\b", "\\bwget\\b", "\\bscp\\b", "\\brsync\\b",
         "\\bpython3?\\b.*\\b(urlopen|requests|socket)",
         "\\bnc\\b", "\\bncat\\b", "\\bopenssl\\b.*s_client",
     ]
 
-    /// Check if a command exfiltrates or executes any tainted file.
-    /// Returns a block reason if detected, nil if safe.
     static func checkExfiltration(command: String, taintedPaths: Set<String>) -> String? {
         guard !taintedPaths.isEmpty else { return nil }
         let range = NSRange(command.startIndex..., in: command)
@@ -44,12 +30,7 @@ struct TaintTracker {
         return nil
     }
 
-    /// Record new tainted paths from a command that copies sensitive data.
-    /// Writes go through TaintedPathStore (thread-safe) so the worker thread
-    /// that calls this never touches Combine. A local Set is used as a scratch
-    /// buffer so the private extractors below keep their existing
-    /// `inout Set<String>` signatures and we batch a single `formUnion` at
-    /// the end (one lock acquisition instead of one per insert).
+    /// Worker-thread caller — extracts into a scratch `Set` so the store's lock is acquired once via `formUnion`, not per-insert.
     static func recordTaints(command: String, into store: TaintedPathStore) {
         guard referencesSensitiveSource(command) else { return }
         var buffer = Set<String>()
@@ -61,16 +42,13 @@ struct TaintTracker {
         }
     }
 
-    /// Set-style overload kept for unit tests that hand-craft a Set rather
-    /// than going through the store.
+    /// Set-style overload kept for unit tests that hand-craft a Set rather than going through the store.
     static func recordTaints(command: String, into taintedPaths: inout Set<String>) {
         guard referencesSensitiveSource(command) else { return }
         extractRedirectTarget(from: command, into: &taintedPaths)
         extractCompileOutput(from: command, into: &taintedPaths)
         extractCopyDestination(from: command, into: &taintedPaths)
     }
-
-    // MARK: - Private
 
     private static func checkNetworkExfil(command: String, taintedPath: String, range: NSRange) -> String? {
         for pattern in networkExfilPatterns {

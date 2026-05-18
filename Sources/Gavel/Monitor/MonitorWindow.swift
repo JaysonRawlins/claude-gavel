@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The main monitor window showing the live feed, rules editor, regex tester, and cheat sheet.
+/// Main monitor window — live feed, rules editor, regex tester, cheat sheet, and per-session controls.
 struct MonitorWindow: View {
     @ObservedObject var viewModel: MonitorViewModel
     @State private var isPinned: Bool = false
@@ -14,7 +14,6 @@ struct MonitorWindow: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Status bar with pin toggle
             HStack {
                 StatusView(viewModel: viewModel)
                 Spacer()
@@ -36,7 +35,6 @@ struct MonitorWindow: View {
 
             Divider()
 
-            // Tab picker
             Picker("", selection: $selectedTab) {
                 Text("Feed").tag(MonitorTab.feed)
                 Text("Rules (\(viewModel.ruleCount))").tag(MonitorTab.rules)
@@ -51,7 +49,6 @@ struct MonitorWindow: View {
 
             Divider()
 
-            // Content
             switch selectedTab {
             case .feed:
                 FeedView(entries: viewModel.feedEntries)
@@ -69,7 +66,6 @@ struct MonitorWindow: View {
 
             Divider()
 
-            // Per-session controls
             sessionControls
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
@@ -222,7 +218,7 @@ struct MonitorWindow: View {
         .help("Match against PID, session ID, working directory, or custom name")
     }
 
-    /// Case-insensitive substring match across PID, session ID, cwd, label.
+    /// Case-insensitive substring match across PID, session ID, cwd, and label.
     private func filterSessions(_ sessions: [Session], query: String) -> [Session] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return sessions }
@@ -261,10 +257,9 @@ struct MonitorWindow: View {
             .help("When gavel sees no user interaction for this long, auto-approval is revoked across all sessions.")
         }
     }
-
 }
 
-/// Observes Session directly so Pause/Resume labels and the per-tool-call flash repaint promptly.
+/// Observes Session directly so Pause/Resume labels and the per-tool-call flash repaint promptly without the parent re-rendering.
 private struct SessionRow: View {
     @ObservedObject var session: Session
     let viewModel: MonitorViewModel
@@ -285,7 +280,7 @@ private struct SessionRow: View {
                     .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
             }
 
-            // verbatim avoids LocalizedStringKey's locale grouping (e.g. "12,345")
+            // `Text(verbatim:)` avoids LocalizedStringKey's locale grouping — otherwise PID 12345 renders as "12,345".
             Text(verbatim: "PID \(session.pid)")
                 .font(.system(.caption, design: .monospaced))
                 .foregroundColor(.secondary)
@@ -406,7 +401,7 @@ private struct SessionRow: View {
         }
     }
 
-    /// Width must match actionCluster so live and dead rows align.
+    /// Width must match `actionCluster` so live and dead rows align in the list.
     @ViewBuilder
     private var tombstoneActionCluster: some View {
         HStack(spacing: 6) {
@@ -474,9 +469,7 @@ private struct SessionRow: View {
     }
 }
 
-/// Click-to-edit label control. Shows as a plain pill until clicked; only then
-/// does it become a focusable TextField. This keeps the field from grabbing
-/// first responder when the monitor opens and removes the always-on focus ring.
+/// Click-to-edit label pill. Becomes a focusable TextField only after the user clicks — prevents it from grabbing first responder on monitor open and removes the always-on focus ring.
 private struct SessionLabelField: View {
     @ObservedObject var session: Session
     let onCommit: (String) -> Void
@@ -542,8 +535,6 @@ private struct SessionLabelField: View {
     }
 }
 
-// MARK: - Rules View (enhanced with add form + import/export)
-
 struct RulesView: View {
     @ObservedObject var viewModel: MonitorViewModel
     @State private var newPattern: String = ""
@@ -561,7 +552,6 @@ struct RulesView: View {
 
     private let toolOptions = ["*", "Bash", "Edit", "MultiEdit", "Write", "Read", "Glob", "Grep", "Agent"]
 
-    /// Filter rules by search text — matches against tool name, pattern, explanation, and verdict.
     private func matchesSearch(_ rule: PersistentRule) -> Bool {
         guard !searchText.isEmpty else { return true }
         let query = searchText.lowercased()
@@ -574,14 +564,12 @@ struct RulesView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Add rule form
             addRuleForm
                 .padding(10)
                 .background(Color(nsColor: .controlBackgroundColor))
 
             Divider()
 
-            // Search + Import/Export bar
             HStack(spacing: 8) {
                 HStack(spacing: 4) {
                     Image(systemName: "magnifyingglass")
@@ -612,7 +600,6 @@ struct RulesView: View {
 
             Divider()
 
-            // Existing rules list (user rules first, built-in defaults at bottom)
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
                     let userRules = viewModel.persistentRules.filter { !$0.builtIn && matchesSearch($0) }
@@ -652,12 +639,9 @@ struct RulesView: View {
         }
     }
 
-    // MARK: - Add Rule Form
-
     private var addRuleForm: some View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
-                // Tool picker
                 Picker("", selection: $newToolName) {
                     ForEach(toolOptions, id: \.self) { tool in
                         Text(tool).tag(tool)
@@ -669,7 +653,6 @@ struct RulesView: View {
                     .font(.system(.body, design: .monospaced).bold())
                     .foregroundColor(.secondary)
 
-                // Pattern input
                 HStack(spacing: 2) {
                     if newIsRegex {
                         Text("/").font(.system(.body, design: .monospaced)).foregroundColor(.orange)
@@ -694,7 +677,6 @@ struct RulesView: View {
             }
 
             HStack(spacing: 8) {
-                // Verdict picker
                 Picker("", selection: $newVerdict) {
                     Text("Always Deny").tag(DecisionVerdict.block)
                     Text("Always Allow").tag(DecisionVerdict.allow)
@@ -710,7 +692,6 @@ struct RulesView: View {
                 .disabled(newPattern.isEmpty)
             }
 
-            // Explanation field for deny rules — Claude sees this when blocked
             if newVerdict == .block {
                 TextEditor(text: $newExplanation)
                     .font(.system(.caption, design: .monospaced))
@@ -754,8 +735,6 @@ struct RulesView: View {
         newPattern = ""
         newExplanation = ""
     }
-
-    // MARK: - Import/Export
 
     private var importExportBar: some View {
         HStack(spacing: 8) {
@@ -824,16 +803,9 @@ struct RulesView: View {
         }
     }
 
-    // MARK: - Rule Row
-
     private func ruleRow(_ rule: PersistentRule) -> some View {
         VStack(spacing: 0) {
-            // Display row
             HStack(spacing: 6) {
-                // Enable/disable toggle. Click flips the rule's `isDisabled`
-                // and persists. Disabled rules render greyed-out to make the
-                // off state visible at a glance — important when the user has
-                // disabled a rule for testing and wants to remember to re-enable.
                 Button(action: {
                     viewModel.setRuleDisabled(id: rule.id, isDisabled: !rule.isDisabled)
                     viewModel.noteInteraction()
@@ -927,7 +899,6 @@ struct RulesView: View {
             .padding(.vertical, 4)
             .opacity(rule.isDisabled ? 0.5 : 1.0)
 
-            // Inline edit form (shown when editing this rule)
             if editingRuleId == rule.id {
                 VStack(spacing: 6) {
                     HStack(spacing: 8) {
@@ -1010,8 +981,6 @@ struct RulesView: View {
         editingRuleId = nil
     }
 
-    // MARK: - Helpers
-
     private func verdictLabel(_ verdict: DecisionVerdict) -> String {
         switch verdict {
         case .block: return "DENY"
@@ -1028,8 +997,6 @@ struct RulesView: View {
         }
     }
 }
-
-// MARK: - Session Rules View
 
 struct SessionRulesView: View {
     @ObservedObject var viewModel: MonitorViewModel
@@ -1058,7 +1025,6 @@ struct SessionRulesView: View {
 
     private func sessionSection(_ session: Session) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Session header
             HStack(spacing: 8) {
                 Circle()
                     .fill(session.isAlive ? .green : .gray)
@@ -1088,7 +1054,6 @@ struct SessionRulesView: View {
                 }
             }
 
-            // Session info
             HStack(spacing: 16) {
                 Text("Tools: \(session.toolCallCount)")
                     .foregroundColor(.secondary)
@@ -1107,7 +1072,6 @@ struct SessionRulesView: View {
             }
             .font(.caption2)
 
-            // Session rules
             if session.sessionRules.isEmpty {
                 Text("No session rules")
                     .foregroundColor(.secondary)
@@ -1191,7 +1155,6 @@ struct SessionRulesView: View {
                 }
             }
 
-            // Tainted paths (if any)
             if !session.taintedPaths.isEmpty {
                 Text("Tainted paths:")
                     .font(.caption2.bold())

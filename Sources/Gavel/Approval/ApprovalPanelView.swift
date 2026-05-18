@@ -1,41 +1,24 @@
 import SwiftUI
 
-/// All state for the note-to-Claude field, hoisted into an ObservableObject so
-/// the field's sub-view can observe it independently of the parent panel.
-/// Rationale: when the user clicks the in-field checkbox, only `NoteField`
-/// needs to re-render — the action buttons (Allow/Deny) live in the parent
-/// body and shouldn't get torn down by an unrelated state change. An earlier
-/// `@State`-on-parent design wedged the daemon when the user toggled the
-/// checkbox and then clicked Deny: the parent body re-rendered, the
-/// floating-panel checkbox lost / shuffled key-responder status, and the
-/// subsequent Deny click never reached `coordinator.handleAction`. Isolating
-/// the state plus replacing `Toggle.checkbox` with a `Button`-styled checkbox
-/// (which doesn't carry the same NSButton focus quirks in utility panels)
-/// removes both vectors.
+/// Hoisted into its own ObservableObject so checkbox toggles re-render only `NoteField` — keeps the parent's Allow/Deny buttons stable. Older `@State`-on-parent design wedged the daemon: checkbox-then-Deny shuffled the NSButton key-responder and the Deny click never reached `handleAction`.
 final class NoteFieldState: ObservableObject {
     @Published var text: String = ""
     @Published var sendToClaude: Bool = false
     @Published var hasBeenEdited: Bool = false
     var seeded: String = ""
 
-    /// True when the field still shows the auto-seeded preview (i.e. user
-    /// hasn't edited). Drives italic + secondary text styling.
+    /// True while the field still shows the auto-seeded preview (i.e. user hasn't edited). Drives italic + secondary styling.
     var notePreviewActive: Bool {
         !hasBeenEdited && !seeded.isEmpty && text == seeded
     }
 
-    /// Note value to send as `additionalContext` on Allow paths. nil unless
-    /// the user explicitly opted in (checkbox or edit-auto-tick) AND there's
-    /// non-empty text.
+    /// Note for `additionalContext` on Allow paths — requires explicit opt-in (checkbox or edit-auto-tick) plus non-empty text.
     var noteForAllowContext: String? {
         guard sendToClaude, !text.isEmpty else { return nil }
         return text
     }
 
-    /// Note value to send as the deny reason. Gated on `hasBeenEdited` rather
-    /// than the checkbox: a typed deny reason is always high-signal, but the
-    /// auto-seeded preview ("User approved this via Gavel") is nonsensical
-    /// as a deny reason and must not flow on a no-edit deny.
+    /// Note for the deny reason. Gated on `hasBeenEdited` — the seeded preview ("User approved...") is nonsensical as a deny reason and must not flow on a no-edit deny.
     var noteForDenyContext: String? {
         guard hasBeenEdited, !text.isEmpty else { return nil }
         return text
@@ -48,8 +31,7 @@ final class NoteFieldState: ObservableObject {
         sendToClaude = false
     }
 
-    /// Called from the field's `onChange`. Promotes the first text mutation
-    /// to "user has edited" + auto-ticks the send checkbox.
+    /// Called from the field's `onChange` — promotes the first text mutation to "edited" + auto-ticks the send checkbox.
     func userEditedIfNeeded() {
         if !hasBeenEdited && text != seeded {
             hasBeenEdited = true
@@ -58,8 +40,7 @@ final class NoteFieldState: ObservableObject {
     }
 }
 
-/// The interactive approval dialog shown for each PreToolUse event.
-/// Each session gets its own panel via SessionPanel.
+/// The interactive approval dialog shown for each PreToolUse event. Each session gets its own panel via `SessionPanel`.
 struct ApprovalPanelView: View {
     @ObservedObject var coordinator: ApprovalCoordinator
     @ObservedObject var sessionPanel: ApprovalCoordinator.SessionPanel
@@ -68,8 +49,6 @@ struct ApprovalPanelView: View {
     @State private var editedFields: [String: String] = [:]
     @State private var isRegexMode: Bool = false
 
-    /// All note-field state lives here. See `NoteFieldState` for the
-    /// architectural rationale (re-render isolation + bug fix).
     @StateObject private var noteState = NoteFieldState()
 
     /// Codex's PreToolUseHookSpecificOutputWire has no updatedInput field, so
@@ -116,9 +95,7 @@ struct ApprovalPanelView: View {
             )
             editedCommand = ApprovalCoordinator.sanitizeDashes(a.payload.command ?? "")
             editedFields = [:]
-            // Seed the note field as a *preview* of what would flow to Claude
-            // if the user opts in. Default-tier prompts (no rule fired) get a
-            // generic canned line so the opt-in path is consistent.
+            // Seed the note as a *preview* of what would flow to Claude if the user opts in; default-tier prompts get a generic canned line.
             let seeded: String
             if let reason = a.triggerReason, !reason.isEmpty {
                 seeded = "User approved this via Gavel — \(reason)"
@@ -129,8 +106,6 @@ struct ApprovalPanelView: View {
             isRegexMode = false
         }
     }
-
-    // MARK: - Header
 
     @ViewBuilder
     private func toolHeader(_ approval: ApprovalCoordinator.PendingApproval) -> some View {
@@ -163,8 +138,6 @@ struct ApprovalPanelView: View {
         .background(Color(nsColor: .controlBackgroundColor))
     }
 
-    // MARK: - Trigger Banner
-
     @ViewBuilder
     private func triggerBanner(_ reason: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
@@ -186,8 +159,6 @@ struct ApprovalPanelView: View {
         .padding(.vertical, 6)
         .background(Color.orange.opacity(0.12))
     }
-
-    // MARK: - Tool Details
 
     @ViewBuilder
     private func toolDetails(_ approval: ApprovalCoordinator.PendingApproval) -> some View {
@@ -328,7 +299,7 @@ struct ApprovalPanelView: View {
         }
     }
 
-    /// Keys whose values are editable in the approval panel (message content, post text, etc.)
+    /// Tool-input keys whose values are user-editable in the panel (message body, post text, etc).
     private static let editableKeys: Set<String> = [
         "text", "message", "body", "content", "description", "comment", "prompt", "query"
     ]
@@ -378,8 +349,6 @@ struct ApprovalPanelView: View {
         }
     }
 
-    // MARK: - Note to Claude
-
     @ViewBuilder
     private func noteToClaudeField() -> some View {
         HStack(alignment: .top, spacing: 4) {
@@ -392,12 +361,9 @@ struct ApprovalPanelView: View {
         .padding(.vertical, 6)
     }
 
-    // MARK: - Action Bar
-
     @ViewBuilder
     private func actionBar(_ approval: ApprovalCoordinator.PendingApproval) -> some View {
         VStack(spacing: 6) {
-            // Pattern field with regex toggle
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 4) {
                     Text("\(approval.payload.toolName):")
@@ -441,10 +407,8 @@ struct ApprovalPanelView: View {
                     }
             }
 
-            // Live pattern tester
             patternTester(approval)
 
-            // Persistent + session rules row
             HStack(spacing: 6) {
                 Button(action: {
                     coordinator.handleAction(.alwaysDenyPattern(pattern: sessionPattern, isRegex: isRegexMode, explanation: noteState.noteForDenyContext), on: sessionPanel)
@@ -521,17 +485,13 @@ struct ApprovalPanelView: View {
                 }
             }
 
-            // One-time actions
             HStack {
                 Button(action: { performDeny() }) {
                     Label("Deny", systemImage: "xmark.circle")
                 }
                 .buttonStyle(.bordered)
                 .tint(.orange)
-                // Modifier required so a stray Escape press (TextEditor
-                // dismiss, accidental key) doesn't reject an in-flight
-                // approval. Cmd+Escape mirrors the Cmd+Return convention
-                // used for Allow Once.
+                // Cmd+Escape — bare Escape would reject in-flight approvals on stray TextEditor dismiss.
                 .keyboardShortcut(.escape, modifiers: [.command])
 
                 Button(action: {
@@ -553,11 +513,7 @@ struct ApprovalPanelView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
-                // Cmd+Return only — plain Return alone too easily fires Allow
-                // on macOS (TextEditor doesn't always capture it), and an
-                // accidental approval is a real cost. Both action shortcuts
-                // (Cmd+Return / Cmd+Escape) require the Cmd modifier for
-                // symmetry and to prevent stray-key triggering.
+                // Cmd+Return only — bare Return too easily fires on macOS (TextEditor doesn't always capture it), and accidental approval is a real cost.
                 .keyboardShortcut(.return, modifiers: [.command])
             }
         }
@@ -565,8 +521,6 @@ struct ApprovalPanelView: View {
         .padding(.vertical, 8)
     }
 
-    /// Trigger the Allow Once action. Extracted so the visible button and
-    /// the hidden Cmd+Return shortcut button can share one implementation.
     private func performAllowOnce() {
         coordinator.handleAction(.allow(
             context: noteState.noteForAllowContext,
@@ -582,8 +536,6 @@ struct ApprovalPanelView: View {
         ), on: sessionPanel)
         coordinator.sessionManager?.noteInteraction()
     }
-
-    // MARK: - Pattern Tester
 
     @ViewBuilder
     private func patternTester(_ approval: ApprovalCoordinator.PendingApproval) -> some View {
@@ -646,17 +598,13 @@ struct ApprovalPanelView: View {
             .cornerRadius(4)
     }
 
-    /// Returns the edited command only if it differs from the original.
-    /// Always nil for Codex sessions — Codex can't honor edits and the
-    /// resetFields dash-sanitize would otherwise leak a phantom edit.
+    // nil on Codex: resetFields dash-sanitizes the command, which would otherwise flag any em-dash command as modified.
     private var cmdIfModified: String? {
         guard !isCodexSession else { return nil }
         guard let original = sessionPanel.currentApproval?.payload.command else { return nil }
         return editedCommand != original ? editedCommand : nil
     }
 
-    /// Returns updated toolInput if any editable fields were modified.
-    /// Always nil for Codex sessions.
     private var updatedInputIfModified: [String: AnyCodable]? {
         guard !isCodexSession else { return nil }
         guard let payload = sessionPanel.currentApproval?.payload else { return nil }
@@ -670,8 +618,6 @@ struct ApprovalPanelView: View {
         }
         return input
     }
-
-    // MARK: - Helpers
 
     private func labeledField(_ label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -725,16 +671,7 @@ struct ApprovalPanelView: View {
     }
 }
 
-// MARK: - NoteField sub-view
-
-/// The note-to-Claude field, isolated into its own view so checkbox toggles
-/// only re-render this slice — keeping the parent panel's action buttons
-/// (Allow/Deny) stable. The checkbox is implemented as a `Button` styled with
-/// SF Symbol icons rather than a `Toggle.checkbox`, because the latter's
-/// underlying NSButton in floating utility panels can lose / shuffle key
-/// responder status, eating the user's subsequent click on Deny. This combo
-/// (state isolation + button-as-checkbox) fixes the wedge reproduced in the
-/// pentest test case "tick checkbox then click Deny without typing".
+/// Note-to-Claude field isolated into its own view so checkbox toggles re-render only this slice — keeps parent's Allow/Deny buttons stable. Checkbox is a SF-symbol `Button`, not `Toggle.checkbox`, because the latter's NSButton in floating panels can lose key-responder status and eat the next Deny click.
 private struct NoteField: View {
     @ObservedObject var state: NoteFieldState
 
