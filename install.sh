@@ -164,14 +164,19 @@ fi
 if command -v codex &>/dev/null; then
     if [[ ! -f "$CODEX_CONFIG" ]]; then
         echo "Codex detected but $CODEX_CONFIG not found — run codex once to initialize, then re-run install"
-    elif /usr/bin/grep -qF "$CODEX_MARKER_BEGIN" "$CODEX_CONFIG"; then
-        echo "Codex hook already registered in $CODEX_CONFIG"
+    elif /usr/bin/grep -qF "$HOOKS_DIR/codex_session_start.sh" "$CODEX_CONFIG"; then
+        echo "Codex hooks already registered in $CODEX_CONFIG"
     else
-        echo "Registering Codex hook in $CODEX_CONFIG..."
+        # Upgrading from an older install (PreToolUse only)? Drop the old block first.
+        if /usr/bin/grep -qF "$CODEX_MARKER_BEGIN" "$CODEX_CONFIG"; then
+            /usr/bin/sed -i '' "/$CODEX_MARKER_BEGIN/,/$CODEX_MARKER_END/d" "$CODEX_CONFIG"
+            echo "Replaced older gavel block in $CODEX_CONFIG"
+        fi
+        echo "Registering Codex hooks in $CODEX_CONFIG..."
         cat >> "$CODEX_CONFIG" <<CODEX_HOOK
 
 $CODEX_MARKER_BEGIN
-# Trust this hook on first run: \`codex\` → /hooks → trust gavel-hook.
+# Trust each hook on first run: \`codex\` → /hooks → trust both entries.
 [[hooks.PreToolUse]]
 matcher = ".*"
 
@@ -179,9 +184,17 @@ matcher = ".*"
 type = "command"
 command = "$INSTALL_DIR/gavel-hook"
 timeout = 600
+
+[[hooks.SessionStart]]
+matcher = ".*"
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "$HOOKS_DIR/codex_session_start.sh"
+timeout = 30
 $CODEX_MARKER_END
 CODEX_HOOK
-        echo "  → Run \`codex\` interactively once and trust the hook via /hooks to activate"
+        echo "  → Run \`codex\` interactively once and trust the hooks via /hooks to activate"
     fi
 fi
 
