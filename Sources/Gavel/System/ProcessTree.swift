@@ -7,13 +7,16 @@ import Darwin
 /// eliminating ~80ms of subprocess overhead per hook invocation.
 struct ProcessTree {
 
-    /// Walk up the process tree from the given PID to find the Claude Code process.
-    /// Returns the Claude PID if found, nil otherwise.
-    static func findClaudePid(from pid: Int32) -> Int32? {
+    /// Walk up the process tree from `pid` looking for an ancestor whose
+    /// short process name (case-insensitive) contains `needle`. Returns
+    /// that PID or nil after 8 hops. Used to attribute hook calls back
+    /// to their owning agent process.
+    static func findAncestorPid(from pid: Int32, named needle: String) -> Int32? {
+        let target = needle.lowercased()
         var current = pid
         for _ in 0..<8 {
             if let name = processName(pid: current),
-               name.lowercased().contains("claude") {
+               name.lowercased().contains(target) {
                 return current
             }
             guard let ppid = parentPid(of: current), ppid > 1 else {
@@ -22,6 +25,18 @@ struct ProcessTree {
             current = ppid
         }
         return nil
+    }
+
+    /// Convenience wrapper preserved for existing call sites.
+    static func findClaudePid(from pid: Int32) -> Int32? {
+        findAncestorPid(from: pid, named: "claude")
+    }
+
+    /// Codex's hook subprocess is spawned directly by the codex binary, so the
+    /// immediate parent already matches — but we still walk a few hops to be
+    /// resilient to wrapper scripts.
+    static func findCodexPid(from pid: Int32) -> Int32? {
+        findAncestorPid(from: pid, named: "codex")
     }
 
     /// Get the parent PID of a process using sysctl.
@@ -128,17 +143,21 @@ struct ProcessTree {
         }
     }
 
-    /// Discover live Claude Code CLI sessions on the system. Matches on the
-    /// short process name `claude` (the CLI sets p_comm to that), which
-    /// excludes the Electron desktop app helpers — their p_comm is the
-    /// truncated `/Applications/Cl…` binary path.
-    static func findClaudeCliSessions() -> [(pid: Int32, cwd: String)] {
+    /// Discover live CLI sessions whose `p_comm` matches `processName` exactly.
+    /// Exact-match (not substring) so we don't pick up helper processes whose
+    /// truncated paths happen to contain the agent name.
+    static func findCliSessions(processName target: String) -> [(pid: Int32, cwd: String)] {
         var results: [(Int32, String)] = []
         for pid in enumerateAllPids() {
-            guard let name = processName(pid: pid), name == "claude" else { continue }
+            guard let name = processName(pid: pid), name == target else { continue }
             guard let cwd = cwd(of: pid) else { continue }
             results.append((pid, cwd))
         }
         return results
+    }
+
+    /// Convenience wrapper preserved for existing call sites.
+    static func findClaudeCliSessions() -> [(pid: Int32, cwd: String)] {
+        findCliSessions(processName: "claude")
     }
 }

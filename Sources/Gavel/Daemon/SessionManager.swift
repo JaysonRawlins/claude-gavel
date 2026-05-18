@@ -51,15 +51,15 @@ final class SessionManager: ObservableObject {
         inactivityTimer?.cancel()
     }
 
-    /// Get or create a session for the given PID.
+    /// Get or create a session for the given PID and agent kind.
     /// New sessions inherit the default Auto/Sub settings.
-    func session(for pid: Int) -> Session {
+    func session(for pid: Int, agent: AgentKind = .claude) -> Session {
         lock.lock()
         defer { lock.unlock() }
         if let existing = sessions[pid] {
             return existing
         }
-        let session = Session(pid: pid)
+        let session = Session(pid: pid, agent: agent)
         session.isAutoApproveEnabled = defaultAutoApprove
         session.isSubAgentInheritEnabled = defaultSubAgentInherit
         session.isPaused = defaultPaused
@@ -177,6 +177,7 @@ final class SessionManager: ObservableObject {
         let isPaused: Bool?
         let label: String?
         let endedAt: Date?
+        let agent: AgentKind?
     }
 
     private struct PersistedState: Codable {
@@ -214,7 +215,8 @@ final class SessionManager: ObservableObject {
             isSubAgentInheritEnabled: session.isSubAgentInheritEnabled,
             isPaused: session.isPaused,
             label: session.label.isEmpty ? nil : session.label,
-            endedAt: session.endedAt
+            endedAt: session.endedAt,
+            agent: session.agent
         )
     }
 
@@ -246,7 +248,7 @@ final class SessionManager: ObservableObject {
 
     private func rehydrateLive(_ snap: PersistedSession) {
         let started = ProcessTree.startTime(of: Int32(snap.pid))
-        let session = Session(pid: snap.pid, cwd: snap.cwd, startedAt: started)
+        let session = Session(pid: snap.pid, cwd: snap.cwd, startedAt: started, agent: snap.agent ?? .claude)
         session.sessionId = snap.sessionId
         session.isAutoApproveEnabled = snap.isAutoApproveEnabled ?? defaultAutoApprove
         session.isSubAgentInheritEnabled = snap.isSubAgentInheritEnabled ?? defaultSubAgentInherit
@@ -260,7 +262,7 @@ final class SessionManager: ObservableObject {
     }
 
     private func rehydrateTombstone(_ snap: PersistedSession, sessionId: String) {
-        let session = Session(pid: snap.pid, cwd: snap.cwd, startedAt: snap.endedAt ?? Date())
+        let session = Session(pid: snap.pid, cwd: snap.cwd, startedAt: snap.endedAt ?? Date(), agent: snap.agent ?? .claude)
         session.sessionId = sessionId
         session.isAlive = false
         session.endedAt = snap.endedAt ?? Date()

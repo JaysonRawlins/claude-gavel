@@ -75,6 +75,41 @@ final class WireFormatTests: XCTestCase {
         XCTAssertEqual(payload.permissionMode, "default")
     }
 
+    func testEnvelopeAgentFieldDecodes() throws {
+        let json = """
+        {
+            "hookType": "PreToolUse",
+            "sessionPid": 1,
+            "timestamp": 0.0,
+            "agent": "codex",
+            "payload": {
+                "type": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "ls"}
+            }
+        }
+        """
+        let event = try JSONDecoder().decode(HookEvent.self, from: json.data(using: .utf8)!)
+        XCTAssertEqual(event.agent, .codex)
+    }
+
+    func testEnvelopeAgentDefaultsToClaudeWhenAbsent() throws {
+        let json = """
+        {
+            "hookType": "PreToolUse",
+            "sessionPid": 1,
+            "timestamp": 0.0,
+            "payload": {
+                "type": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "ls"}
+            }
+        }
+        """
+        let event = try JSONDecoder().decode(HookEvent.self, from: json.data(using: .utf8)!)
+        XCTAssertEqual(event.agent, .claude, "Envelopes without 'agent' must decode as claude")
+    }
+
     func testDecodeCodexPreToolUseEnvelope() throws {
         let json = """
         {

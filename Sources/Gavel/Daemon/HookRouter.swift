@@ -29,7 +29,7 @@ final class HookRouter {
             return
         }
 
-        let session = sessionManager.session(for: event.sessionPid)
+        let session = sessionManager.session(for: event.sessionPid, agent: event.agent)
         let ts = Date(timeIntervalSince1970: event.timestamp)
 
         switch event.payload {
