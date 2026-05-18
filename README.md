@@ -238,9 +238,9 @@ This is defense-in-depth for the surface that shell-pattern Bash rules can't rea
 
 Codex sessions get their own row in the Monitor, distinct from any Claude Code session that may have launched them. The row is tagged with a small orange **Codex** badge so it's identifiable at a glance. The hook subprocess walks the process tree looking for the `codex` ancestor (parallel to the existing `claude` walk) whenever `gavel-hook` was invoked from Codex — detected via the `turn_id` field Codex includes in hook stdin but Claude doesn't. The envelope carries `agent: "codex"` so the daemon creates and persists a Codex-tagged session.
 
-### Known limitations
+### Session context injection
 
-- **No SessionStart hook**: only `PreToolUse` is registered today. Session metadata enrichment (model, cwd at start) is a follow-up.
+Codex sessions get the same philosophy injection Claude sessions do — `~/.claude/gavel/session-context.md` is read at SessionStart and emitted as `additionalContext` in Codex's hookSpecificOutput shape, so the same engineering principles, user-interaction guidance, and personal tuning are loaded into Codex's model context on every session. One file, both agents.
 
 ## Uninstall
 
