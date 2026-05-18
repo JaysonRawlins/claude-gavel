@@ -72,6 +72,13 @@ struct ApprovalPanelView: View {
     /// architectural rationale (re-render isolation + bug fix).
     @StateObject private var noteState = NoteFieldState()
 
+    /// Codex's PreToolUseHookSpecificOutputWire has no updatedInput field, so
+    /// command/field edits made in the panel can't be honored — render as
+    /// read-only for Codex sessions.
+    private var isCodexSession: Bool {
+        sessionPanel.currentApproval?.session.agent == .codex
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if let approval = sessionPanel.currentApproval {
@@ -213,32 +220,37 @@ struct ApprovalPanelView: View {
 
     private func bashDetails(_ payload: PreToolUsePayload) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Command (editable)")
-                .font(.caption.bold())
-                .foregroundColor(.secondary)
-
-            // Size editor to content: ~18pt per line, min 3 lines, max 20 lines.
-            // Wrapping estimate: assume ~80 chars per line at monospaced body size.
-            let newlineCount = editedCommand.components(separatedBy: .newlines).count
-            let wrapEstimate = max(1, editedCommand.count / 80)
-            let lineCount = max(6, max(newlineCount, wrapEstimate) + 1)
-            let height = CGFloat(min(lineCount, 20)) * 18
-
-            TextEditor(text: $editedCommand)
-                .font(.system(.body, design: .monospaced))
-                .frame(height: height)
-                .padding(4)
-                .background(Color.orange.opacity(0.08))
-                .cornerRadius(6)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(editedCommand != (payload.command ?? "") ? Color.orange : Color.orange.opacity(0.2), lineWidth: editedCommand != (payload.command ?? "") ? 2 : 1)
-                )
-
-            if editedCommand != (payload.command ?? "") {
-                Text("Modified — original will be replaced")
+            if isCodexSession {
+                labeledField("Command", value: payload.command ?? "")
+                Text("Read-only — Codex doesn't support hook command edits")
                     .font(.caption2)
-                    .foregroundColor(.orange)
+                    .foregroundColor(.secondary)
+            } else {
+                Text("Command (editable)")
+                    .font(.caption.bold())
+                    .foregroundColor(.secondary)
+
+                let newlineCount = editedCommand.components(separatedBy: .newlines).count
+                let wrapEstimate = max(1, editedCommand.count / 80)
+                let lineCount = max(6, max(newlineCount, wrapEstimate) + 1)
+                let height = CGFloat(min(lineCount, 20)) * 18
+
+                TextEditor(text: $editedCommand)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(height: height)
+                    .padding(4)
+                    .background(Color.orange.opacity(0.08))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(editedCommand != (payload.command ?? "") ? Color.orange : Color.orange.opacity(0.2), lineWidth: editedCommand != (payload.command ?? "") ? 2 : 1)
+                    )
+
+                if editedCommand != (payload.command ?? "") {
+                    Text("Modified — original will be replaced")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                }
             }
 
             if let desc = payload.toolInput["description"]?.stringValue {
@@ -325,7 +337,7 @@ struct ApprovalPanelView: View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(payload.toolInput.keys.sorted()), id: \.self) { key in
                 if let value = payload.toolInput[key]?.stringValue {
-                    if Self.editableKeys.contains(key) {
+                    if Self.editableKeys.contains(key) && !isCodexSession {
                         editableField(key, original: value)
                     } else {
                         labeledField(key, value: value)
@@ -635,13 +647,18 @@ struct ApprovalPanelView: View {
     }
 
     /// Returns the edited command only if it differs from the original.
+    /// Always nil for Codex sessions — Codex can't honor edits and the
+    /// resetFields dash-sanitize would otherwise leak a phantom edit.
     private var cmdIfModified: String? {
+        guard !isCodexSession else { return nil }
         guard let original = sessionPanel.currentApproval?.payload.command else { return nil }
         return editedCommand != original ? editedCommand : nil
     }
 
     /// Returns updated toolInput if any editable fields were modified.
+    /// Always nil for Codex sessions.
     private var updatedInputIfModified: [String: AnyCodable]? {
+        guard !isCodexSession else { return nil }
         guard let payload = sessionPanel.currentApproval?.payload else { return nil }
         let changes = editedFields.filter { key, value in
             value != (payload.toolInput[key]?.stringValue ?? "")
