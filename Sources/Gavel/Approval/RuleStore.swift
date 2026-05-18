@@ -173,6 +173,16 @@ final class RuleStore: ObservableObject {
             builtIn: true
         ),
 
+        // ── Codex apply_patch self-protection ──
+        PersistentRule(
+            toolName: "apply_patch",
+            pattern: "\\.claude/(gavel/|settings|hooks/)|\\.codex/(config|hooks)|\\.(zshrc|bashrc|bash_profile|profile)\\b",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "apply_patch references Gavel/Claude/Codex config or shell init — verify intent",
+            builtIn: true
+        ),
+
         // ── Scripting language code execution ──
         PersistentRule(
             toolName: "Bash",

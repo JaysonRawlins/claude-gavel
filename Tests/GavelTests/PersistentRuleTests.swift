@@ -185,9 +185,9 @@ final class PersistentRuleTests: XCTestCase {
         let store = RuleStore(configPath: "/dev/null")
         let builtInRules = store.rules.filter { $0.builtIn }
         XCTAssertEqual(builtInRules.count, RuleStore.seededDefaults.count)
-        // v7: 5 MCP exfil + 1 self-protection + 1 scripting + 3 sandbox escape
-        //     + 2 git safety + 3 scheduler = 15
-        XCTAssertEqual(builtInRules.count, 15)
+        // v7: 5 MCP exfil + 1 Bash self-protection + 1 apply_patch self-protection
+        //     + 1 scripting + 3 sandbox escape + 2 git safety + 3 scheduler = 16
+        XCTAssertEqual(builtInRules.count, 16)
     }
 
     func testSeededRulesArePromptVerdict() {
@@ -225,6 +225,37 @@ final class PersistentRuleTests: XCTestCase {
             "command": AnyCodable("python3 test_script.py")
         ])
         XCTAssertNil(store.evaluateBuiltInPrompt(payload: payload))
+    }
+
+    // MARK: - Codex apply_patch self-protection built-in
+
+    func testApplyPatchPromptMatchesGavelConfigWrite() {
+        let store = RuleStore(configPath: "/dev/null")
+        let patch = "*** Begin Patch\n*** Update File: /Users/me/.claude/gavel/rules.json\n@@\n+evil\n*** End Patch\n"
+        let payload = PreToolUsePayload(toolName: "apply_patch", toolInput: [
+            "command": AnyCodable(patch)
+        ])
+        let decision = store.evaluateBuiltInPrompt(payload: payload)
+        XCTAssertNotNil(decision, "apply_patch touching .claude/gavel should prompt")
+        XCTAssertTrue(decision?.askUser ?? false)
+    }
+
+    func testApplyPatchPromptMatchesShellInitWrite() {
+        let store = RuleStore(configPath: "/dev/null")
+        let patch = "*** Begin Patch\n*** Update File: /Users/me/.zshrc\n@@\n+alias ls=evil\n*** End Patch\n"
+        let payload = PreToolUsePayload(toolName: "apply_patch", toolInput: [
+            "command": AnyCodable(patch)
+        ])
+        XCTAssertNotNil(store.evaluateBuiltInPrompt(payload: payload), "apply_patch touching ~/.zshrc should prompt")
+    }
+
+    func testApplyPatchAllowsBenignWrite() {
+        let store = RuleStore(configPath: "/dev/null")
+        let patch = "*** Begin Patch\n*** Add File: hello.txt\n+hi\n*** End Patch\n"
+        let payload = PreToolUsePayload(toolName: "apply_patch", toolInput: [
+            "command": AnyCodable(patch)
+        ])
+        XCTAssertNil(store.evaluateBuiltInPrompt(payload: payload), "Benign apply_patch should not match self-protection rule")
     }
 
     // MARK: - Split prompt evaluation

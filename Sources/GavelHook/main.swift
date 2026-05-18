@@ -150,20 +150,22 @@ if needsResponse {
             exit(0)
         }
 
-        var output: [String: Any] = [
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow"
-        ]
+        // Codex sends `turn_id` in PreToolUse stdin; Claude doesn't. Codex's
+        // PreToolUseCommandOutputWire rejects permissionDecision:"allow" unless
+        // updatedInput is also present — omit it for Codex callers.
+        let isCodexCaller = stdinJson?["turn_id"] != nil
+        var output: [String: Any] = ["hookEventName": "PreToolUse"]
         if let ctx = json["additionalContext"] as? String, !ctx.isEmpty {
             output["additionalContext"] = ctx
         }
-        if let updated = json["updatedInput"] as? [String: Any] {
+        let updated = json["updatedInput"] as? [String: Any]
+        if let updated = updated {
             output["updatedInput"] = updated
+            output["permissionDecision"] = "allow"
+        } else if !isCodexCaller {
+            output["permissionDecision"] = "allow"
         }
-        var wrapper: [String: Any] = ["hookSpecificOutput": output]
-        if let ctx = json["additionalContext"] as? String, !ctx.isEmpty {
-            wrapper["additionalContext"] = ctx
-        }
+        let wrapper: [String: Any] = ["hookSpecificOutput": output]
         if let data = try? JSONSerialization.data(withJSONObject: wrapper),
            let str = String(data: data, encoding: .utf8) {
             print(str)

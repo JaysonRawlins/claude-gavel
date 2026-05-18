@@ -1,8 +1,8 @@
 # Gavel
 
-Native macOS menu bar daemon for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) session monitoring and approval.
+Native macOS menu bar daemon for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [OpenAI Codex CLI](https://developers.openai.com/codex/cli) session monitoring and approval.
 
-Gavel intercepts every tool call Claude makes — file edits, shell commands, MCP calls — and routes them through a configurable approval engine before they execute. You see what's happening, control what's allowed, and block what isn't.
+Gavel intercepts every tool call your agent makes — file edits, shell commands, MCP calls — and routes them through a configurable approval engine before they execute. You see what's happening, control what's allowed, and block what isn't.
 
 ![Feed tab with auto-approve enabled (green icon)](docs/images/feed-auto-approve.png)
 
@@ -189,7 +189,55 @@ Gavel protects its own config files and Claude Code's hook configuration. Comman
 - **IPC**: Unix domain socket at `~/.claude/gavel/gavel.sock`
 - **Platform**: macOS 13+
 - **Binaries**: `gavel` (daemon, ~1MB) and `gavel-hook` (CLI shim, ~85KB, ~6ms overhead per hook)
-- **Tests**: 200 tests across 6 suites
+- **Tests**: 276 tests across 6 suites
+
+## Using Gavel with Codex CLI
+
+Gavel works with [OpenAI Codex CLI](https://developers.openai.com/codex/cli) in addition to Claude Code. The same approval daemon, rules, and monitor handle both — Codex's `apply_patch`, shell exec, and MCP calls all route through `gavel-hook` to the policy engine. Codex invokes `gavel-hook` directly (no bash shim), so the per-call overhead is the same ~6ms as Claude.
+
+### Auto-setup via install.sh
+
+If `codex` is in `PATH` when you run `./install.sh`, the installer appends a `[[hooks.PreToolUse]]` block to `~/.codex/config.toml` pointing at the installed `gavel-hook`. Re-running is idempotent. `./install.sh --uninstall` removes the block.
+
+### Manual setup (brew users, or any time)
+
+Add to `~/.codex/config.toml`:
+
+```toml
+[[hooks.PreToolUse]]
+matcher = ".*"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "/opt/homebrew/bin/gavel-hook"
+timeout = 600
+```
+
+### One-time trust enrollment
+
+Codex requires explicit user trust for any new hook command. After registering:
+
+1. Run `codex` interactively
+2. Banner: `"1 hook needs review before it can run. Open /hooks to review it."`
+3. Type `/hooks`, verify the entry is `gavel-hook`, trust it
+4. Quit the TUI
+
+From then on, every `codex exec` and interactive session routes tool calls through Gavel.
+
+### Codex-specific protections
+
+A seeded `apply_patch` rule (verdict: prompt) catches patches that write to:
+
+- `~/.claude/gavel/`, `~/.claude/settings`, `~/.claude/hooks/`
+- `~/.codex/config`, `~/.codex/hooks`
+- Shell init files (`.zshrc`, `.bashrc`, `.bash_profile`, `.profile`)
+
+This is defense-in-depth for the surface that shell-pattern Bash rules can't reach — Codex's `apply_patch` writes files without invoking `$SHELL`, so shell-level interceptors miss it.
+
+### Known limitations
+
+- **Session attribution**: Codex sessions launched as a child of a Claude Code session attribute to the parent Claude session's row in the Monitor. Standalone `codex` launches get their own row keyed on Codex's process. Distinct Codex monitor rows with full session correlation is a planned follow-up.
+- **No SessionStart hook**: only `PreToolUse` is registered today. Session metadata enrichment (model, cwd at start) is a follow-up.
 
 ## Uninstall
 
