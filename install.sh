@@ -11,6 +11,9 @@ PLIST_DIR="$HOME/Library/LaunchAgents"
 LABEL="com.gavel.daemon"
 PLIST="$PLIST_DIR/$LABEL.plist"
 SETTINGS="$HOME/.claude/settings.json"
+CODEX_CONFIG="$HOME/.codex/config.toml"
+CODEX_MARKER_BEGIN="# ── Gavel hook integration (managed by install.sh) ──"
+CODEX_MARKER_END="# ── end Gavel hook integration ──"
 
 # ── Uninstall ──
 if [[ "$1" == "--uninstall" ]]; then
@@ -44,6 +47,12 @@ if changed:
 else:
     print('No gavel hooks found in settings.json')
 "
+    fi
+
+    # Remove Codex hook block (sed delete between markers; idempotent)
+    if [[ -f "$CODEX_CONFIG" ]] && /usr/bin/grep -qF "$CODEX_MARKER_BEGIN" "$CODEX_CONFIG"; then
+        /usr/bin/sed -i '' "/$CODEX_MARKER_BEGIN/,/$CODEX_MARKER_END/d" "$CODEX_CONFIG"
+        echo "Removed gavel hook from $CODEX_CONFIG"
     fi
 
     rm -rf "$HOME/.claude/gavel"
@@ -149,6 +158,31 @@ else:
 "
 else
     echo "WARNING: Could not register hooks. Please add gavel hooks to $SETTINGS manually."
+fi
+
+# Codex hook registration (optional — only if codex CLI is detected)
+if command -v codex &>/dev/null; then
+    if [[ ! -f "$CODEX_CONFIG" ]]; then
+        echo "Codex detected but $CODEX_CONFIG not found — run codex once to initialize, then re-run install"
+    elif /usr/bin/grep -qF "$CODEX_MARKER_BEGIN" "$CODEX_CONFIG"; then
+        echo "Codex hook already registered in $CODEX_CONFIG"
+    else
+        echo "Registering Codex hook in $CODEX_CONFIG..."
+        cat >> "$CODEX_CONFIG" <<CODEX_HOOK
+
+$CODEX_MARKER_BEGIN
+# Trust this hook on first run: \`codex\` → /hooks → trust gavel-hook.
+[[hooks.PreToolUse]]
+matcher = ".*"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "$INSTALL_DIR/gavel-hook"
+timeout = 600
+$CODEX_MARKER_END
+CODEX_HOOK
+        echo "  → Run \`codex\` interactively once and trust the hook via /hooks to activate"
+    fi
 fi
 
 echo "Starting daemon..."
