@@ -1,9 +1,16 @@
 import Foundation
 
-/// Tracks state for a single Claude Code session.
+/// The agent CLI that owns a session — Claude Code or OpenAI Codex.
+enum AgentKind: String, Codable {
+    case claude
+    case codex
+}
+
+/// Tracks state for a single agent session (Claude Code or Codex CLI).
 final class Session: ObservableObject, Identifiable {
     let pid: Int
     let startedAt: Date
+    let agent: AgentKind
 
     @Published var sessionId: String?
     @Published var cwd: String?
@@ -70,10 +77,11 @@ final class Session: ObservableObject, Identifiable {
         return remaining > 0 ? remaining : nil
     }
 
-    init(pid: Int, cwd: String? = nil, startedAt: Date? = nil) {
+    init(pid: Int, cwd: String? = nil, startedAt: Date? = nil, agent: AgentKind = .claude) {
         self.pid = pid
         self.startedAt = startedAt ?? Date()
         self.cwd = cwd
+        self.agent = agent
     }
 
     func revokeAutoApprove() {

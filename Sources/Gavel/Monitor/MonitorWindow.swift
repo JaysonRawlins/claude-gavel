@@ -276,6 +276,15 @@ private struct SessionRow: View {
                 .fill(session.isAlive ? .green : .gray)
                 .frame(width: 8, height: 8)
 
+            if session.agent == .codex {
+                Text("Codex")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.orange)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
+            }
+
             // verbatim avoids LocalizedStringKey's locale grouping (e.g. "12,345")
             Text(verbatim: "PID \(session.pid)")
                 .font(.system(.caption, design: .monospaced))

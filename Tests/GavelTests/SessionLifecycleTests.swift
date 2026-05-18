@@ -146,6 +146,27 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertFalse(reloaded.deadSessions[sidDead]?.isAlive ?? true)
     }
 
+    func testCodexAgentAssignedOnSessionCreation() {
+        let pid = Int(getpid())
+        let claudeSession = manager.session(for: pid)
+        XCTAssertEqual(claudeSession.agent, .claude, "Default agent should be claude")
+
+        let otherPid = 1_999_998
+        let codexSession = manager.session(for: otherPid, agent: .codex)
+        XCTAssertEqual(codexSession.agent, .codex)
+    }
+
+    func testAgentPersistsAcrossDaemonRestart() {
+        let pid = Int(getpid())
+        let session = manager.session(for: pid, agent: .codex)
+        session.sessionId = "codex-sid"
+        manager.recordSessionId("codex-sid", on: session)
+        manager.saveActiveSessions()
+
+        let reloaded = SessionManager(homeDir: tmpHome, autoStartTimers: false, autoDiscover: false)
+        XCTAssertEqual(reloaded.sessions[pid]?.agent, .codex, "Codex agent must survive restart")
+    }
+
     func testPersistenceBackwardCompatLegacyArrayFormat() throws {
         // Old format: bare array of live sessions, no tombstones.
         let livePid = Int(getpid())

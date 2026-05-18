@@ -189,7 +189,7 @@ Gavel protects its own config files and Claude Code's hook configuration. Comman
 - **IPC**: Unix domain socket at `~/.claude/gavel/gavel.sock`
 - **Platform**: macOS 13+
 - **Binaries**: `gavel` (daemon, ~1MB) and `gavel-hook` (CLI shim, ~85KB, ~6ms overhead per hook)
-- **Tests**: 276 tests across 6 suites
+- **Tests**: 280 tests across 6 suites
 
 ## Using Gavel with Codex CLI
 
@@ -234,9 +234,12 @@ A seeded `apply_patch` rule (verdict: prompt) catches patches that write to:
 
 This is defense-in-depth for the surface that shell-pattern Bash rules can't reach — Codex's `apply_patch` writes files without invoking `$SHELL`, so shell-level interceptors miss it.
 
+### Session attribution
+
+Codex sessions get their own row in the Monitor, distinct from any Claude Code session that may have launched them. The row is tagged with a small orange **Codex** badge so it's identifiable at a glance. The hook subprocess walks the process tree looking for the `codex` ancestor (parallel to the existing `claude` walk) whenever `gavel-hook` was invoked from Codex — detected via the `turn_id` field Codex includes in hook stdin but Claude doesn't. The envelope carries `agent: "codex"` so the daemon creates and persists a Codex-tagged session.
+
 ### Known limitations
 
-- **Session attribution**: Codex sessions launched as a child of a Claude Code session attribute to the parent Claude session's row in the Monitor. Standalone `codex` launches get their own row keyed on Codex's process. Distinct Codex monitor rows with full session correlation is a planned follow-up.
 - **No SessionStart hook**: only `PreToolUse` is registered today. Session metadata enrichment (model, cwd at start) is a follow-up.
 
 ## Uninstall

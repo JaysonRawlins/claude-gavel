@@ -15,15 +15,38 @@ enum HookType: String, Codable {
     case unknown
 }
 
-/// Incoming event from a Claude Code hook shim.
+/// Incoming event from a gavel-hook subprocess (Claude Code or Codex CLI).
 ///
-/// The gavel-hook binary wraps Claude's raw JSON in this envelope,
-/// adding the PID and hook type.
+/// The gavel-hook binary wraps the agent's raw stdin JSON in this envelope,
+/// adding the PID, hook type, and agent kind. Envelopes without `agent`
+/// (older binaries) default to `.claude` for backward compatibility.
 struct HookEvent: Codable {
     let hookType: HookType
     let sessionPid: Int
     let timestamp: Double
     let payload: HookPayload
+    let agent: AgentKind
+
+    private enum CodingKeys: String, CodingKey {
+        case hookType, sessionPid, timestamp, payload, agent
+    }
+
+    init(hookType: HookType, sessionPid: Int, timestamp: Double, payload: HookPayload, agent: AgentKind = .claude) {
+        self.hookType = hookType
+        self.sessionPid = sessionPid
+        self.timestamp = timestamp
+        self.payload = payload
+        self.agent = agent
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        hookType = try c.decode(HookType.self, forKey: .hookType)
+        sessionPid = try c.decode(Int.self, forKey: .sessionPid)
+        timestamp = try c.decode(Double.self, forKey: .timestamp)
+        payload = try c.decode(HookPayload.self, forKey: .payload)
+        agent = (try? c.decode(AgentKind.self, forKey: .agent)) ?? .claude
+    }
 }
 
 /// The hook-specific payload, matching Claude Code's hook stdin schema.

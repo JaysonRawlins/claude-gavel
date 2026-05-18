@@ -40,14 +40,19 @@ if let envType = ProcessInfo.processInfo.environment["CLAUDE_HOOK_TYPE"] {
 
 let needsResponse = hookType == "PreToolUse" || hookType == "PermissionRequest"
 
-// Build envelope
+// Build envelope. Codex stdin carries `turn_id` (Claude doesn't) — use that as
+// the caller discriminator and walk the process tree for the right ancestor.
+let isCodexAgent = stdinJson?["turn_id"] != nil
 let timestamp = Date().timeIntervalSince1970
 let pid = getppid()
-let claudePid = findClaudePid(from: pid) ?? pid
+let sessionPid: Int32 = isCodexAgent
+    ? (findAgentPid(from: pid, named: "codex") ?? pid)
+    : (findAgentPid(from: pid, named: "claude") ?? pid)
 
 var envelope: [String: Any] = [
     "hookType": hookType,
-    "sessionPid": Int(claudePid),
+    "sessionPid": Int(sessionPid),
+    "agent": isCodexAgent ? "codex" : "claude",
     "timestamp": timestamp,
 ]
 
@@ -150,10 +155,8 @@ if needsResponse {
             exit(0)
         }
 
-        // Codex sends `turn_id` in PreToolUse stdin; Claude doesn't. Codex's
-        // PreToolUseCommandOutputWire rejects permissionDecision:"allow" unless
-        // updatedInput is also present — omit it for Codex callers.
-        let isCodexCaller = stdinJson?["turn_id"] != nil
+        // Codex's PreToolUseCommandOutputWire rejects permissionDecision:"allow"
+        // unless updatedInput is also present — omit it for Codex callers.
         var output: [String: Any] = ["hookEventName": "PreToolUse"]
         if let ctx = json["additionalContext"] as? String, !ctx.isEmpty {
             output["additionalContext"] = ctx
@@ -162,7 +165,7 @@ if needsResponse {
         if let updated = updated {
             output["updatedInput"] = updated
             output["permissionDecision"] = "allow"
-        } else if !isCodexCaller {
+        } else if !isCodexAgent {
             output["permissionDecision"] = "allow"
         }
         let wrapper: [String: Any] = ["hookSpecificOutput": output]
@@ -196,11 +199,12 @@ func printBlock(_ reason: String) {
 
 // MARK: - Process tree walk (native, no subprocess)
 
-func findClaudePid(from startPid: Int32) -> Int32? {
+func findAgentPid(from startPid: Int32, named needle: String) -> Int32? {
+    let target = needle.lowercased()
     var current = startPid
     for _ in 0..<8 {
         if let name = processName(pid: current),
-           name.lowercased().contains("claude") {
+           name.lowercased().contains(target) {
             return current
         }
         guard let ppid = parentPid(of: current), ppid > 1 else { break }
