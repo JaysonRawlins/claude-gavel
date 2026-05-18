@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.9.0...v1.9.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* **hook:** drop updatedInput for Codex callers, gate edit UI ([#72](https://github.com/JaysonRawlins/claude-gavel/issues/72)) ([0478813](https://github.com/JaysonRawlins/claude-gavel/commit/0478813e7c494ba4f8455bc85ef632853b9d82e5))
+
 ## [1.9.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.8.0...v1.9.0) (2026-05-18)
 
 
