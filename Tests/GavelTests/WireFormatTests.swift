@@ -75,6 +75,118 @@ final class WireFormatTests: XCTestCase {
         XCTAssertEqual(payload.permissionMode, "default")
     }
 
+    func testDecodeCodexPreToolUseEnvelope() throws {
+        let json = """
+        {
+            "hookType": "PreToolUse",
+            "sessionPid": 12345,
+            "timestamp": 1712600000.0,
+            "payload": {
+                "type": "PreToolUse",
+                "session_id": "codex-sess-7",
+                "turn_id": "turn-42",
+                "transcript_path": "/Users/dev/.codex/sessions/abc.jsonl",
+                "cwd": "/Users/dev/work",
+                "hook_event_name": "PreToolUse",
+                "model": "gpt-5.4",
+                "permission_mode": "on-request",
+                "tool_name": "shell",
+                "tool_input": {"command": ["ls", "-la"], "workdir": "/Users/dev/work"},
+                "tool_use_id": "tu-99"
+            }
+        }
+        """
+        let event = try JSONDecoder().decode(HookEvent.self, from: json.data(using: .utf8)!)
+        XCTAssertEqual(event.hookType, .preToolUse)
+
+        guard case .preToolUse(let payload) = event.payload else {
+            XCTFail("Expected preToolUse payload")
+            return
+        }
+        XCTAssertEqual(payload.toolName, "shell")
+        XCTAssertEqual(payload.sessionId, "codex-sess-7")
+        XCTAssertEqual(payload.cwd, "/Users/dev/work")
+        XCTAssertEqual(payload.permissionMode, "on-request")
+        XCTAssertEqual(payload.toolUseId, "tu-99")
+        XCTAssertNil(payload.agentId)
+    }
+
+    func testCodexBashCommandExtraction() throws {
+        let json = """
+        {
+            "hookType": "PreToolUse",
+            "sessionPid": 12345,
+            "timestamp": 1712600000.0,
+            "payload": {
+                "type": "PreToolUse",
+                "session_id": "s",
+                "tool_name": "Bash",
+                "tool_input": {"command": "ls -la"}
+            }
+        }
+        """
+        let event = try JSONDecoder().decode(HookEvent.self, from: json.data(using: .utf8)!)
+        guard case .preToolUse(let payload) = event.payload else {
+            XCTFail("Expected preToolUse payload")
+            return
+        }
+        XCTAssertEqual(payload.toolName, "Bash")
+        XCTAssertEqual(payload.command, "ls -la")
+    }
+
+    func testCodexApplyPatchExposesPatchTextAsCommand() throws {
+        let json = """
+        {
+            "hookType": "PreToolUse",
+            "sessionPid": 12345,
+            "timestamp": 1712600000.0,
+            "payload": {
+                "type": "PreToolUse",
+                "session_id": "s",
+                "tool_name": "apply_patch",
+                "tool_input": {"command": "*** Begin Patch\\n*** Add File: hello.txt\\n+hi\\n*** End Patch\\n"}
+            }
+        }
+        """
+        let event = try JSONDecoder().decode(HookEvent.self, from: json.data(using: .utf8)!)
+        guard case .preToolUse(let payload) = event.payload else {
+            XCTFail("Expected preToolUse payload")
+            return
+        }
+        XCTAssertEqual(payload.toolName, "apply_patch")
+        XCTAssertNotNil(payload.command)
+        XCTAssertTrue(payload.command?.contains("*** Add File: hello.txt") ?? false)
+    }
+
+    func testDecodeCodexApplyPatchEnvelope() throws {
+        let json = """
+        {
+            "hookType": "PreToolUse",
+            "sessionPid": 12345,
+            "timestamp": 1712600000.0,
+            "payload": {
+                "type": "PreToolUse",
+                "session_id": "codex-sess-7",
+                "turn_id": "turn-43",
+                "transcript_path": "/Users/dev/.codex/sessions/abc.jsonl",
+                "cwd": "/Users/dev/work",
+                "hook_event_name": "PreToolUse",
+                "model": "gpt-5.4",
+                "permission_mode": "on-request",
+                "tool_name": "apply_patch",
+                "tool_input": {"input": "*** Begin Patch\\n*** Add File: hello.txt\\n+hi\\n*** End Patch\\n"},
+                "tool_use_id": "tu-100"
+            }
+        }
+        """
+        let event = try JSONDecoder().decode(HookEvent.self, from: json.data(using: .utf8)!)
+        guard case .preToolUse(let payload) = event.payload else {
+            XCTFail("Expected preToolUse payload")
+            return
+        }
+        XCTAssertEqual(payload.toolName, "apply_patch")
+    }
+
     func testDecodeSessionStartEnvelope() throws {
         let json = """
         {
