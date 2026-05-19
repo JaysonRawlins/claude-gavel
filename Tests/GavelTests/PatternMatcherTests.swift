@@ -152,6 +152,31 @@ final class PatternMatcherTests: XCTestCase {
         XCTAssertNil(matcher.matchDangerous(payload: bashPayload(command: cmd)))
     }
 
+    func testAwsLogsFilterWithStartTimeDoesNotAskUser() {
+        let cmd = "AWS_PROFILE=$PROFILE aws logs filter-log-events --region us-east-1 --log-group-name $LG --start-time 1779155400000 --output json"
+        XCTAssertNil(matcher.matchSensitivePath(payload: bashPayload(command: cmd)))
+    }
+
+    func testMultilineAwsLogsReadCommandsDoNotAskUser() {
+        let cmd = """
+        PROFILE=Xceleration-Root-886004726701-AWSAdministratorAccess
+        LG=/aws/lambda/maintenance-orchestrator-st-OrchestratorFnh67FCE538-yzF8GdBPw455
+        AWS_PROFILE=$PROFILE aws logs describe-log-streams --region us-east-1 --log-group-name $LG --order-by LastEventTime --descending --max-items 6 --output json > /tmp/streams3.json
+        AWS_PROFILE=$PROFILE aws logs filter-log-events --region us-east-1 --log-group-name $LG --start-time 1779155400000 --output json > /tmp/orch_late.json
+        """
+        XCTAssertNil(matcher.matchSensitivePath(payload: bashPayload(command: cmd)))
+    }
+
+    func testAwsWriteOperationAsksUser() {
+        let cmd = "AWS_PROFILE=$PROFILE aws ec2 start-instances --instance-ids i-1234567890abcdef0"
+        XCTAssertEqual(matcher.matchSensitivePath(payload: bashPayload(command: cmd)), "AWS CLI write operation")
+    }
+
+    func testAwsDryRunWriteDoesNotAskUser() {
+        let cmd = "aws ec2 start-instances --instance-ids i-1234567890abcdef0 --dry-run"
+        XCTAssertNil(matcher.matchSensitivePath(payload: bashPayload(command: cmd)))
+    }
+
     // MARK: - Environment theft (expanded)
 
     func testEnvPipeBlocked() {
