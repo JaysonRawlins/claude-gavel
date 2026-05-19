@@ -193,9 +193,20 @@ struct SessionRule: Identifiable {
         switch toolName {
         case "Bash":
             guard let cmd = command, !cmd.isEmpty else { return "*" }
-            // Use the full command so Session Allow matches exactly this command.
-            // User can edit the pattern to broaden it (e.g. add * wildcard).
-            return cmd
+            // Multi-line commands suggest first-non-blank-line + `*` — pasting the whole blob
+            // is unworkable UX (contains regex meta that auto-promotes the panel into regex mode).
+            // Single-line keeps its literal text; user broadens by appending `*`.
+            let lines = cmd.split(separator: "\n", omittingEmptySubsequences: false)
+            let firstSubstantive = lines.first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            guard let first = firstSubstantive else { return "*" }
+            let normalized = String(first).trimmingCharacters(in: .whitespaces)
+            if lines.count == 1 || lines.filter({ !$0.trimmingCharacters(in: .whitespaces).isEmpty }).count == 1 {
+                return normalized
+            }
+            let withoutContinuation = normalized.hasSuffix("\\")
+                ? String(normalized.dropLast()).trimmingCharacters(in: .whitespaces)
+                : normalized
+            return "\(withoutContinuation)*"
 
         case "Edit", "MultiEdit", "Write":
             guard let path = filePath else { return "*" }

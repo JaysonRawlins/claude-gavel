@@ -5,6 +5,8 @@ import Foundation
 enum PatternCompiler {
 
     /// Convert a glob pattern (`*` = any characters) to NSRegularExpression.
+    /// `dotMatchesLineSeparators` so `*` spans newlines — multi-line bash
+    /// commands would otherwise be unreachable by any non-`*`-only glob.
     static func compileGlob(_ pattern: String) -> NSRegularExpression? {
         var regex = "^"
         for ch in pattern {
@@ -16,7 +18,7 @@ enum PatternCompiler {
             }
         }
         regex += "$"
-        return try? NSRegularExpression(pattern: regex)
+        return try? NSRegularExpression(pattern: regex, options: [.dotMatchesLineSeparators])
     }
 
     /// Compile a pattern to NSRegularExpression.
