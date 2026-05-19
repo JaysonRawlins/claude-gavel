@@ -51,7 +51,14 @@ dev-install: build
     mkdir -p "$backup"
     for bin in gavel gavel-hook; do
         [[ -f "$cellar/$bin" ]] || { echo "missing $cellar/$bin"; exit 1; }
-        cp -p "$cellar/$bin" "$backup/${bin}.${ver}.bak"
+        # Preserve the FIRST backup as the brew-pristine snapshot — re-running
+        # dev-install would otherwise capture the currently-installed dev binary,
+        # erasing the restore path. `cp -p` also preserves source mode (555),
+        # which makes an overwrite-cp permission-denied on subsequent runs.
+        bak="$backup/${bin}.${ver}.bak"
+        if [[ ! -f "$bak" ]]; then
+            cp -p "$cellar/$bin" "$bak"
+        fi
         codesign --force --sign - --options runtime ".build/release/$bin"
         chmod u+w "$cellar/$bin"
         cp ".build/release/$bin" "$cellar/$bin"
