@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.10.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.9.1...v1.10.0) (2026-05-19)
+
+
+### Features
+
+* **justfile:** make dev-install actually usable — Dev ID signing + dev-daemon ([#77](https://github.com/JaysonRawlins/claude-gavel/issues/77)) ([e0b56f5](https://github.com/JaysonRawlins/claude-gavel/commit/e0b56f5fec07f17d262b0cbae00fdcde44b4e01c))
+
+
+### Bug Fixes
+
+* **approval:** make Session Allow work for multi-line bash commands ([#76](https://github.com/JaysonRawlins/claude-gavel/issues/76)) ([11309c8](https://github.com/JaysonRawlins/claude-gavel/commit/11309c8ac4191656fe72b2d6a4c5510f6a13df5a))
+
 ## [1.9.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.9.0...v1.9.1) (2026-05-18)
 
 
