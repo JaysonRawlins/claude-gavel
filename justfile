@@ -38,21 +38,53 @@ check: test
 # Codesign local build and swap it into Homebrew's Cellar (backup, revert with dev-restore)
 dev-install: build
     #!/usr/bin/env bash
-    # Build + ad-hoc codesign (hardened runtime) + swap into Homebrew's Cellar.
-    # Caveat: brew bottle ships with Developer ID (TeamIdentifier=4RZ893CQ7B);
-    # ad-hoc may still SIGKILL in hardened spawn contexts (Codex under Ghostty).
-    # If first Codex tool call after dev-install fails, check
-    # ~/Library/Logs/DiagnosticReports/gavel-hook-*.ips. If "Code Signature
-    # Invalid" is present, run `just dev-restore`.
+    # Build + codesign + swap into Homebrew's Cellar. Identity resolution:
+    #   1. $GAVEL_SIGN_IDENTITY env var (user override)
+    #   2. First "Developer ID Application" from `security find-identity`
+    #   3. Ad-hoc `-` (warns; may SIGKILL in hardened spawn contexts like
+    #      Ghostty → Codex CLI → hook, or LaunchAgent → daemon)
+    # The identity NAME is resolved from the local keychain at runtime so the
+    # repo carries no personal info; the private key never leaves the keychain.
+    #
+    # Daemon-side caveat: even with Developer ID, LaunchAgent kills the daemon
+    # for "Invalid Page" because the brew bottle is also notarized — `spctl -a`
+    # confirms `source=Unnotarized Developer ID` rejects this binary. Notarizing
+    # locally is impractical (multi-min round-trip to Apple per build). For
+    # daemon-side dev, use `just dev-daemon` instead — foreground spawn from an
+    # interactive shell is permissive about codesigning. dev-install is most
+    # useful for hook-side testing where the parent chain is more lenient.
     set -euo pipefail
     ver=$(brew list --versions gavel | awk '{print $2}')
     cellar="/opt/homebrew/Cellar/gavel/${ver}/bin"
     backup="$HOME/.cache/gavel-backup"
     mkdir -p "$backup"
+
+    identity="${GAVEL_SIGN_IDENTITY:-}"
+    if [[ -z "$identity" ]]; then
+        identity=$(security find-identity -v -p codesigning 2>/dev/null \
+            | grep "Developer ID Application" \
+            | head -1 \
+            | sed -E 's/^[^"]*"([^"]+)".*$/\1/' || true)
+    fi
+    if [[ -z "$identity" ]]; then
+        identity="-"
+        echo "WARNING: no Developer ID found in keychain — falling back to ad-hoc."
+        echo "         macOS will likely SIGKILL the binaries when spawned by Codex/Claude or LaunchAgent."
+    else
+        echo "Signing with: $identity"
+    fi
+
     for bin in gavel gavel-hook; do
         [[ -f "$cellar/$bin" ]] || { echo "missing $cellar/$bin"; exit 1; }
-        cp -p "$cellar/$bin" "$backup/${bin}.${ver}.bak"
-        codesign --force --sign - --options runtime ".build/release/$bin"
+        # Preserve the FIRST backup as the brew-pristine snapshot — re-running
+        # dev-install would otherwise capture the currently-installed dev binary,
+        # erasing the restore path. `cp -p` also preserves source mode (555),
+        # which makes an overwrite-cp permission-denied on subsequent runs.
+        bak="$backup/${bin}.${ver}.bak"
+        if [[ ! -f "$bak" ]]; then
+            cp -p "$cellar/$bin" "$bak"
+        fi
+        codesign --force --sign "$identity" --options runtime ".build/release/$bin"
         chmod u+w "$cellar/$bin"
         cp ".build/release/$bin" "$cellar/$bin"
         chmod 555 "$cellar/$bin"
@@ -63,7 +95,28 @@ dev-install: build
     echo "Restore: just dev-restore  (or: brew reinstall gavel)"
     echo
     echo "Bounce the daemon to pick up daemon-side changes:"
-    echo "  pkill -f /opt/homebrew/opt/gavel/bin/gavel && launchctl kickstart -k gui/\$(id -u)/com.gavel.daemon 2>/dev/null || true"
+    echo "  brew services restart gavel"
+
+# Run a local dev daemon in the foreground; brew-managed daemon is paused for the duration.
+dev-daemon: build
+    #!/usr/bin/env bash
+    # Stop brew-managed gavel, run .build/release/gavel in foreground.
+    # The trap restores brew gavel on exit (Ctrl-C, error, normal return).
+    # Foreground spawn from an interactive shell is permissive about codesigning,
+    # so the linker-only signature from `swift build` works — no codesign or
+    # notarization needed for daemon-side dev.
+    set -euo pipefail
+    cleanup() {
+        echo
+        echo "Restoring brew-managed gavel..."
+        brew services start gavel >/dev/null 2>&1 || true
+    }
+    trap cleanup EXIT INT TERM
+    echo "Stopping brew-managed gavel..."
+    brew services stop gavel >/dev/null
+    echo "Running .build/release/gavel — Ctrl-C to stop and restore brew daemon"
+    echo
+    .build/release/gavel
 
 # Restore Homebrew's signed binaries from the dev-install backup.
 dev-restore:
