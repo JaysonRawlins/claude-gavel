@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.10.0...v1.10.1) (2026-05-19)
+
+
+### Bug Fixes
+
+* **matcher:** stop AWS write rule false-firing on --start-time ([#79](https://github.com/JaysonRawlins/claude-gavel/issues/79)) ([8fe26d7](https://github.com/JaysonRawlins/claude-gavel/commit/8fe26d775083884d012fc5b111aa0fe1dcdc8c27))
+
 ## [1.10.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.9.1...v1.10.0) (2026-05-19)
 
 
