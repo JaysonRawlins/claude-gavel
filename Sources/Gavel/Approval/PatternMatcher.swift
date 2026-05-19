@@ -7,6 +7,28 @@ import Foundation
 /// 2. **Protected path patterns** — block Write/Edit to sensitive file paths
 struct PatternMatcher {
 
+    private static let awsWriteOperationParts: Set<String> = [
+        "create", "delete", "update", "put", "remove", "terminate", "stop", "start", "modify", "run"
+    ]
+
+    private static let awsGlobalOptionsWithValues: Set<String> = [
+        "--ca-bundle",
+        "--cli-auto-prompt",
+        "--cli-binary-format",
+        "--cli-connect-timeout",
+        "--cli-input-json",
+        "--cli-input-yaml",
+        "--cli-read-timeout",
+        "--color",
+        "--endpoint-url",
+        "--output",
+        "--profile",
+        "--query",
+        "--region"
+    ]
+
+    private static let shellSegmentSeparators = CharacterSet(charactersIn: "\n;&|")
+
     /// Pre-compiled dangerous bash command patterns — hard block.
     private let bashPatterns: [(regex: NSRegularExpression, reason: String)]
 
@@ -145,7 +167,6 @@ struct PatternMatcher {
             ("\\brm\\s+--recursive", "Recursive delete (long flag)"),
             // Cloud CLI write operations
             ("\\baz\\s+.*\\b(update|create|delete|set|add|remove|start|stop|restart)\\b", "Azure CLI write operation"),
-            ("\\baws\\s+.*\\b(create|delete|update|put|remove|terminate|stop|start|modify|run)\\b(?!.*--dry-run)", "AWS CLI write operation"),
             ("\\bgcloud\\s+.*\\b(create|delete|update|add|remove|start|stop|deploy)\\b", "GCloud CLI write operation"),
             // ── Bypass-coverage fallbacks ──
             // The hard-block versions of these (rawBash above) anchor to command
@@ -334,6 +355,9 @@ struct PatternMatcher {
 
     private func checkAskUserBash(_ command: String) -> String? {
         let stripped = Self.stripQuotedContent(command)
+        if Self.containsAwsWriteOperation(stripped) {
+            return "AWS CLI write operation"
+        }
         let range = NSRange(stripped.startIndex..., in: stripped)
         for (regex, reason) in askUserBashPatterns {
             if regex.firstMatch(in: stripped, range: range) != nil {
@@ -341,6 +365,65 @@ struct PatternMatcher {
             }
         }
         return nil
+    }
+
+    private static func containsAwsWriteOperation(_ command: String) -> Bool {
+        for segment in command.components(separatedBy: shellSegmentSeparators) {
+            let tokens = segment.split { $0.isWhitespace }.map(String.init)
+            for index in tokens.indices where isAwsExecutable(tokens[index]) {
+                let args = Array(tokens.dropFirst(index + 1))
+                if argsContainDryRun(args) { continue }
+                guard let operation = awsOperation(from: args) else { continue }
+                if awsOperationLooksWrite(operation) { return true }
+            }
+        }
+        return false
+    }
+
+    private static func isAwsExecutable(_ token: String) -> Bool {
+        let cleaned = cleanShellToken(token)
+        return cleaned == "aws" || cleaned.hasSuffix("/aws")
+    }
+
+    private static func argsContainDryRun(_ args: [String]) -> Bool {
+        args.contains { arg in
+            let cleaned = cleanShellToken(arg)
+            return cleaned == "--dry-run" || cleaned.hasPrefix("--dry-run=")
+        }
+    }
+
+    private static func awsOperation(from args: [String]) -> String? {
+        var index = 0
+        guard nextAwsPositional(args, index: &index) != nil else { return nil }
+        return nextAwsPositional(args, index: &index)
+    }
+
+    private static func nextAwsPositional(_ args: [String], index: inout Int) -> String? {
+        while index < args.count {
+            let token = cleanShellToken(args[index])
+            index += 1
+            if token.isEmpty { continue }
+            if token.hasPrefix("-") {
+                if awsOptionConsumesValue(token), index < args.count { index += 1 }
+                continue
+            }
+            return token
+        }
+        return nil
+    }
+
+    private static func awsOptionConsumesValue(_ token: String) -> Bool {
+        token.hasPrefix("--") && !token.contains("=") && awsGlobalOptionsWithValues.contains(token)
+    }
+
+    private static func cleanShellToken(_ token: String) -> String {
+        token.trimmingCharacters(in: CharacterSet(charactersIn: #""'`"#)).lowercased()
+    }
+
+    private static func awsOperationLooksWrite(_ operation: String) -> Bool {
+        operation.split(separator: "-").contains { part in
+            awsWriteOperationParts.contains(String(part))
+        }
     }
 
     // MARK: - Bash command matching
