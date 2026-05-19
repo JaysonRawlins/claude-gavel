@@ -118,6 +118,72 @@ dev-daemon: build
     echo
     .build/release/gavel
 
+# Scan dev-volatile configs for paths under ~/code that reference gavel;
+# offer to reset them to brew paths. Catches the "deleted worktree leaves
+# stale hook config" failure mode (Codex/Claude hooks exit 127). Treat
+# local dev as a temporary state; run this after each dev sprint alongside
+# `just dev-restore`.
+dev-doctor:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    brew_prefix=$(brew --prefix)
+    brew_hook="$brew_prefix/bin/gavel-hook"
+    brew_daemon="$brew_prefix/bin/gavel"
+    code_root="$HOME/code"
+
+    declare -a drift_files=()
+
+    scan() {
+        local file="$1"
+        [[ -f "$file" ]] || return 0
+        local pattern="\"${code_root}[^\"]*/(gavel-hook|gavel)\""
+        if grep -qE "$pattern" "$file" 2>/dev/null; then
+            echo
+            echo "DRIFT in $file:"
+            grep -nE "$pattern" "$file" | sed 's/^/    /'
+            drift_files+=("$file")
+        fi
+    }
+
+    scan "$HOME/.codex/config.toml"
+    scan "$HOME/.claude/settings.json"
+    scan "$HOME/.claude/settings.local.json"
+
+    if [[ ${#drift_files[@]} -eq 0 ]]; then
+        echo "OK: no dev-path drift in known config locations."
+        echo "  brew gavel-hook:   $brew_hook"
+        echo "  brew gavel daemon: $brew_daemon"
+        exit 0
+    fi
+
+    echo
+    echo "${#drift_files[@]} file(s) reference a path under $code_root for gavel."
+    echo "These were probably set by 'just dev-install' or manual hook edits."
+    echo "If the source path no longer exists, hooks will exit 127."
+    echo
+    read -r -p "Reset to brew paths? [y/N] " ans
+    if [[ ! "$ans" =~ ^[Yy]$ ]]; then
+        echo "No changes made."
+        exit 1
+    fi
+
+    stamp=$(date +%Y%m%d-%H%M%S)
+    for file in "${drift_files[@]}"; do
+        backup="${file}.pre-dev-doctor-${stamp}"
+        cp "$file" "$backup"
+        sed -i.tmp -E \
+            -e "s|${code_root}[^\"]*/gavel-hook\"|${brew_hook}\"|g" \
+            -e "s|${code_root}[^\"]*/gavel\"|${brew_daemon}\"|g" \
+            "$file"
+        rm -f "${file}.tmp"
+        echo "  fixed: $file  (backup: $backup)"
+    done
+
+    echo
+    echo "Done. Codex: re-trust the new hook path via interactive 'codex' + '/hooks'."
+    echo "Claude Code: no re-trust needed."
+
 # Restore Homebrew's signed binaries from the dev-install backup.
 dev-restore:
     #!/usr/bin/env bash
