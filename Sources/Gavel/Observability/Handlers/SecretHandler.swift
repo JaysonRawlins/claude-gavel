@@ -25,13 +25,24 @@ final class SecretHandler: JsonlEventHandler {
         }
     }()
 
+    private static let cooldown: TimeInterval = 300
+
+    private var lastFireByLabel: [String: Date] = [:]
+
     func handle(_ event: JsonlEvent, manager: SessionManager, session: Session) {
         let line = event.rawLine
         let range = NSRange(line.startIndex..., in: line)
         for pattern in Self.patterns where pattern.regex.firstMatch(in: line, range: range) != nil {
+            if let last = lastFireByLabel[pattern.label],
+               Date().timeIntervalSince(last) < Self.cooldown {
+                return
+            }
+            lastFireByLabel[pattern.label] = Date()
+            let sessionTag = session.label.isEmpty ? "PID \(session.pid)" : session.label
             GavelNotifications.notify(
                 title: "Gavel — secret detected",
-                body: "\(pattern.label) in session PID \(session.pid)"
+                body: "\(pattern.label) in session \(sessionTag).\n\nReview the conversation transcript before continuing.",
+                critical: true
             )
             return
         }
