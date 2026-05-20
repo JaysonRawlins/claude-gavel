@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.10.1...v1.11.0) (2026-05-20)
+
+
+### Features
+
+* **justfile:** add dev-doctor to catch stale dev paths in hook configs ([#81](https://github.com/JaysonRawlins/claude-gavel/issues/81)) ([5cd808f](https://github.com/JaysonRawlins/claude-gavel/commit/5cd808fd77f513fb2923639ef71df194a5ac8abc))
+
 ## [1.10.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.10.0...v1.10.1) (2026-05-19)
 
 
