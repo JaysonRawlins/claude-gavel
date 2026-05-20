@@ -152,6 +152,24 @@ struct MonitorWindow: View {
                 .tint(.blue)
                 .help("Scan for Claude Code CLI processes that haven't fired a hook yet (e.g. started while gavel was down).")
 
+                Button("Plans") {
+                    EditorPreference.open(URL(fileURLWithPath:
+                        (NSHomeDirectory() as NSString).appendingPathComponent(".claude/plans")))
+                    viewModel.noteInteraction()
+                }
+                .buttonStyle(.bordered)
+                .tint(.indigo)
+                .help("Open ~/.claude/plans/ in your preferred editor.")
+
+                Button("Skills") {
+                    EditorPreference.open(URL(fileURLWithPath:
+                        (NSHomeDirectory() as NSString).appendingPathComponent(".claude/skills")))
+                    viewModel.noteInteraction()
+                }
+                .buttonStyle(.bordered)
+                .tint(.indigo)
+                .help("Open ~/.claude/skills/ in your preferred editor (resolves through your symlinks).")
+
                 sessionFilterField
 
                 activeOnlyToggle
