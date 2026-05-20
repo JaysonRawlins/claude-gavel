@@ -5,7 +5,7 @@ enum ResumeCommand {
         let invocation: String
         switch agent {
         case .claude:
-            invocation = "claude --name \(pid) --resume \(sessionId)"
+            invocation = "claude --resume \(sessionId)"
         case .codex:
             invocation = "codex resume \(sessionId)"
         }
