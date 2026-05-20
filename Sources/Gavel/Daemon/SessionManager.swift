@@ -22,6 +22,8 @@ final class SessionManager: ObservableObject {
     /// User-typed labels keyed by Claude Code session UUID. Survives daemon restarts.
     @Published private var sessionLabels: [String: String] = [:]
 
+    private var jsonlSeedTriedPids: Set<Int> = []
+
     private var lastInteraction: Date = Date()
 
     private let defaultsPath: String
@@ -98,11 +100,12 @@ final class SessionManager: ObservableObject {
         let changed = session.sessionId != sid
         let savedLabel = sessionLabels[sid]
         let currentLabel = session.label
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
             session.sessionId = sid
             if session.label.isEmpty, let saved = savedLabel {
                 session.label = saved
             }
+            self?.tryJsonlSeed(session: session)
         }
         if !currentLabel.isEmpty && savedLabel != currentLabel {
             sessionLabels[sid] = currentLabel
@@ -120,14 +123,24 @@ final class SessionManager: ObservableObject {
     /// Worker-thread caller; @Published mutation dispatched to main.
     func recordCwd(_ cwd: String, on session: Session) {
         let changed = session.cwd != cwd
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
             session.cwd = cwd
+            self?.tryJsonlSeed(session: session)
         }
         if changed {
             lock.lock()
             saveActiveSessionsLocked()
             lock.unlock()
         }
+    }
+
+    private func tryJsonlSeed(session: Session) {
+        guard session.label.isEmpty, !jsonlSeedTriedPids.contains(session.pid) else { return }
+        guard let sid = session.sessionId, let cwd = session.cwd else { return }
+        jsonlSeedTriedPids.insert(session.pid)
+        guard let seeded = JsonlRenameReader.latestRename(cwd: cwd, sessionId: sid) else { return }
+        session.label = seeded
+        setLabel(seeded, for: sid)
     }
 
     /// Save (or clear) the label for a session UUID. Empty/whitespace removes the entry.
@@ -259,6 +272,7 @@ final class SessionManager: ObservableObject {
             session.label = label
         }
         sessions[snap.pid] = session
+        tryJsonlSeed(session: session)
     }
 
     private func rehydrateTombstone(_ snap: PersistedSession, sessionId: String) {
