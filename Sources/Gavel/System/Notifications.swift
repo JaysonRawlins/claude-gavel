@@ -28,15 +28,16 @@ struct GavelNotifications {
     /// the user must not miss (e.g., secret leaks). Otherwise uses the standard
     /// banner-style `display notification`.
     static func notify(title: String, body: String, sound: Bool = true, critical: Bool = false) {
-        let escapedTitle = title.replacingOccurrences(of: "\"", with: "\\\"")
-        let escapedBody = body.replacingOccurrences(of: "\"", with: "\\\"")
+        let escapedTitle = appleScriptQuoted(title)
 
         let script: String
         if critical {
-            script = #"display dialog "\#(escapedBody)" with title "\#(escapedTitle)" buttons {"OK"} default button "OK" with icon caution"#
+            let appleScriptBody = appleScriptMultilineString(body)
+            script = #"display dialog \#(appleScriptBody) with title \#(escapedTitle) buttons {"OK"} default button "OK" with icon caution"#
         } else {
+            let escapedBody = appleScriptQuoted(body.replacingOccurrences(of: "\n", with: " "))
             let soundClause = sound ? #" sound name "Glass""# : ""
-            script = #"display notification "\#(escapedBody)" with title "\#(escapedTitle)"\#(soundClause)"#
+            script = #"display notification \#(escapedBody) with title \#(escapedTitle)\#(soundClause)"#
         }
 
         let task = Process()
@@ -45,5 +46,18 @@ struct GavelNotifications {
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
         try? task.run()
+    }
+
+    private static func appleScriptQuoted(_ s: String) -> String {
+        let escaped = s
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
+
+    private static func appleScriptMultilineString(_ s: String) -> String {
+        s.components(separatedBy: "\n")
+            .map { appleScriptQuoted($0) }
+            .joined(separator: " & return & ")
     }
 }
