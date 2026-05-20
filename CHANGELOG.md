@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.12.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.11.0...v1.12.0) (2026-05-20)
+
+
+### Features
+
+* **monitor:** add Plans and Skills quick links to the bottom control bar, and seed `session.label` from the JSONL transcript's latest `/rename` or `--name` at session discovery ([#83](https://github.com/JaysonRawlins/claude-gavel/pull/83)) ([965c237](https://github.com/JaysonRawlins/claude-gavel/commit/965c237e6641223072e211f1d92f070f230452a9))
+* **jsonl:** per-session JSONL transcript watcher dispatching new lines through a handler chain — initial handlers are mid-session rename sync (keeps `session.label` current as the user runs `/rename` mid-session) and secret detection with persistent dialog + 5-min cooldown for AWS/GitHub/Anthropic/OpenAI/Slack token patterns ([#84](https://github.com/JaysonRawlins/claude-gavel/pull/84)) ([b78aefa](https://github.com/JaysonRawlins/claude-gavel/commit/b78aefa2))
+
+
+### Bug Fixes
+
+* **resume:** drop `--name <pid>` from the Resume button's clipboard command — was polluting session titles with the PID every time someone pasted and ran it ([#83](https://github.com/JaysonRawlins/claude-gavel/pull/83)) ([965c237](https://github.com/JaysonRawlins/claude-gavel/commit/965c237e6641223072e211f1d92f070f230452a9))
+
+
+### Documentation
+
+* **claude-md:** add project `CLAUDE.md` documenting the release-please PR-title convention, dev iteration commands, and Gavel's self-protection deny rule ([#85](https://github.com/JaysonRawlins/claude-gavel/pull/85)) ([88b7c7b](https://github.com/JaysonRawlins/claude-gavel/commit/88b7c7be))
+
+
+### Miscellaneous Chores
+
+* **release:** backfill v1.12.0 release tracking for [#83](https://github.com/JaysonRawlins/claude-gavel/pull/83) [#84](https://github.com/JaysonRawlins/claude-gavel/pull/84) [#85](https://github.com/JaysonRawlins/claude-gavel/pull/85) ([#86](https://github.com/JaysonRawlins/claude-gavel/pull/86)) ([0418e6d](https://github.com/JaysonRawlins/claude-gavel/commit/0418e6d5a3a3825a35c501d0bb5cccd4afb60917))
+
 ## [1.11.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.10.1...v1.11.0) (2026-05-20)
 
 
