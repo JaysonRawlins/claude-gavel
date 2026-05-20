@@ -23,6 +23,7 @@ final class SessionManager: ObservableObject {
     @Published private var sessionLabels: [String: String] = [:]
 
     private var jsonlSeedTriedPids: Set<Int> = []
+    private var watchers: [Int: JsonlWatcher] = [:]
 
     private var lastInteraction: Date = Date()
 
@@ -135,12 +136,50 @@ final class SessionManager: ObservableObject {
     }
 
     private func tryJsonlSeed(session: Session) {
+        startWatcherIfReady(for: session)
         guard session.label.isEmpty, !jsonlSeedTriedPids.contains(session.pid) else { return }
         guard let sid = session.sessionId, let cwd = session.cwd else { return }
         jsonlSeedTriedPids.insert(session.pid)
         guard let seeded = JsonlRenameReader.latestRename(cwd: cwd, sessionId: sid) else { return }
         session.label = seeded
         setLabel(seeded, for: sid)
+    }
+
+    /// Apply an externally-sourced label update (e.g., from JSONL watcher); no-op on empty or unchanged input.
+    func updateLabel(_ newLabel: String, on session: Session, sessionId: String? = nil) {
+        let trimmed = newLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let currentLabel = session.label
+        guard currentLabel != trimmed else { return }
+        DispatchQueue.main.async {
+            session.label = trimmed
+        }
+        if let sid = sessionId ?? session.sessionId {
+            sessionLabels[sid] = trimmed
+            saveDefaults()
+        }
+        saveActiveSessions()
+    }
+
+    private func startWatcherIfReady(for session: Session) {
+        guard watchers[session.pid] == nil else { return }
+        guard let sid = session.sessionId, let cwd = session.cwd else { return }
+        let encoded = cwd
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ".", with: "-")
+        let path = (NSHomeDirectory() as NSString)
+            .appendingPathComponent(".claude/projects")
+            .appending("/\(encoded)/\(sid).jsonl")
+        let handlers: [JsonlEventHandler] = [RenameHandler(), SecretHandler()]
+        let dispatcher = JsonlEventDispatcher(handlers: handlers, manager: self, session: session)
+        let watcher = JsonlWatcher(path: path, dispatcher: dispatcher)
+        watchers[session.pid] = watcher
+        watcher.start()
+    }
+
+    private func stopWatcher(forPid pid: Int) {
+        guard let watcher = watchers.removeValue(forKey: pid) else { return }
+        watcher.stop()
     }
 
     /// Save (or clear) the label for a session UUID. Empty/whitespace removes the entry.
@@ -350,6 +389,7 @@ final class SessionManager: ObservableObject {
             }
             saveActiveSessionsLocked()
             lock.unlock()
+            stopWatcher(forPid: pid)
             // @Published mutations need main thread; this runs on a utility queue.
             DispatchQueue.main.async {
                 session.isAlive = false
