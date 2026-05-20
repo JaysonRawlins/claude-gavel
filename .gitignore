@@ -11,3 +11,6 @@ DerivedData/
 .mcp.json
 dev/
 output.log
+
+# Override global ~/.gitignore: this repo's CLAUDE.md is checked in.
+!CLAUDE.md
