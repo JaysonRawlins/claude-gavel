@@ -23,13 +23,22 @@ struct GavelNotifications {
         }
     }
 
-    /// Post a native macOS notification.
-    static func notify(title: String, body: String, sound: Bool = true) {
-        // osascript works universally — no bundle required
-        let soundClause = sound ? #" sound name "Glass""# : ""
-        let escaped_title = title.replacingOccurrences(of: "\"", with: "\\\"")
-        let escaped_body = body.replacingOccurrences(of: "\"", with: "\\\"")
-        let script = #"display notification "\#(escaped_body)" with title "\#(escaped_title)"\#(soundClause)"#
+    /// Post a native macOS notification. When `critical` is true, uses a modal
+    /// `display dialog` that persists until the user dismisses it — for events
+    /// the user must not miss (e.g., secret leaks). Otherwise uses the standard
+    /// banner-style `display notification`.
+    static func notify(title: String, body: String, sound: Bool = true, critical: Bool = false) {
+        let escapedTitle = appleScriptQuoted(title)
+
+        let script: String
+        if critical {
+            let appleScriptBody = appleScriptMultilineString(body)
+            script = #"display dialog \#(appleScriptBody) with title \#(escapedTitle) buttons {"OK"} default button "OK" with icon caution"#
+        } else {
+            let escapedBody = appleScriptQuoted(body.replacingOccurrences(of: "\n", with: " "))
+            let soundClause = sound ? #" sound name "Glass""# : ""
+            script = #"display notification \#(escapedBody) with title \#(escapedTitle)\#(soundClause)"#
+        }
 
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
@@ -37,6 +46,18 @@ struct GavelNotifications {
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
         try? task.run()
-        // Fire and forget — don't wait
+    }
+
+    private static func appleScriptQuoted(_ s: String) -> String {
+        let escaped = s
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
+
+    private static func appleScriptMultilineString(_ s: String) -> String {
+        s.components(separatedBy: "\n")
+            .map { appleScriptQuoted($0) }
+            .joined(separator: " & return & ")
     }
 }
