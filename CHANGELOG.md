@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.11.0...v1.12.0) (2026-05-20)
+
+
+### Miscellaneous Chores
+
+* **release:** backfill v1.12.0 release tracking for [#83](https://github.com/JaysonRawlins/claude-gavel/issues/83) [#84](https://github.com/JaysonRawlins/claude-gavel/issues/84) [#85](https://github.com/JaysonRawlins/claude-gavel/issues/85) ([#86](https://github.com/JaysonRawlins/claude-gavel/issues/86)) ([0418e6d](https://github.com/JaysonRawlins/claude-gavel/commit/0418e6d5a3a3825a35c501d0bb5cccd4afb60917))
+
 ## [1.11.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.10.1...v1.11.0) (2026-05-20)
 
 
