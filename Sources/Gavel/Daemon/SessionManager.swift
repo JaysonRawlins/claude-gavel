@@ -178,6 +178,11 @@ final class SessionManager: ObservableObject {
         let label: String?
         let endedAt: Date?
         let agent: AgentKind?
+        let lastPlanPath: String?
+        let yoloEngagedAt: Date?
+        let yoloPlanPath: String?
+        let yoloPlanHash: String?
+        let yoloDisabledReason: String?
     }
 
     private struct PersistedState: Codable {
@@ -216,7 +221,12 @@ final class SessionManager: ObservableObject {
             isPaused: session.isPaused,
             label: session.label.isEmpty ? nil : session.label,
             endedAt: session.endedAt,
-            agent: session.agent
+            agent: session.agent,
+            lastPlanPath: session.lastPlanPath,
+            yoloEngagedAt: session.yoloEngagedAt,
+            yoloPlanPath: session.yoloPlanPath,
+            yoloPlanHash: session.yoloPlanHash,
+            yoloDisabledReason: session.yoloDisabledReason
         )
     }
 
@@ -258,7 +268,35 @@ final class SessionManager: ObservableObject {
         } else if let label = snap.label {
             session.label = label
         }
+        session.lastPlanPath = snap.lastPlanPath
+        rehydrateYolo(snap, into: session)
         sessions[snap.pid] = session
+    }
+
+    /// Restore YOLO state across daemon restarts. If the plan's content drifted
+    /// while we were down, disengage on load with a clear reason — preserves the
+    /// invariant that an engaged YOLO session always reflects the original plan.
+    private func rehydrateYolo(_ snap: PersistedSession, into session: Session) {
+        guard let engagedAt = snap.yoloEngagedAt,
+              let path = snap.yoloPlanPath,
+              let originalHash = snap.yoloPlanHash else {
+            session.yoloDisabledReason = snap.yoloDisabledReason
+            return
+        }
+        let currentHash = YoloMode.sha256(ofFileAt: path)
+        if currentHash == nil {
+            session.yoloDisabledReason = "plan deleted during daemon restart"
+            return
+        }
+        if currentHash != originalHash {
+            session.yoloDisabledReason = "plan changed during daemon restart"
+            return
+        }
+        session.yoloEngagedAt = engagedAt
+        session.yoloPlanPath = path
+        session.yoloPlanHash = originalHash
+        session.yoloDisabledReason = snap.yoloDisabledReason
+        session.setYoloActive(true)
     }
 
     private func rehydrateTombstone(_ snap: PersistedSession, sessionId: String) {

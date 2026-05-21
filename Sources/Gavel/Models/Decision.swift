@@ -85,6 +85,7 @@ enum DecisionBadge: String {
     case allow = "ALLOW"
     case autoApprove = "AUTO"
     case sandbox = "SANDBOX"
+    case yolo = "YOLO"
     case block = "BLOCK"
     case paused = "PAUSED"
 }

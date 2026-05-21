@@ -372,6 +372,8 @@ private struct SessionRow: View {
             }
             .frame(width: 76, alignment: .leading)
 
+            yoloControl
+
             Button("Prompt") {
                 viewModel.promptSession(session)
             }
@@ -404,6 +406,62 @@ private struct SessionRow: View {
             .frame(width: 60)
             .help("SIGINT this Claude Code process so it saves to disk; resume later from the asleep row.")
         }
+    }
+
+    @ViewBuilder
+    private var yoloControl: some View {
+        if session.isYoloActive {
+            Button(action: {
+                YoloMode.disengage(session: session, reason: "manual")
+                viewModel.sessionManager.saveActiveSessions()
+                viewModel.noteInteraction()
+            }) {
+                HStack(spacing: 3) {
+                    Text("YOLO")
+                        .font(.caption.bold())
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.caption2)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .tint(.red)
+            .frame(width: 76)
+            .help(yoloActiveHelp)
+        } else {
+            Button("YOLO") {
+                if YoloMode.engage(session: session) {
+                    viewModel.sessionManager.saveActiveSessions()
+                    viewModel.noteInteraction()
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(yoloDisabledReasonTint)
+            .frame(width: 76)
+            .disabled(session.lastPlanPath == nil)
+            .help(yoloIdleHelp)
+        }
+    }
+
+    private var yoloActiveHelp: String {
+        let planName = (session.yoloPlanPath as NSString?)?.lastPathComponent ?? "unknown plan"
+        return "YOLO active — tracking \(planName). Click to disengage. User rules are bypassed; protected paths still halt."
+    }
+
+    private var yoloIdleHelp: String {
+        if let reason = session.yoloDisabledReason {
+            return "YOLO halted: \(reason). Click to re-engage with the current plan."
+        }
+        if let plan = session.lastPlanPath {
+            let name = (plan as NSString).lastPathComponent
+            return "Engage YOLO — tracking \(name). Bypasses user rules; halts on plan changes or protected-path access."
+        }
+        return "No plan captured yet — run /propose first."
+    }
+
+    private var yoloDisabledReasonTint: Color {
+        session.yoloDisabledReason != nil ? .orange : .red
     }
 
     /// Width must match actionCluster so live and dead rows align.

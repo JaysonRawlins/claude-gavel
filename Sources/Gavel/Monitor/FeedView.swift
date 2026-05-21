@@ -108,6 +108,7 @@ struct FeedRow: View {
         case .allow: return .green
         case .autoApprove: return .purple
         case .sandbox: return .orange
+        case .yolo: return .red
         case .block: return .red
         case .paused: return .yellow
         }
