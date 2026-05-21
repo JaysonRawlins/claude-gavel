@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.12.0...v1.13.0) (2026-05-21)
+
+
+### Features
+
+* **approval:** plan-gated YOLO mode for hands-off agent work ([#88](https://github.com/JaysonRawlins/claude-gavel/issues/88)) ([ffbe151](https://github.com/JaysonRawlins/claude-gavel/commit/ffbe15103a0aea1c4938df5907fa31762e1d8ac2))
+
 ## [1.12.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.11.0...v1.12.0) (2026-05-20)
 
 
