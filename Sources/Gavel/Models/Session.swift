@@ -37,6 +37,36 @@ final class Session: ObservableObject, Identifiable {
     /// Prompt-rule IDs silenced for this session. Transient; cleared on revoke.
     @Published var suppressedRuleIds: Set<UUID> = []
 
+    /// Absolute path of the most recent approved Write/Edit/MultiEdit that landed
+    /// under ~/.claude/plans/**/*.md. Captured by HookRouter post-decision so YOLO
+    /// can find the plan without depending on session-label/folder conventions.
+    @Published var lastPlanPath: String?
+
+    // YOLO mode — bypasses user rules between engage and halt. See YoloMode.swift.
+    // Worker threads gate the yolo branch on `isYoloActive`, which is backed by a
+    // lock-protected non-@Published flag for synchronous visibility. The matching
+    // @Published fields below carry UI-display state and are updated on main.
+    @Published var yoloEngagedAt: Date?
+    /// Frozen at engage time. New plan writes update lastPlanPath but NOT this.
+    @Published var yoloPlanPath: String?
+    @Published var yoloPlanHash: String?
+    @Published var yoloDisabledReason: String?
+
+    private var _yoloActive: Bool = false
+    private let yoloLock = NSLock()
+
+    var isYoloActive: Bool {
+        yoloLock.lock()
+        defer { yoloLock.unlock() }
+        return _yoloActive
+    }
+
+    func setYoloActive(_ value: Bool) {
+        yoloLock.lock()
+        _yoloActive = value
+        yoloLock.unlock()
+    }
+
     // Worker-mutable state. NOT @Published on purpose — both are touched on
     // every PreToolUse hook from background threads, and `@Published`
     // mutations from non-main contend with SwiftUI's main-thread publish
@@ -90,6 +120,11 @@ final class Session: ObservableObject, Identifiable {
         autoApproveUntil = nil
         sessionRules.removeAll()
         suppressedRuleIds.removeAll()
+        setYoloActive(false)
+        yoloEngagedAt = nil
+        yoloPlanPath = nil
+        yoloPlanHash = nil
+        yoloDisabledReason = nil
     }
 
     /// Check if a tool call matches any session allow rule.

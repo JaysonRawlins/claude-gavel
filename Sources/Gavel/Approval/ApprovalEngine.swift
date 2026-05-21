@@ -21,12 +21,37 @@ final class ApprovalEngine {
     let patternMatcher: PatternMatcher
     let ruleStore: RuleStore
 
+    /// Tools that schedule execution outside the live session. Even under YOLO
+    /// these still force a dialog — the agent must not silently plant a job that
+    /// fires while the user isn't watching. Other built-in PROMPT rules (e.g.
+    /// the script-eval exfil defense) ARE bypassed under YOLO; the plan + the
+    /// stage-1 hard-blocks + sensitive-path halt are the safety net.
+    private static let schedulerTools: Set<String> = ["CronCreate", "ScheduleWakeup", "CronDelete"]
+
     init(patternMatcher: PatternMatcher = PatternMatcher(), ruleStore: RuleStore = RuleStore()) {
         self.patternMatcher = patternMatcher
         self.ruleStore = ruleStore
     }
 
     func evaluate(payload: PreToolUsePayload, session: Session) -> Decision {
+        // YOLO: short-circuit the user-rule chain. Pause wins (falls through).
+        // Kept protections: hard-block (deny), sensitive-path (halt + dialog),
+        // built-in PROMPT rules (dialog, no halt — includes scheduler tools).
+        if session.isYoloActive && !session.isPaused {
+            if let reason = patternMatcher.matchDangerous(payload: payload) {
+                return Decision(verdict: .block, reason: reason)
+            }
+            if let reason = patternMatcher.matchSensitivePath(payload: payload) {
+                YoloMode.disengage(session: session, reason: "gavel-protected path: \(reason)")
+                return Decision(verdict: .block, reason: reason, askUser: true)
+            }
+            if Self.schedulerTools.contains(payload.toolName),
+               let decision = ruleStore.evaluateBuiltInPrompt(payload: payload) {
+                return decision
+            }
+            return Decision(verdict: .allow, reason: "YOLO")
+        }
+
         // 1. Hard-coded dangerous patterns (always block, no override)
         if let reason = patternMatcher.matchDangerous(payload: payload) {
             return Decision(verdict: .block, reason: reason)

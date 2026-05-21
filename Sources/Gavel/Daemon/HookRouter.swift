@@ -130,7 +130,7 @@ final class HookRouter {
                 let decision = Decision(verdict: .block, reason: taintReason)
                 session.stats.incrementBlock()
                 emitFeed(.decision(badge: .block, reason: taintReason, pid: session.pid, at: timestamp))
-                sendResponse(decision, respond: respond)
+                sendResponse(decision, payload: payload, session: session, respond: respond)
                 return
             }
             TaintTracker.recordTaints(command: command, into: session.taintedPaths)
@@ -145,11 +145,37 @@ final class HookRouter {
             session.stats.incrementBlock()
             let reason = "Session deny: \(rule.toolName): \(rule.pattern)"
             emitFeed(.decision(badge: .block, reason: reason, pid: session.pid, at: timestamp))
-            sendResponse(Decision(verdict: .block, reason: reason, additionalContext: rule.explanation), respond: respond)
+            sendResponse(Decision(verdict: .block, reason: reason, additionalContext: rule.explanation), payload: payload, session: session, respond: respond)
             return
         }
 
-        // Stage 1: Check engine (dangerous patterns, persistent deny/allow, pause)
+        // Stage 0.7: YOLO halt — agent touched the tracked plan or the plan changed.
+        // The disengage flips isYoloActive sync, so the engine call below sees normal chain.
+        // This call itself is routed to interactive dialog so the user sees the halt context.
+        if session.isYoloActive, let haltReason = YoloMode.shouldHalt(session: session, payload: payload) {
+            YoloMode.disengage(session: session, reason: haltReason)
+            sessionManager.saveActiveSessions()
+            emitFeed(.system("YOLO halted: \(haltReason)", pid: session.pid, at: timestamp))
+            emitFeed(.decision(badge: .block, reason: "YOLO halted: \(haltReason)", pid: session.pid, at: timestamp))
+            let decision = approvalCoordinator.requestApproval(
+                payload: payload, session: session, timestamp: timestamp,
+                forceDialog: true,
+                triggerReason: "YOLO halted: \(haltReason)",
+                triggeringRuleId: nil
+            )
+            switch decision.verdict {
+            case .allow, .prompt:
+                session.stats.incrementAllow()
+                emitFeed(.decision(badge: .allow, reason: decision.reason, pid: session.pid, at: timestamp))
+            case .block:
+                session.stats.incrementBlock()
+                emitFeed(.decision(badge: .block, reason: decision.reason, pid: session.pid, at: timestamp))
+            }
+            sendResponse(decision, payload: payload, session: session, respond: respond)
+            return
+        }
+
+        // Stage 1: Check engine (dangerous patterns, persistent deny/allow, pause, YOLO branch)
         let engineDecision = approvalEngine.evaluate(payload: payload, session: session)
         if engineDecision.verdict == .block {
             if engineDecision.askUser {
@@ -158,7 +184,7 @@ final class HookRouter {
                    session.suppressedRuleIds.contains(ruleId) {
                     session.stats.incrementAllow()
                     emitFeed(.decision(badge: .allow, reason: "Rule suppressed for session", pid: session.pid, at: timestamp))
-                    sendResponse(Decision(verdict: .allow, reason: "Rule suppressed for session"), respond: respond)
+                    sendResponse(Decision(verdict: .allow, reason: "Rule suppressed for session"), payload: payload, session: session, respond: respond)
                     return
                 }
 
@@ -171,7 +197,7 @@ final class HookRouter {
                 ) {
                     session.stats.incrementAllow()
                     emitFeed(.decision(badge: .allow, reason: "Session rule: \(rule.toolName): \(rule.pattern)", pid: session.pid, at: timestamp))
-                    sendResponse(Decision(verdict: .allow, reason: "Session rule: \(rule.pattern)"), respond: respond)
+                    sendResponse(Decision(verdict: .allow, reason: "Session rule: \(rule.pattern)"), payload: payload, session: session, respond: respond)
                     return
                 }
 
@@ -192,22 +218,24 @@ final class HookRouter {
                     session.stats.incrementBlock()
                     emitFeed(.decision(badge: .block, reason: decision.reason, pid: session.pid, at: timestamp))
                 }
-                sendResponse(decision, respond: respond)
+                sendResponse(decision, payload: payload, session: session, respond: respond)
                 return
             } else {
                 // Hard block: dangerous patterns, persistent deny, pause
                 session.stats.incrementBlock()
                 let badge: DecisionBadge = session.isPaused ? .paused : .block
                 emitFeed(.decision(badge: badge, reason: engineDecision.reason, pid: session.pid, at: timestamp))
-                sendResponse(engineDecision, respond: respond)
+                sendResponse(engineDecision, payload: payload, session: session, respond: respond)
                 return
             }
         }
-        // Persistent allow rules (have a reason) skip the dialog
+        // Persistent allow rules and the YOLO branch both return allow with a reason.
+        // Yolo gets its own badge so the feed and the UI distinguish "user rule allowed" from "yolo bypassed".
         if engineDecision.reason != nil {
             session.stats.incrementAllow()
-            emitFeed(.decision(badge: .allow, reason: engineDecision.reason, pid: session.pid, at: timestamp))
-            sendResponse(engineDecision, respond: respond)
+            let badge: DecisionBadge = session.isYoloActive ? .yolo : .allow
+            emitFeed(.decision(badge: badge, reason: engineDecision.reason, pid: session.pid, at: timestamp))
+            sendResponse(engineDecision, payload: payload, session: session, respond: respond)
             return
         }
 
@@ -215,7 +243,7 @@ final class HookRouter {
         if session.isAutoApproveActive {
             session.stats.incrementAllow()
             emitFeed(.decision(badge: .autoApprove, reason: engineDecision.reason, pid: session.pid, at: timestamp))
-            sendResponse(engineDecision, respond: respond)
+            sendResponse(engineDecision, payload: payload, session: session, respond: respond)
             return
         }
 
@@ -226,7 +254,7 @@ final class HookRouter {
         ) {
             session.stats.incrementAllow()
             emitFeed(.decision(badge: .allow, reason: "\(rule.toolName): \(rule.pattern)", pid: session.pid, at: timestamp))
-            sendResponse(engineDecision, respond: respond)
+            sendResponse(engineDecision, payload: payload, session: session, respond: respond)
             return
         }
 
@@ -235,7 +263,7 @@ final class HookRouter {
         if payload.isSubAgent && session.isSubAgentInheritEnabled {
             session.stats.incrementAllow()
             emitFeed(.decision(badge: .autoApprove, reason: "Sub-agent: \(payload.agentType ?? "unknown")", pid: session.pid, at: timestamp))
-            sendResponse(Decision(verdict: .allow, reason: "Sub-agent inherited"), respond: respond)
+            sendResponse(Decision(verdict: .allow, reason: "Sub-agent inherited"), payload: payload, session: session, respond: respond)
             return
         }
 
@@ -255,7 +283,7 @@ final class HookRouter {
             emitFeed(.decision(badge: .block, reason: decision.reason, pid: session.pid, at: timestamp))
         }
 
-        sendResponse(decision, respond: respond)
+        sendResponse(decision, payload: payload, session: session, respond: respond)
     }
 
     // MARK: - PostToolUse
@@ -283,7 +311,26 @@ final class HookRouter {
 
     // MARK: - Helpers
 
-    private func sendResponse(_ decision: Decision, respond: ((Data) -> Void)?) {
+    private func sendResponse(
+        _ decision: Decision,
+        payload: PreToolUsePayload? = nil,
+        session: Session? = nil,
+        respond: ((Data) -> Void)?
+    ) {
+        // Capture-on-write: stamp lastPlanPath whenever an approved Write/Edit/MultiEdit
+        // lands on ~/.claude/plans/**/*.md. Decouples YOLO plan discovery from session
+        // labels and folder conventions — propose can write the plan anywhere.
+        if decision.verdict == .allow,
+           let payload = payload, let session = session,
+           ["Write", "Edit", "MultiEdit"].contains(payload.toolName),
+           let path = payload.filePath,
+           YoloMode.isPlanPath(path) {
+            DispatchQueue.main.async {
+                session.lastPlanPath = path
+            }
+            sessionManager.saveActiveSessions()
+        }
+
         // Diagnostic breadcrumb: every hook response that reaches the worker
         // should produce a `[hook] respond ...` line. If a `[socket] enter`
         // ever lacks a matching `[hook] respond` and `[socket] exit wrote=N`
