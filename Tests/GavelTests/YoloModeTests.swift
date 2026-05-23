@@ -180,4 +180,63 @@ final class YoloModeTests: XCTestCase {
         XCTAssertFalse(YoloMode.isPlanPath("\(home)/.claude/settings.json"))
         XCTAssertFalse(YoloMode.isPlanPath("/tmp/whatever.md"))
     }
+
+    // MARK: - recentPlans
+
+    func testRecentPlansListsOneLevelMarkdownNewestFirst() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("plans-enum-\(UUID().uuidString)", isDirectory: true)
+        let alpha = base.appendingPathComponent("alpha", isDirectory: true)
+        let beta = base.appendingPathComponent("beta", isDirectory: true)
+        let nested = alpha.appendingPathComponent("nested", isDirectory: true)
+        try fm.createDirectory(at: nested, withIntermediateDirectories: true)
+        try fm.createDirectory(at: beta, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: base) }
+
+        let older = alpha.appendingPathComponent("old-plan.md")
+        let newer = beta.appendingPathComponent("new-plan.md")
+        try "old".write(to: older, atomically: true, encoding: .utf8)
+        try "new".write(to: newer, atomically: true, encoding: .utf8)
+        try "x".write(to: alpha.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
+        try "x".write(to: nested.appendingPathComponent("buried.md"), atomically: true, encoding: .utf8)
+        try "x".write(to: base.appendingPathComponent("loose.md"), atomically: true, encoding: .utf8)
+        try fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1000)], ofItemAtPath: older.path)
+        try fm.setAttributes([.modificationDate: Date()], ofItemAtPath: newer.path)
+
+        let plans = YoloMode.recentPlans(in: base)
+        XCTAssertEqual(plans.map { $0.filename }, ["new-plan.md", "old-plan.md"], "newest-modified first, one level only")
+        XCTAssertEqual(plans.first?.folder, "beta")
+        XCTAssertFalse(plans.contains { $0.filename == "notes.txt" }, "non-.md excluded")
+        XCTAssertFalse(plans.contains { $0.filename == "buried.md" }, "deeper than one level excluded")
+        XCTAssertFalse(plans.contains { $0.filename == "loose.md" }, "flat plans/*.md excluded")
+    }
+
+    func testRecentPlansHonorsLimit() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("plans-limit-\(UUID().uuidString)", isDirectory: true)
+        let folder = base.appendingPathComponent("proj", isDirectory: true)
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: base) }
+        for i in 0..<5 {
+            try "p".write(to: folder.appendingPathComponent("plan-\(i).md"), atomically: true, encoding: .utf8)
+        }
+        XCTAssertEqual(YoloMode.recentPlans(in: base, limit: 3).count, 3)
+    }
+
+    func testRecentPlansEmptyWhenDirMissing() {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("does-not-exist-\(UUID().uuidString)", isDirectory: true)
+        XCTAssertTrue(YoloMode.recentPlans(in: missing).isEmpty)
+    }
+
+    func testEngageAfterManualArmFreezesPlanAndHaltsOnWrite() {
+        session.lastPlanPath = planPath
+        XCTAssertTrue(YoloMode.engage(session: session))
+        waitForMain()
+        XCTAssertEqual(session.yoloPlanPath, planPath, "manually-armed path is frozen identically to auto-detect")
+        XCTAssertEqual(
+            YoloMode.shouldHalt(session: session, payload: payload(tool: "Write", filePath: planPath)),
+            "plan modified by agent"
+        )
+    }
 }
