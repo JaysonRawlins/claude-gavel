@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.13.0...v1.14.0) (2026-05-23)
+
+
+### Features
+
+* **approval:** manually select YOLO plan when auto-detect misses ([#90](https://github.com/JaysonRawlins/claude-gavel/issues/90)) ([3baf4f8](https://github.com/JaysonRawlins/claude-gavel/commit/3baf4f81fd13821c1f0508970947e4876d986573))
+
 ## [1.13.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.12.0...v1.13.0) (2026-05-21)
 
 
