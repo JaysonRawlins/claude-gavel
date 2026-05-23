@@ -51,12 +51,12 @@ final class ResumeCommandTests: XCTestCase {
             sessionId: "abc-def-123",
             cwd: "/Users/jay/project"
         )
-        XCTAssertEqual(cmd, "cd '/Users/jay/project' && claude --name 12345 --resume abc-def-123")
+        XCTAssertEqual(cmd, "cd '/Users/jay/project' && claude --resume abc-def-123")
     }
 
     func testBuildWithoutCwdOmitsCdPrefix() {
         let cmd = ResumeCommand.build(pid: 42, sessionId: "sid-9", cwd: nil)
-        XCTAssertEqual(cmd, "claude --name 42 --resume sid-9")
+        XCTAssertEqual(cmd, "claude --resume sid-9")
     }
 
     func testBuildEscapesCwdSpaces() {
@@ -65,7 +65,7 @@ final class ResumeCommandTests: XCTestCase {
             sessionId: "s",
             cwd: "/Users/jay/My Projects"
         )
-        XCTAssertEqual(cmd, "cd '/Users/jay/My Projects' && claude --name 1 --resume s")
+        XCTAssertEqual(cmd, "cd '/Users/jay/My Projects' && claude --resume s")
     }
 
     func testBuildCodexAgentEmitsCodexResume() {
