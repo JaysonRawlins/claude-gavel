@@ -85,6 +85,53 @@ enum YoloMode {
         return planPathRegex.firstMatch(in: path, range: range) != nil
     }
 
+    /// A discoverable plan file under `~/.claude/plans/<folder>/<file>.md`.
+    struct PlanRef: Identifiable {
+        let path: String
+        let folder: String
+        let filename: String
+        let modifiedAt: Date
+        var id: String { path }
+    }
+
+    static func plansDirectory() -> URL {
+        URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent(".claude/plans", isDirectory: true)
+    }
+
+    /// One level deep, `.md` only, newest-modified first. Mirrors the
+    /// `plans/<folder>/<file>.md` shape `isPlanPath` enforces, so the manual
+    /// picker offers exactly the files capture-on-write would have stamped.
+    static func recentPlans(in baseDir: URL = plansDirectory(), limit: Int = 15) -> [PlanRef] {
+        let fm = FileManager.default
+        guard let folders = try? fm.contentsOfDirectory(
+            at: baseDir,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        var refs: [PlanRef] = []
+        for folder in folders {
+            guard (try? folder.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { continue }
+            let files = (try? fm.contentsOfDirectory(
+                at: folder,
+                includingPropertiesForKeys: [.contentModificationDateKey, .isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )) ?? []
+            for file in files where file.pathExtension == "md" {
+                let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .isDirectoryKey])
+                guard values?.isDirectory != true else { continue }
+                refs.append(PlanRef(
+                    path: file.path,
+                    folder: folder.lastPathComponent,
+                    filename: file.lastPathComponent,
+                    modifiedAt: values?.contentModificationDate ?? .distantPast
+                ))
+            }
+        }
+        return Array(refs.sorted { $0.modifiedAt > $1.modifiedAt }.prefix(limit))
+    }
+
     static func sha256(ofFileAt path: String) -> String? {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
             return nil

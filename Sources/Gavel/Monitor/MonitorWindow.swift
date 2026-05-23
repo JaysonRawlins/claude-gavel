@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The main monitor window showing the live feed, rules editor, regex tester, and cheat sheet.
 struct MonitorWindow: View {
@@ -428,38 +429,101 @@ private struct SessionRow: View {
 
     @ViewBuilder
     private var yoloControl: some View {
-        if session.isYoloActive {
-            Button(action: {
-                YoloMode.disengage(session: session, reason: "manual")
+        Group {
+            if session.isYoloActive {
+                disengageButton
+            } else {
+                HStack(spacing: 4) {
+                    planPickerMenu
+                    engageButton
+                }
+            }
+        }
+        .frame(width: 110, alignment: .trailing)
+    }
+
+    private var engageButton: some View {
+        Button("YOLO") {
+            if YoloMode.engage(session: session) {
                 viewModel.sessionManager.saveActiveSessions()
                 viewModel.noteInteraction()
-            }) {
-                HStack(spacing: 3) {
-                    Text("YOLO")
-                        .font(.caption.bold())
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.caption2)
-                }
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .tint(.red)
-            .frame(width: 76)
-            .help(yoloActiveHelp)
-        } else {
-            Button("YOLO") {
-                if YoloMode.engage(session: session) {
-                    viewModel.sessionManager.saveActiveSessions()
-                    viewModel.noteInteraction()
-                }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .tint(yoloDisabledReasonTint)
-            .frame(width: 76)
-            .disabled(session.lastPlanPath == nil)
-            .help(yoloIdleHelp)
         }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .tint(yoloDisabledReasonTint)
+        .frame(width: 76)
+        .disabled(session.lastPlanPath == nil)
+        .help(yoloIdleHelp)
+    }
+
+    private var disengageButton: some View {
+        Button(action: {
+            YoloMode.disengage(session: session, reason: "manual")
+            viewModel.sessionManager.saveActiveSessions()
+            viewModel.noteInteraction()
+        }) {
+            HStack(spacing: 3) {
+                Text("YOLO")
+                    .font(.caption.bold())
+                Image(systemName: "xmark.circle.fill")
+                    .font(.caption2)
+            }
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .tint(.red)
+        .frame(width: 76)
+        .help(yoloActiveHelp)
+    }
+
+    private var planPickerMenu: some View {
+        let plans = YoloMode.recentPlans()
+        return Menu {
+            if plans.isEmpty {
+                Text("No plans found")
+            } else {
+                ForEach(plans) { plan in
+                    Button {
+                        armPlan(plan.path)
+                    } label: {
+                        if plan.path == session.lastPlanPath {
+                            Label("\(plan.folder) · \(plan.filename)", systemImage: "checkmark")
+                        } else {
+                            Text("\(plan.folder) · \(plan.filename)")
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button("Browse…") { browseForPlan() }
+        } label: {
+            Image(systemName: "doc.text.magnifyingglass")
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .controlSize(.small)
+        .frame(width: 30)
+        .help("Pick the plan that gates YOLO for this session (overrides auto-detect).")
+    }
+
+    private func armPlan(_ path: String) {
+        session.lastPlanPath = path
+        viewModel.sessionManager.saveActiveSessions()
+        viewModel.noteInteraction()
+    }
+
+    private func browseForPlan() {
+        let panel = NSOpenPanel()
+        if let markdown = UTType(filenameExtension: "md") {
+            panel.allowedContentTypes = [markdown]
+        }
+        panel.allowsMultipleSelection = false
+        panel.title = "Select Plan for YOLO"
+        panel.message = "Pick a plan markdown file to gate this session's YOLO mode."
+        panel.directoryURL = YoloMode.plansDirectory()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        armPlan(url.path)
     }
 
     private var yoloActiveHelp: String {
@@ -475,7 +539,7 @@ private struct SessionRow: View {
             let name = (plan as NSString).lastPathComponent
             return "Engage YOLO — tracking \(name). Bypasses user rules; halts on plan changes or protected-path access."
         }
-        return "No plan captured yet — run /propose first."
+        return "No plan armed — pick one from the menu, or run /propose."
     }
 
     private var yoloDisabledReasonTint: Color {
