@@ -155,12 +155,12 @@ final class HookRouter {
         if session.isYoloActive, let haltReason = YoloMode.shouldHalt(session: session, payload: payload) {
             YoloMode.disengage(session: session, reason: haltReason)
             sessionManager.saveActiveSessions()
-            emitFeed(.system("YOLO halted: \(haltReason)", pid: session.pid, at: timestamp))
-            emitFeed(.decision(badge: .block, reason: "YOLO halted: \(haltReason)", pid: session.pid, at: timestamp))
+            emitFeed(.system("Plan dropped: \(haltReason)", pid: session.pid, at: timestamp))
+            emitFeed(.decision(badge: .block, reason: "Plan dropped: \(haltReason)", pid: session.pid, at: timestamp))
             let decision = approvalCoordinator.requestApproval(
                 payload: payload, session: session, timestamp: timestamp,
                 forceDialog: true,
-                triggerReason: "YOLO halted: \(haltReason)",
+                triggerReason: "Plan dropped: \(haltReason)",
                 triggeringRuleId: nil
             )
             switch decision.verdict {
