@@ -67,6 +67,16 @@ final class Session: ObservableObject, Identifiable {
         yoloLock.unlock()
     }
 
+    private var _overlayRules: [PlanPolicyRule] = []
+
+    /// Plan-declared allow/deny rules, layered while a plan is engaged. Guarded by
+    /// `yoloLock` because it's set on engage (main) and read by the socket worker
+    /// on every PreToolUse. Empty when no plan is engaged.
+    var overlayRules: [PlanPolicyRule] {
+        get { yoloLock.lock(); defer { yoloLock.unlock() }; return _overlayRules }
+        set { yoloLock.lock(); _overlayRules = newValue; yoloLock.unlock() }
+    }
+
     // Worker-mutable state. NOT @Published on purpose — both are touched on
     // every PreToolUse hook from background threads, and `@Published`
     // mutations from non-main contend with SwiftUI's main-thread publish
@@ -121,6 +131,7 @@ final class Session: ObservableObject, Identifiable {
         sessionRules.removeAll()
         suppressedRuleIds.removeAll()
         setYoloActive(false)
+        overlayRules = []
         yoloEngagedAt = nil
         yoloPlanPath = nil
         yoloPlanHash = nil

@@ -2,33 +2,33 @@ import Foundation
 
 /// Core approval logic. Evaluates a PreToolUse event against a strict priority chain:
 ///
-/// 1. Hard-blocked dangerous patterns (always block, not overridable)
-/// 2. Persistent DENY rules from RuleStore (block even under auto-approve)
-/// 3. Session pause state
-/// 4. User PROMPT rules (force dialog even under auto-approve)
+/// 1.  Hard-blocked dangerous patterns (always block, not overridable)
+/// 2.  Persistent DENY rules from RuleStore (block even under auto-approve)
+/// 2.5 Plan overlay prohibitions — plan-declared deny/block (force dialog / hard block)
+/// 3.  Session pause state
+/// 4.  User PROMPT rules (force dialog even under auto-approve)
 /// 4.5 Non-overridable built-in checkpoints — e.g. git commit (force dialog, beats allow rules)
-/// 5. Sensitive paths — gavel config, hooks, shell config (force dialog, not overridable)
-/// 6. Persistent ALLOW rules from RuleStore
-/// 7. Overridable built-in PROMPT rules (seeded MCP exfil / infra-apply defaults, overridable by allow rules)
-/// 8. Timed auto-approve
-/// 9. Default: pass through to interactive approval
+/// 5.  Sensitive paths — gavel config, hooks, shell config (force dialog, not overridable)
+/// 6a. Plan overlay authorizations — plan pre-approved this command (suppresses overridable prompts)
+/// 6b. Persistent ALLOW rules from RuleStore
+/// 7.  Overridable built-in PROMPT rules (seeded MCP exfil / infra-apply defaults, overridable)
+/// 8.  Timed auto-approve
+/// 9.  Default: pass through to interactive approval
+///
+/// There is no "bypass everything" mode: engaging a plan layers an allow/deny
+/// overlay (stages 2.5 / 6a) and turns on auto-approve for the inner loop, but
+/// standing checkpoints, sensitive paths, and hard blocks always apply.
 ///
 /// Key invariants:
 /// - Deny rules ALWAYS win over auto-approve.
+/// - Plan overlay prohibitions beat everything except hard blocks and persistent deny.
 /// - Sensitive paths ALWAYS force a dialog — even with a broad allow rule like `Read: *`.
-/// - Overridable built-in prompt rules are overridable by user allow rules (Stage 6 beats Stage 7).
+/// - Overridable built-in prompts are overridable by overlay/user allow (Stage 6 beats Stage 7).
 /// - User prompt rules and non-overridable checkpoints are NOT overridable by allow rules
 ///   (Stage 4 / 4.5 beat Stage 6).
 final class ApprovalEngine {
     let patternMatcher: PatternMatcher
     let ruleStore: RuleStore
-
-    /// Tools that schedule execution outside the live session. Even under YOLO
-    /// these still force a dialog — the agent must not silently plant a job that
-    /// fires while the user isn't watching. Other built-in PROMPT rules (e.g.
-    /// the script-eval exfil defense) ARE bypassed under YOLO; the plan + the
-    /// stage-1 hard-blocks + sensitive-path halt are the safety net.
-    private static let schedulerTools: Set<String> = ["CronCreate", "ScheduleWakeup", "CronDelete"]
 
     init(patternMatcher: PatternMatcher = PatternMatcher(), ruleStore: RuleStore = RuleStore()) {
         self.patternMatcher = patternMatcher
@@ -36,23 +36,7 @@ final class ApprovalEngine {
     }
 
     func evaluate(payload: PreToolUsePayload, session: Session) -> Decision {
-        // YOLO: short-circuit the user-rule chain. Pause wins (falls through).
-        // Kept protections: hard-block (deny), sensitive-path (halt + dialog),
-        // built-in PROMPT rules (dialog, no halt — includes scheduler tools).
-        if session.isYoloActive && !session.isPaused {
-            if let reason = patternMatcher.matchDangerous(payload: payload) {
-                return Decision(verdict: .block, reason: reason)
-            }
-            if let reason = patternMatcher.matchSensitivePath(payload: payload) {
-                YoloMode.disengage(session: session, reason: "gavel-protected path: \(reason)")
-                return Decision(verdict: .block, reason: reason, askUser: true)
-            }
-            if Self.schedulerTools.contains(payload.toolName),
-               let decision = ruleStore.evaluateBuiltInPrompt(payload: payload) {
-                return decision
-            }
-            return Decision(verdict: .allow, reason: "YOLO")
-        }
+        let overlay = session.overlayRules
 
         // 1. Hard-coded dangerous patterns (always block, no override)
         if let reason = patternMatcher.matchDangerous(payload: payload) {
@@ -61,6 +45,11 @@ final class ApprovalEngine {
 
         // 2. Persistent DENY rules — block even under auto-approve
         if let decision = ruleStore.evaluateDeny(payload: payload) {
+            return decision
+        }
+
+        // 2.5 Plan overlay prohibitions — plan-declared deny/block (force dialog / hard block)
+        if let decision = overlayProhibition(overlay, payload) {
             return decision
         }
 
@@ -75,7 +64,7 @@ final class ApprovalEngine {
         }
 
         // 4.5 Non-overridable built-in checkpoints (e.g. git commit) — force dialog,
-        //     checked before allow rules so a broad allow rule can't silence them.
+        //     checked before allow/overlay-allow so nothing can silence them.
         if let decision = ruleStore.evaluateBuiltInPromptNonOverridable(payload: payload) {
             return decision
         }
@@ -86,12 +75,18 @@ final class ApprovalEngine {
             return Decision(verdict: .block, reason: reason, askUser: true)
         }
 
-        // 6. Persistent ALLOW rules
+        // 6a. Plan overlay authorizations — the plan pre-approved this command, so it
+        //     suppresses overridable built-in prompts (e.g. infra-apply) below.
+        if let decision = overlayAuthorization(overlay, payload) {
+            return decision
+        }
+
+        // 6b. Persistent ALLOW rules
         if let decision = ruleStore.evaluateAllow(payload: payload) {
             return decision
         }
 
-        // 7. Built-in PROMPT rules (builtIn=true) — overridable by allow rules above
+        // 7. Overridable built-in PROMPT rules — overridable by allow rules above
         if let decision = ruleStore.evaluateBuiltInPrompt(payload: payload) {
             return decision
         }
@@ -103,5 +98,23 @@ final class ApprovalEngine {
 
         // 9. Default: pass through (HookRouter decides: auto-approve, session rules, or dialog)
         return Decision(verdict: .allow, reason: nil)
+    }
+
+    private func overlayProhibition(_ overlay: [PlanPolicyRule], _ payload: PreToolUsePayload) -> Decision? {
+        for rule in overlay where rule.verdict != .allow {
+            guard rule.matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) else { continue }
+            let detail = rule.explanation.map { " — \($0)" } ?? ""
+            let reason = "Plan prohibits \(rule.toolName): \(rule.pattern)\(detail)"
+            return Decision(verdict: .block, reason: reason, askUser: rule.verdict == .prompt)
+        }
+        return nil
+    }
+
+    private func overlayAuthorization(_ overlay: [PlanPolicyRule], _ payload: PreToolUsePayload) -> Decision? {
+        for rule in overlay where rule.verdict == .allow {
+            guard rule.matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) else { continue }
+            return Decision(verdict: .allow, reason: "Plan authorizes \(rule.toolName): \(rule.pattern)")
+        }
+        return nil
     }
 }
