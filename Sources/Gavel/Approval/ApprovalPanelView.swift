@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// All state for the note-to-Claude field, hoisted into an ObservableObject so
@@ -67,6 +68,8 @@ struct ApprovalPanelView: View {
     @State private var editedCommand: String = ""
     @State private var editedFields: [String: String] = [:]
     @State private var isRegexMode: Bool = false
+    /// Minimized to a compact bar so the user can read the code/diff behind it.
+    @State private var isCollapsed: Bool = false
 
     /// All note-field state lives here. See `NoteFieldState` for the
     /// architectural rationale (re-render isolation + bug fix).
@@ -80,31 +83,111 @@ struct ApprovalPanelView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        Group {
             if let approval = sessionPanel.currentApproval {
-                toolHeader(approval)
-                if let reason = approval.triggerReason, !reason.isEmpty {
-                    triggerBanner(reason)
+                if isCollapsed {
+                    collapsedBar(approval)
+                } else {
+                    fullPanel(approval)
                 }
-                Divider()
-                toolDetails(approval)
-                Divider()
-                noteToClaudeField()
-                Divider()
-                actionBar(approval)
             } else {
                 Text("Waiting for tool calls...")
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .frame(minWidth: 560, minHeight: 300)
+        .frame(minWidth: isCollapsed ? 320 : 560, minHeight: isCollapsed ? 44 : 300)
         .onChange(of: sessionPanel.currentApproval?.timestamp) { _ in
+            setCollapsed(false)
             resetFields()
         }
         .onAppear {
             resetFields()
         }
+    }
+
+    @ViewBuilder
+    private func fullPanel(_ approval: ApprovalCoordinator.PendingApproval) -> some View {
+        VStack(spacing: 0) {
+            toolHeader(approval)
+            if let reason = approval.triggerReason, !reason.isEmpty {
+                triggerBanner(reason)
+            }
+            Divider()
+            toolDetails(approval)
+            Divider()
+            noteToClaudeField()
+            Divider()
+            actionBar(approval)
+        }
+    }
+
+    /// Compact one-line bar shown when minimized. Anchored top-right of the
+    /// screen so the code/diff behind the panel is readable. Click expand to act.
+    @ViewBuilder
+    private func collapsedBar(_ approval: ApprovalCoordinator.PendingApproval) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: iconForTool(approval.payload.toolName))
+                .foregroundColor(colorForTool(approval.payload.toolName))
+
+            if !approval.session.label.isEmpty {
+                Text(approval.session.label)
+                    .font(.headline)
+                    .lineLimit(1)
+            }
+
+            Text(approval.payload.toolName)
+                .font(.callout.bold())
+                .foregroundColor(colorForTool(approval.payload.toolName))
+
+            Text(approval.payload.command ?? approval.payload.filePath ?? "")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Spacer(minLength: 6)
+
+            if sessionPanel.queueCount > 0 {
+                Text("+\(sessionPanel.queueCount)")
+                    .font(.caption)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.orange.opacity(0.2))
+                    .cornerRadius(4)
+            }
+
+            Button(action: { setCollapsed(false) }) {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+            }
+            .buttonStyle(.borderless)
+            .help("Expand to review and decide")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    /// Minimize/restore the panel. Collapsing shrinks the NSPanel to a corner bar
+    /// and stashes the full frame; expanding restores it.
+    private func setCollapsed(_ collapsed: Bool) {
+        let wasCollapsed = isCollapsed
+        isCollapsed = collapsed
+        guard let panel = sessionPanel.panel else { return }
+        if collapsed {
+            sessionPanel.savedFrame = panel.frame
+            panel.setFrame(collapsedRect(for: panel), display: true, animate: true)
+        } else if wasCollapsed, let saved = sessionPanel.savedFrame {
+            panel.setFrame(saved, display: true, animate: true)
+        }
+    }
+
+    private func collapsedRect(for panel: NSPanel) -> NSRect {
+        let width: CGFloat = 480
+        let height: CGFloat = 52
+        let area = panel.screen?.visibleFrame ?? panel.frame
+        return NSRect(x: area.maxX - width - 16, y: area.maxY - height - 16, width: width, height: height)
     }
 
     private func resetFields() {
@@ -143,6 +226,17 @@ struct ApprovalPanelView: View {
                 .font(.title2.bold())
                 .foregroundColor(colorForTool(approval.payload.toolName))
 
+            if !approval.session.label.isEmpty {
+                Text(approval.session.label)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.15))
+                    .cornerRadius(6)
+                    .help("Session label")
+            }
+
             Spacer()
 
             if sessionPanel.queueCount > 0 {
@@ -157,6 +251,12 @@ struct ApprovalPanelView: View {
             Text(verbatim: "PID \(approval.session.pid)")
                 .font(.caption.monospaced())
                 .foregroundColor(.secondary)
+
+            Button(action: { setCollapsed(true) }) {
+                Image(systemName: "arrow.down.right.and.arrow.up.left")
+            }
+            .buttonStyle(.borderless)
+            .help("Minimize to a bar so you can read the code behind it")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

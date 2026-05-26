@@ -15,7 +15,7 @@ final class RuleStore: ObservableObject {
     private let configPath: String
 
     /// Current seed version — bump when adding new default rules.
-    private static let seedVersion = 7
+    private static let seedVersion = 8
 
     init(configPath: String? = nil) {
         self.configPath = configPath ?? Self.defaultConfigPath
@@ -61,11 +61,23 @@ final class RuleStore: ObservableObject {
         return nil
     }
 
-    /// Built-in prompt rules — lower priority, checked after allow rules so users can override.
+    /// Overridable built-in prompt rules (MCP exfil defaults, infra-apply, scheduler) —
+    /// lower priority, checked AFTER allow rules so a user allow rule or plan overlay can override.
     func evaluateBuiltInPrompt(payload: PreToolUsePayload) -> Decision? {
-        for i in rules.indices where rules[i].verdict == .prompt && rules[i].builtIn && !rules[i].isDisabled {
+        for i in rules.indices where rules[i].verdict == .prompt && rules[i].builtIn && rules[i].overridable && !rules[i].isDisabled {
             if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
                 return Decision(verdict: .block, reason: "Default rule: \(rules[i].name)", askUser: true, triggeringRuleId: rules[i].id)
+            }
+        }
+        return nil
+    }
+
+    /// Non-overridable built-in prompt rules (hard checkpoints like git commit) —
+    /// checked BEFORE allow rules so a broad allow rule can't silence the checkpoint.
+    func evaluateBuiltInPromptNonOverridable(payload: PreToolUsePayload) -> Decision? {
+        for i in rules.indices where rules[i].verdict == .prompt && rules[i].builtIn && !rules[i].overridable && !rules[i].isDisabled {
+            if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
+                return Decision(verdict: .block, reason: "Checkpoint: \(rules[i].name)", askUser: true, triggeringRuleId: rules[i].id)
             }
         }
         return nil
@@ -239,6 +251,27 @@ final class RuleStore: ObservableObject {
             builtIn: true
         ),
 
+        // ── Commit checkpoint (non-overridable: a broad allow rule can't silence it) ──
+        PersistentRule(
+            toolName: "Bash",
+            pattern: "\\bgit\\s+commit\\b",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "Commit checkpoint — review staged changes before recording history",
+            builtIn: true,
+            overridable: false
+        ),
+
+        // ── Infrastructure apply/destroy: prompt by default, plan overlay can pre-authorize ──
+        PersistentRule(
+            toolName: "Bash",
+            pattern: "\\b(cdk\\s+(deploy|destroy)|terraform\\s+(apply|destroy)|sam\\s+deploy|pulumi\\s+up|kubectl\\s+(apply|delete)|aws\\s+cloudformation\\s+deploy)\\b",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "Infrastructure apply/destroy — review the changeset/plan before mutating real resources",
+            builtIn: true
+        ),
+
         // ── Persistence-creating scheduler tools ──
         // These plant future execution that fires while the user may not be watching.
         // Prompt even under auto-approve so the user sees and confirms each one.
@@ -353,6 +386,10 @@ struct PersistentRule: Codable, Identifiable {
     let explanation: String?
     /// True for seeded default rules (MCP exfil patterns). User rules are always false.
     let builtIn: Bool
+    /// When true (default), a user allow rule or plan-policy overlay can override this
+    /// built-in prompt. False marks a hard checkpoint that allow rules can't silence
+    /// (e.g. git commit). Only consulted for builtIn prompt rules.
+    let overridable: Bool
     /// Skip this rule during evaluation when true. Persisted so the disable
     /// survives daemon restarts (so a forgotten "temporarily off" rule still
     /// surfaces in the UI rather than silently re-engaging on reboot). Toggle
@@ -371,7 +408,7 @@ struct PersistentRule: Codable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, toolName, pattern, isRegex, verdict, createdAt, explanation, builtIn, isDisabled
+        case id, name, toolName, pattern, isRegex, verdict, createdAt, explanation, builtIn, overridable, isDisabled
     }
 
     /// Backward-compatible decoding — isRegex, explanation, builtIn, isDisabled
@@ -387,6 +424,7 @@ struct PersistentRule: Codable, Identifiable {
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         explanation = try c.decodeIfPresent(String.self, forKey: .explanation)
         builtIn = try c.decodeIfPresent(Bool.self, forKey: .builtIn) ?? false
+        overridable = try c.decodeIfPresent(Bool.self, forKey: .overridable) ?? true
         isDisabled = try c.decodeIfPresent(Bool.self, forKey: .isDisabled) ?? false
     }
 
@@ -397,6 +435,7 @@ struct PersistentRule: Codable, Identifiable {
         verdict: DecisionVerdict,
         explanation: String? = nil,
         builtIn: Bool = false,
+        overridable: Bool = true,
         isDisabled: Bool = false
     ) {
         self.id = UUID()
@@ -408,6 +447,7 @@ struct PersistentRule: Codable, Identifiable {
         self.name = "\(toolName): \(isRegex ? "/" : "")\(pattern)\(isRegex ? "/" : "")"
         self.explanation = explanation
         self.builtIn = builtIn
+        self.overridable = overridable
         self.isDisabled = isDisabled
         self._compiledRegex = Self.compilePattern(pattern, isRegex: isRegex)
     }
@@ -423,6 +463,7 @@ struct PersistentRule: Codable, Identifiable {
         self.name = "\(old.toolName): \(isRegex ? "/" : "")\(pattern)\(isRegex ? "/" : "")"
         self.explanation = explanation
         self.builtIn = old.builtIn
+        self.overridable = old.overridable
         self.isDisabled = old.isDisabled
         self._compiledRegex = Self.compilePattern(pattern, isRegex: isRegex)
     }

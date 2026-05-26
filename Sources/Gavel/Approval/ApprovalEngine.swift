@@ -6,17 +6,19 @@ import Foundation
 /// 2. Persistent DENY rules from RuleStore (block even under auto-approve)
 /// 3. Session pause state
 /// 4. User PROMPT rules (force dialog even under auto-approve)
+/// 4.5 Non-overridable built-in checkpoints — e.g. git commit (force dialog, beats allow rules)
 /// 5. Sensitive paths — gavel config, hooks, shell config (force dialog, not overridable)
 /// 6. Persistent ALLOW rules from RuleStore
-/// 7. Built-in PROMPT rules (seeded MCP exfil defaults, overridable by allow rules)
+/// 7. Overridable built-in PROMPT rules (seeded MCP exfil / infra-apply defaults, overridable by allow rules)
 /// 8. Timed auto-approve
 /// 9. Default: pass through to interactive approval
 ///
 /// Key invariants:
 /// - Deny rules ALWAYS win over auto-approve.
 /// - Sensitive paths ALWAYS force a dialog — even with a broad allow rule like `Read: *`.
-/// - Built-in prompt rules are overridable by user allow rules (Stage 6 beats Stage 7).
-/// - User prompt rules are NOT overridable by allow rules (Stage 4 beats Stage 6).
+/// - Overridable built-in prompt rules are overridable by user allow rules (Stage 6 beats Stage 7).
+/// - User prompt rules and non-overridable checkpoints are NOT overridable by allow rules
+///   (Stage 4 / 4.5 beat Stage 6).
 final class ApprovalEngine {
     let patternMatcher: PatternMatcher
     let ruleStore: RuleStore
@@ -69,6 +71,12 @@ final class ApprovalEngine {
 
         // 4. User PROMPT rules (builtIn=false) — force dialog, beats allow rules
         if let decision = ruleStore.evaluateUserPrompt(payload: payload) {
+            return decision
+        }
+
+        // 4.5 Non-overridable built-in checkpoints (e.g. git commit) — force dialog,
+        //     checked before allow rules so a broad allow rule can't silence them.
+        if let decision = ruleStore.evaluateBuiltInPromptNonOverridable(payload: payload) {
             return decision
         }
 

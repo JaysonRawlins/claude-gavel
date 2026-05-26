@@ -12,7 +12,6 @@ final class ApprovalCoordinator: ObservableObject {
         case allow(context: String?, updatedCommand: String?, updatedInput: [String: AnyCodable]?)
         case deny(context: String?)
         case allowPatternForSession(pattern: String, context: String?, updatedCommand: String?, updatedInput: [String: AnyCodable]?)
-        /// Suppress firing prompt rule for session — covers the rule's full regex scope.
         case suppressRuleForSession(ruleId: UUID, context: String?, updatedCommand: String?, updatedInput: [String: AnyCodable]?)
         case denyPatternForSession(pattern: String, explanation: String?)
         case alwaysDenyPattern(pattern: String, isRegex: Bool, explanation: String?)
@@ -47,6 +46,8 @@ final class ApprovalCoordinator: ObservableObject {
         @Published var queueCount: Int = 0
         var pendingQueue: [PendingApproval] = []
         var panel: NSPanel?
+        /// Full-size frame captured when the panel is minimized, restored on expand.
+        var savedFrame: NSRect?
 
         init(pid: Int) { self.pid = pid }
     }
