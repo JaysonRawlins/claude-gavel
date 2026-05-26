@@ -4,28 +4,28 @@ import Foundation
 ///
 /// 1.  Hard-blocked dangerous patterns (always block, not overridable)
 /// 2.  Persistent DENY rules from RuleStore (block even under auto-approve)
-/// 2.5 Plan overlay prohibitions — plan-declared deny/block (force dialog / hard block)
-/// 3.  Session pause state
-/// 4.  User PROMPT rules (force dialog even under auto-approve)
-/// 4.5 Non-overridable built-in checkpoints — e.g. git commit (force dialog, beats allow rules)
-/// 5.  Sensitive paths — gavel config, hooks, shell config (force dialog, not overridable)
-/// 6a. Plan overlay authorizations — plan pre-approved this command (suppresses overridable prompts)
-/// 6b. Persistent ALLOW rules from RuleStore
-/// 7.  Overridable built-in PROMPT rules (seeded MCP exfil / infra-apply defaults, overridable)
-/// 8.  Timed auto-approve
-/// 9.  Default: pass through to interactive approval
+/// 3.  Plan overlay prohibitions — plan-declared deny/block (force dialog / hard block)
+/// 4.  Session pause state
+/// 5.  Non-overridable built-in checkpoints — e.g. git commit (force dialog, beats every allow)
+/// 6.  Sensitive paths — gavel config, hooks, shell config (force dialog, not overridable)
+/// 7.  Plan overlay authorizations — plan pre-approved this command (beats user prompts + below)
+/// 8.  User PROMPT rules (force dialog even under auto-approve)
+/// 9.  Persistent ALLOW rules from RuleStore
+/// 10. Overridable built-in PROMPT rules (seeded MCP exfil / infra-apply defaults)
+/// 11. Timed auto-approve
+/// 12. Default: pass through to interactive approval
 ///
 /// There is no "bypass everything" mode: engaging a plan layers an allow/deny
-/// overlay (stages 2.5 / 6a) and turns on auto-approve for the inner loop, but
+/// overlay (stages 3 / 7) and turns on auto-approve for the inner loop, but
 /// standing checkpoints, sensitive paths, and hard blocks always apply.
 ///
 /// Key invariants:
 /// - Deny rules ALWAYS win over auto-approve.
 /// - Plan overlay prohibitions beat everything except hard blocks and persistent deny.
-/// - Sensitive paths ALWAYS force a dialog — even with a broad allow rule like `Read: *`.
-/// - Overridable built-in prompts are overridable by overlay/user allow (Stage 6 beats Stage 7).
-/// - User prompt rules and non-overridable checkpoints are NOT overridable by allow rules
-///   (Stage 4 / 4.5 beat Stage 6).
+/// - The commit checkpoint + sensitive paths beat EVERY allow, including the overlay.
+/// - A plan overlay allow beats user PROMPT rules and below — a narrow, reviewed,
+///   hash-locked authorization overrides a broad standing prompt for that command only.
+/// - User prompt rules still beat persistent allow rules (Stage 8 beats Stage 9).
 final class ApprovalEngine {
     let patternMatcher: PatternMatcher
     let ruleStore: RuleStore
@@ -58,45 +58,48 @@ final class ApprovalEngine {
             return Decision(verdict: .block, reason: "Session paused via Gavel")
         }
 
-        // 4. User PROMPT rules (builtIn=false) — force dialog, beats allow rules
-        if let decision = ruleStore.evaluateUserPrompt(payload: payload) {
-            return decision
-        }
-
-        // 4.5 Non-overridable built-in checkpoints (e.g. git commit) — force dialog,
-        //     checked before allow/overlay-allow so nothing can silence them.
+        // 4. Non-overridable built-in checkpoints (e.g. git commit) — force dialog,
+        //    checked before any allow (overlay or otherwise) so nothing can silence them.
         if let decision = ruleStore.evaluateBuiltInPromptNonOverridable(payload: payload) {
             return decision
         }
 
         // 5. Sensitive paths — gavel config, hooks, shell config (force dialog)
-        //    Checked BEFORE allow rules so broad rules like `Read: *` can't bypass self-protection.
+        //    Checked before any allow so broad rules like `Read: *` can't bypass self-protection.
         if let reason = patternMatcher.matchSensitivePath(payload: payload) {
             return Decision(verdict: .block, reason: reason, askUser: true)
         }
 
-        // 6a. Plan overlay authorizations — the plan pre-approved this command, so it
-        //     suppresses overridable built-in prompts (e.g. infra-apply) below.
+        // 6. Plan overlay authorizations — the plan pre-approved this command. Placed
+        //    above user PROMPT rules so a narrow, reviewed, hash-locked plan allow can
+        //    override a broad standing prompt (e.g. authorize `cdk deploy GreenfieldStack`
+        //    despite a general `cdk deploy` prompt rule). Still below deny / checkpoint /
+        //    sensitive paths, so it never overrides a hard rule.
         if let decision = overlayAuthorization(overlay, payload) {
             return decision
         }
 
-        // 6b. Persistent ALLOW rules
+        // 7. User PROMPT rules (builtIn=false) — force dialog, beats allow rules below
+        if let decision = ruleStore.evaluateUserPrompt(payload: payload) {
+            return decision
+        }
+
+        // 8. Persistent ALLOW rules
         if let decision = ruleStore.evaluateAllow(payload: payload) {
             return decision
         }
 
-        // 7. Overridable built-in PROMPT rules — overridable by allow rules above
+        // 9. Overridable built-in PROMPT rules — overridable by allow rules above
         if let decision = ruleStore.evaluateBuiltInPrompt(payload: payload) {
             return decision
         }
 
-        // 8. Timed auto-approve
+        // 10. Timed auto-approve
         if session.isAutoApproveActive {
             return Decision(verdict: .allow, reason: "AUTO-APPROVED (timed)")
         }
 
-        // 9. Default: pass through (HookRouter decides: auto-approve, session rules, or dialog)
+        // 11. Default: pass through (HookRouter decides: auto-approve, session rules, or dialog)
         return Decision(verdict: .allow, reason: nil)
     }
 

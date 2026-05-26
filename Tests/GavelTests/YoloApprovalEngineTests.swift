@@ -127,6 +127,20 @@ final class YoloApprovalEngineTests: XCTestCase {
         XCTAssertTrue(decision.reason?.contains("Plan authorizes") ?? false)
     }
 
+    func testOverlayAllowOverridesBroadUserPromptRule() {
+        // Real-world case: a standing user PROMPT rule on `cdk deploy`, and a plan that
+        // authorizes a specific stack. The narrow, reviewed overlay allow must win.
+        ruleStore.addRule(PersistentRule(toolName: "Bash", pattern: "cdk deploy*", verdict: .prompt, explanation: "user prompt"))
+        engageWithPolicy(["allow Bash: cdk deploy GreenfieldStack*"])
+
+        let authorized = engine.evaluate(payload: payload(command: "cdk deploy GreenfieldStack-Api"), session: session)
+        XCTAssertEqual(authorized.verdict, .allow, "plan allow overrides the broad user prompt for the authorized command")
+
+        let other = engine.evaluate(payload: payload(command: "cdk deploy OtherStack"), session: session)
+        XCTAssertEqual(other.verdict, .block, "a deploy the plan didn't authorize still hits the user prompt rule")
+        XCTAssertTrue(other.askUser)
+    }
+
     func testInfraPromptsWhenNotInOverlay() {
         let decision = engine.evaluate(payload: payload(command: "cdk deploy SomeOtherStack"), session: session)
         XCTAssertEqual(decision.verdict, .block, "infra apply not authorized by the plan still prompts")
