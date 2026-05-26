@@ -42,11 +42,11 @@ final class NoteFieldState: ObservableObject {
         return text
     }
 
-    func reset(seededText: String) {
+    func reset(seededText: String, defaultSend: Bool = false) {
         text = seededText
         seeded = seededText
         hasBeenEdited = false
-        sendToClaude = false
+        sendToClaude = defaultSend
     }
 
     /// Called from the field's `onChange`. Promotes the first text mutation
@@ -208,7 +208,8 @@ struct ApprovalPanelView: View {
             } else {
                 seeded = "User approved this via Gavel"
             }
-            noteState.reset(seededText: seeded)
+            let autoOn = a.session.isAutoApproveEnabled || a.session.isAutoApproveActive
+            noteState.reset(seededText: seeded, defaultSend: autoOn)
             isRegexMode = false
         }
     }
@@ -864,7 +865,7 @@ private struct NoteField: View {
                 HStack(spacing: 6) {
                     Image(systemName: state.sendToClaude ? "checkmark.square.fill" : "square")
                         .foregroundColor(state.sendToClaude ? .accentColor : .secondary)
-                    Text("Send note to Claude (off by default — used for testing / explicit context)")
+                    Text("Send note to Claude (on by default under auto-approve)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

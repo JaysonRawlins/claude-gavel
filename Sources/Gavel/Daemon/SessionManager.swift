@@ -349,6 +349,9 @@ final class SessionManager: ObservableObject {
         session.yoloPlanPath = path
         session.yoloPlanHash = originalHash
         session.yoloDisabledReason = snap.yoloDisabledReason
+        if let text = try? String(contentsOfFile: path, encoding: .utf8) {
+            session.overlayRules = PlanPolicyParser.parse(text)
+        }
         session.setYoloActive(true)
     }
 

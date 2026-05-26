@@ -36,6 +36,8 @@ enum YoloMode {
         let (ok, _) = canEngage(session: session)
         guard ok, let path = session.lastPlanPath else { return false }
         let hash = sha256(ofFileAt: path)
+        let overlay = (try? String(contentsOfFile: path, encoding: .utf8)).map(PlanPolicyParser.parse) ?? []
+        session.overlayRules = overlay
         session.setYoloActive(true)
         DispatchQueue.main.async {
             session.yoloEngagedAt = Date()
@@ -43,6 +45,7 @@ enum YoloMode {
             session.yoloPlanHash = hash
             session.yoloDisabledReason = nil
             session.isSubAgentInheritEnabled = true
+            session.isAutoApproveEnabled = true
         }
         return true
     }
@@ -70,13 +73,15 @@ enum YoloMode {
     /// Caller is responsible for calling `SessionManager.saveActiveSessions()` after.
     static func disengage(session: Session, reason: String) {
         session.setYoloActive(false)
+        session.overlayRules = []
         DispatchQueue.main.async {
             session.yoloEngagedAt = nil
             session.yoloPlanPath = nil
             session.yoloPlanHash = nil
             session.yoloDisabledReason = reason
+            session.isAutoApproveEnabled = false
         }
-        GavelNotifications.notify(title: "Gavel — YOLO halted", body: reason)
+        GavelNotifications.notify(title: "Gavel — plan policy dropped", body: reason)
     }
 
     static func isPlanPath(_ path: String) -> Bool {

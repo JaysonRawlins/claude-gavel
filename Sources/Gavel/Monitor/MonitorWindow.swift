@@ -443,7 +443,7 @@ private struct SessionRow: View {
     }
 
     private var engageButton: some View {
-        Button("YOLO") {
+        Button("Plan") {
             if YoloMode.engage(session: session) {
                 viewModel.sessionManager.saveActiveSessions()
                 viewModel.noteInteraction()
@@ -464,7 +464,7 @@ private struct SessionRow: View {
             viewModel.noteInteraction()
         }) {
             HStack(spacing: 3) {
-                Text("YOLO")
+                Text("Plan")
                     .font(.caption.bold())
                 Image(systemName: "xmark.circle.fill")
                     .font(.caption2)
@@ -504,7 +504,7 @@ private struct SessionRow: View {
         .menuIndicator(.hidden)
         .controlSize(.small)
         .frame(width: 30)
-        .help("Pick the plan that gates YOLO for this session (overrides auto-detect).")
+        .help("Pick the plan to engage for this session (overrides auto-detect).")
     }
 
     private func armPlan(_ path: String) {
@@ -519,8 +519,8 @@ private struct SessionRow: View {
             panel.allowedContentTypes = [markdown]
         }
         panel.allowsMultipleSelection = false
-        panel.title = "Select Plan for YOLO"
-        panel.message = "Pick a plan markdown file to gate this session's YOLO mode."
+        panel.title = "Select Plan to Engage"
+        panel.message = "Pick a plan markdown file to engage for this session."
         panel.directoryURL = YoloMode.plansDirectory()
         guard panel.runModal() == .OK, let url = panel.url else { return }
         armPlan(url.path)
@@ -528,16 +528,16 @@ private struct SessionRow: View {
 
     private var yoloActiveHelp: String {
         let planName = (session.yoloPlanPath as NSString?)?.lastPathComponent ?? "unknown plan"
-        return "YOLO active — tracking \(planName). Click to disengage. User rules are bypassed; protected paths still halt."
+        return "Plan engaged — \(planName). Auto-approve is on for routine work; commit/infra still prompt and the plan's allow/deny apply. Click to drop."
     }
 
     private var yoloIdleHelp: String {
         if let reason = session.yoloDisabledReason {
-            return "YOLO halted: \(reason). Click to re-engage with the current plan."
+            return "Plan dropped: \(reason). Click to re-engage with the current plan."
         }
         if let plan = session.lastPlanPath {
             let name = (plan as NSString).lastPathComponent
-            return "Engage YOLO — tracking \(name). Bypasses user rules; halts on plan changes or protected-path access."
+            return "Engage plan \(name) — turns on auto-approve, applies the plan's allow/deny overlay, keeps commit/infra prompting. Drops if the plan changes on disk."
         }
         return "No plan armed — pick one from the menu, or run /propose."
     }
