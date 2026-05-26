@@ -71,6 +71,37 @@ final class ApprovalEngineTests: XCTestCase {
         XCTAssertEqual(decision.verdict, .allow)
     }
 
+    // MARK: - Standing checkpoints (commit + infra apply)
+
+    func testCommitPromptsUnderAutoApprove() {
+        session.autoApproveUntil = Date().addingTimeInterval(300)
+        let decision = engine.evaluate(payload: payload(command: "git commit -m \"wip\""), session: session)
+        XCTAssertEqual(decision.verdict, .block)
+        XCTAssertTrue(decision.askUser)
+    }
+
+    func testInfraApplyPromptsUnderAutoApprove() {
+        session.autoApproveUntil = Date().addingTimeInterval(300)
+        for cmd in ["cdk deploy MyStack", "terraform apply", "aws cloudformation deploy --template-file t.yaml --stack-name s"] {
+            let decision = engine.evaluate(payload: payload(command: cmd), session: session)
+            XCTAssertEqual(decision.verdict, .block, "expected prompt for: \(cmd)")
+            XCTAssertTrue(decision.askUser, "expected dialog for: \(cmd)")
+        }
+    }
+
+    func testCommitCheckpointNotSilencedByAllowRule() {
+        engine.ruleStore.addRule(PersistentRule(toolName: "Bash", pattern: "git *", verdict: .allow))
+        let decision = engine.evaluate(payload: payload(command: "git commit -m \"wip\""), session: session)
+        XCTAssertEqual(decision.verdict, .block, "non-overridable commit checkpoint must beat a broad allow rule")
+        XCTAssertTrue(decision.askUser)
+    }
+
+    func testInfraApplySilencedByAllowRule() {
+        engine.ruleStore.addRule(PersistentRule(toolName: "Bash", pattern: "cdk deploy*", verdict: .allow))
+        let decision = engine.evaluate(payload: payload(command: "cdk deploy GreenfieldStack-Api"), session: session)
+        XCTAssertEqual(decision.verdict, .allow, "overridable infra prompt should be suppressible by an allow rule")
+    }
+
     // MARK: - Session Deny Rules
 
     func testSessionDenyRuleBlocks() {
