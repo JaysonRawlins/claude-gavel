@@ -231,10 +231,10 @@ final class SessionManager: ObservableObject {
         let endedAt: Date?
         let agent: AgentKind?
         let lastPlanPath: String?
-        let yoloEngagedAt: Date?
-        let yoloPlanPath: String?
-        let yoloPlanHash: String?
-        let yoloDisabledReason: String?
+        let planEngagedAt: Date?
+        let engagedPlanPath: String?
+        let engagedPlanHash: String?
+        let planPolicyDroppedReason: String?
     }
 
     private struct PersistedState: Codable {
@@ -275,10 +275,10 @@ final class SessionManager: ObservableObject {
             endedAt: session.endedAt,
             agent: session.agent,
             lastPlanPath: session.lastPlanPath,
-            yoloEngagedAt: session.yoloEngagedAt,
-            yoloPlanPath: session.yoloPlanPath,
-            yoloPlanHash: session.yoloPlanHash,
-            yoloDisabledReason: session.yoloDisabledReason
+            planEngagedAt: session.planEngagedAt,
+            engagedPlanPath: session.engagedPlanPath,
+            engagedPlanHash: session.engagedPlanHash,
+            planPolicyDroppedReason: session.planPolicyDroppedReason
         )
     }
 
@@ -321,38 +321,38 @@ final class SessionManager: ObservableObject {
             session.label = label
         }
         session.lastPlanPath = snap.lastPlanPath
-        rehydrateYolo(snap, into: session)
+        rehydratePlanPolicy(snap, into: session)
         sessions[snap.pid] = session
         tryJsonlSeed(session: session)
     }
 
-    /// Restore YOLO state across daemon restarts. If the plan's content drifted
-    /// while we were down, disengage on load with a clear reason — preserves the
-    /// invariant that an engaged YOLO session always reflects the original plan.
-    private func rehydrateYolo(_ snap: PersistedSession, into session: Session) {
-        guard let engagedAt = snap.yoloEngagedAt,
-              let path = snap.yoloPlanPath,
-              let originalHash = snap.yoloPlanHash else {
-            session.yoloDisabledReason = snap.yoloDisabledReason
+    /// Restore plan-policy state across daemon restarts. If the plan's content drifted
+    /// while we were down, drop it on load with a clear reason — preserves the
+    /// invariant that an engaged session always reflects the original plan.
+    private func rehydratePlanPolicy(_ snap: PersistedSession, into session: Session) {
+        guard let engagedAt = snap.planEngagedAt,
+              let path = snap.engagedPlanPath,
+              let originalHash = snap.engagedPlanHash else {
+            session.planPolicyDroppedReason = snap.planPolicyDroppedReason
             return
         }
-        let currentHash = YoloMode.sha256(ofFileAt: path)
+        let currentHash = PlanPolicy.sha256(ofFileAt: path)
         if currentHash == nil {
-            session.yoloDisabledReason = "plan deleted during daemon restart"
+            session.planPolicyDroppedReason = "plan deleted during daemon restart"
             return
         }
         if currentHash != originalHash {
-            session.yoloDisabledReason = "plan changed during daemon restart"
+            session.planPolicyDroppedReason = "plan changed during daemon restart"
             return
         }
-        session.yoloEngagedAt = engagedAt
-        session.yoloPlanPath = path
-        session.yoloPlanHash = originalHash
-        session.yoloDisabledReason = snap.yoloDisabledReason
+        session.planEngagedAt = engagedAt
+        session.engagedPlanPath = path
+        session.engagedPlanHash = originalHash
+        session.planPolicyDroppedReason = snap.planPolicyDroppedReason
         if let text = try? String(contentsOfFile: path, encoding: .utf8) {
             session.overlayRules = PlanPolicyParser.parse(text)
         }
-        session.setYoloActive(true)
+        session.setPlanPolicyEngaged(true)
     }
 
     private func rehydrateTombstone(_ snap: PersistedSession, sessionId: String) {

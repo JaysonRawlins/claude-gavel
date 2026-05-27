@@ -5,7 +5,7 @@ import XCTest
 /// Engaging a plan is NOT a bypass: user rules, standing checkpoints, sensitive
 /// paths, and hard blocks all still apply. The plan layers an allow/deny overlay
 /// and turns on auto-approve for the inner loop.
-final class YoloApprovalEngineTests: XCTestCase {
+final class PlanPolicyApprovalEngineTests: XCTestCase {
     var engine: ApprovalEngine!
     var ruleStore: RuleStore!
     var session: Session!
@@ -14,19 +14,19 @@ final class YoloApprovalEngineTests: XCTestCase {
     var tmpDir: URL!
 
     override func setUp() {
-        ruleStorePath = NSTemporaryDirectory() + "yolo-engine-\(UUID().uuidString).json"
+        ruleStorePath = NSTemporaryDirectory() + "plan-engine-\(UUID().uuidString).json"
         ruleStore = RuleStore(configPath: ruleStorePath)
         engine = ApprovalEngine(patternMatcher: PatternMatcher(), ruleStore: ruleStore)
 
         tmpDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(".claude/plans/yolo-eng-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(".claude/plans/plan-eng-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
         planPath = tmpDir.appendingPathComponent("plan.md").path
         try? "# plan\n".write(toFile: planPath, atomically: true, encoding: .utf8)
 
         session = Session(pid: 99999)
         session.lastPlanPath = planPath
-        YoloMode.engage(session: session)
+        PlanPolicy.engage(session: session)
         drainMain()
     }
 
@@ -49,8 +49,8 @@ final class YoloApprovalEngineTests: XCTestCase {
     private func engageWithPolicy(_ lines: [String]) {
         let block = "```gavel-policy\n" + lines.joined(separator: "\n") + "\n```\n"
         try? ("# plan\n\n" + block).write(toFile: planPath, atomically: true, encoding: .utf8)
-        YoloMode.disengage(session: session, reason: "re-engage")
-        YoloMode.engage(session: session)
+        PlanPolicy.disengage(session: session, reason: "re-engage")
+        PlanPolicy.engage(session: session)
         drainMain()
     }
 
@@ -64,14 +64,14 @@ final class YoloApprovalEngineTests: XCTestCase {
     // MARK: - Engaging a plan turns on / relocks auto-approve
 
     func testEngageEnablesAutoApprove() {
-        XCTAssertTrue(session.isYoloActive)
+        XCTAssertTrue(session.isPlanPolicyEngaged)
         XCTAssertTrue(session.isAutoApproveEnabled, "engaging a plan turns on auto-approve for the inner loop")
     }
 
     func testDisengageRelocksAutoApprove() {
-        YoloMode.disengage(session: session, reason: "test")
+        PlanPolicy.disengage(session: session, reason: "test")
         drainMain()
-        XCTAssertFalse(session.isYoloActive)
+        XCTAssertFalse(session.isPlanPolicyEngaged)
         XCTAssertFalse(session.isAutoApproveEnabled, "dropping the plan relocks auto-approve (fail-safe)")
     }
 
@@ -106,7 +106,7 @@ final class YoloApprovalEngineTests: XCTestCase {
         let decision = engine.evaluate(payload: PreToolUsePayload(toolName: "CronCreate", toolInput: input), session: session)
         XCTAssertEqual(decision.verdict, .block)
         XCTAssertTrue(decision.askUser)
-        XCTAssertTrue(session.isYoloActive, "scheduler prompt doesn't drop the plan")
+        XCTAssertTrue(session.isPlanPolicyEngaged, "scheduler prompt doesn't drop the plan")
     }
 
     // MARK: - Standing commit checkpoint can't be silenced by the overlay
@@ -205,7 +205,7 @@ final class YoloApprovalEngineTests: XCTestCase {
     // MARK: - Normal chain when no plan is engaged
 
     func testNormalChainWhenPlanDropped() {
-        YoloMode.disengage(session: session, reason: "test")
+        PlanPolicy.disengage(session: session, reason: "test")
         drainMain()
         let decision = engine.evaluate(payload: payload(command: "ls"), session: session)
         XCTAssertEqual(decision.verdict, .allow)

@@ -1,22 +1,22 @@
 import CryptoKit
 import Foundation
 
-/// Plan-gated YOLO mode: bypass user-authored rules between engage and halt.
+/// Engaging a plan for a session: layer the plan's allow/deny overlay and turn
+/// on auto-approve for the inner loop. This is NOT a bypass — standing
+/// checkpoints, sensitive paths, and hard blocks still apply (see ApprovalEngine).
 ///
-/// While engaged, the approval engine takes an early branch that honors only
-/// stage-1 hard-block patterns, sensitive-path protection (which halts YOLO),
-/// and built-in scheduler prompts. User DENY / PROMPT / ALLOW / session rules
-/// are skipped. Halt triggers:
-///   1. Agent issues Write/Edit/MultiEdit on the tracked plan path.
-///   2. Plan file's sha256 differs from the hash captured at engage time.
-///   3. Plan file is deleted.
-///   4. Tool call hits matchSensitivePath (gavel-protected surface).
-///   5. Manual disengage via the UI.
+/// Engage reads the plan's ```gavel-policy block into `session.overlayRules` and
+/// captures the plan's sha256. The plan is dropped (overlay cleared + auto-approve
+/// relocked) when:
+///   1. The agent issues Write/Edit/MultiEdit on the tracked plan path.
+///   2. The plan file's sha256 differs from the hash captured at engage time.
+///   3. The plan file is deleted.
+///   4. The user drops it manually via the UI.
 ///
 /// Discovery is via `session.lastPlanPath`, stamped by HookRouter when an
 /// approved Write/Edit/MultiEdit lands on ~/.claude/plans/**/*.md. This
 /// avoids coupling to session-label/folder conventions.
-enum YoloMode {
+enum PlanPolicy {
     private static let planPathRegex: NSRegularExpression = {
         try! NSRegularExpression(pattern: #".*/\.claude/plans/[^/]+/[^/]+\.md$"#)
     }()
@@ -38,12 +38,12 @@ enum YoloMode {
         let hash = sha256(ofFileAt: path)
         let overlay = (try? String(contentsOfFile: path, encoding: .utf8)).map(PlanPolicyParser.parse) ?? []
         session.overlayRules = overlay
-        session.setYoloActive(true)
+        session.setPlanPolicyEngaged(true)
         DispatchQueue.main.async {
-            session.yoloEngagedAt = Date()
-            session.yoloPlanPath = path
-            session.yoloPlanHash = hash
-            session.yoloDisabledReason = nil
+            session.planEngagedAt = Date()
+            session.engagedPlanPath = path
+            session.engagedPlanHash = hash
+            session.planPolicyDroppedReason = nil
             session.isSubAgentInheritEnabled = true
             session.isAutoApproveEnabled = true
         }
@@ -52,7 +52,7 @@ enum YoloMode {
 
     /// Returns disengage reason or nil. Read-only — safe from any thread.
     static func shouldHalt(session: Session, payload: PreToolUsePayload) -> String? {
-        guard let trackedPath = session.yoloPlanPath else { return nil }
+        guard let trackedPath = session.engagedPlanPath else { return nil }
 
         if ["Write", "Edit", "MultiEdit"].contains(payload.toolName),
            let path = payload.filePath,
@@ -63,22 +63,22 @@ enum YoloMode {
         guard let currentHash = sha256(ofFileAt: trackedPath) else {
             return "plan deleted"
         }
-        if currentHash != session.yoloPlanHash {
+        if currentHash != session.engagedPlanHash {
             return "plan changed on disk"
         }
         return nil
     }
 
-    /// Clears YOLO state and records the reason. Posts a notification.
+    /// Clears plan-policy state and records the reason. Posts a notification.
     /// Caller is responsible for calling `SessionManager.saveActiveSessions()` after.
     static func disengage(session: Session, reason: String) {
-        session.setYoloActive(false)
+        session.setPlanPolicyEngaged(false)
         session.overlayRules = []
         DispatchQueue.main.async {
-            session.yoloEngagedAt = nil
-            session.yoloPlanPath = nil
-            session.yoloPlanHash = nil
-            session.yoloDisabledReason = reason
+            session.planEngagedAt = nil
+            session.engagedPlanPath = nil
+            session.engagedPlanHash = nil
+            session.planPolicyDroppedReason = reason
             session.isAutoApproveEnabled = false
         }
         GavelNotifications.notify(title: "Gavel — plan policy dropped", body: reason)

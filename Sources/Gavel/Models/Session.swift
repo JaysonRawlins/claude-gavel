@@ -38,43 +38,43 @@ final class Session: ObservableObject, Identifiable {
     @Published var suppressedRuleIds: Set<UUID> = []
 
     /// Absolute path of the most recent approved Write/Edit/MultiEdit that landed
-    /// under ~/.claude/plans/**/*.md. Captured by HookRouter post-decision so YOLO
-    /// can find the plan without depending on session-label/folder conventions.
+    /// under ~/.claude/plans/**/*.md. Captured by HookRouter post-decision so plan
+    /// engage can find the plan without depending on session-label/folder conventions.
     @Published var lastPlanPath: String?
 
-    // YOLO mode — bypasses user rules between engage and halt. See YoloMode.swift.
-    // Worker threads gate the yolo branch on `isYoloActive`, which is backed by a
-    // lock-protected non-@Published flag for synchronous visibility. The matching
-    // @Published fields below carry UI-display state and are updated on main.
-    @Published var yoloEngagedAt: Date?
+    // Plan policy — overlay + auto-approve while a plan is engaged. See PlanPolicy.swift.
+    // Worker threads read `isPlanPolicyEngaged`, backed by a lock-protected non-@Published
+    // flag for synchronous visibility. The matching @Published fields below carry
+    // UI-display state and are updated on main.
+    @Published var planEngagedAt: Date?
     /// Frozen at engage time. New plan writes update lastPlanPath but NOT this.
-    @Published var yoloPlanPath: String?
-    @Published var yoloPlanHash: String?
-    @Published var yoloDisabledReason: String?
+    @Published var engagedPlanPath: String?
+    @Published var engagedPlanHash: String?
+    @Published var planPolicyDroppedReason: String?
 
-    private var _yoloActive: Bool = false
-    private let yoloLock = NSLock()
+    private var _planPolicyEngaged: Bool = false
+    private let planPolicyLock = NSLock()
 
-    var isYoloActive: Bool {
-        yoloLock.lock()
-        defer { yoloLock.unlock() }
-        return _yoloActive
+    var isPlanPolicyEngaged: Bool {
+        planPolicyLock.lock()
+        defer { planPolicyLock.unlock() }
+        return _planPolicyEngaged
     }
 
-    func setYoloActive(_ value: Bool) {
-        yoloLock.lock()
-        _yoloActive = value
-        yoloLock.unlock()
+    func setPlanPolicyEngaged(_ value: Bool) {
+        planPolicyLock.lock()
+        _planPolicyEngaged = value
+        planPolicyLock.unlock()
     }
 
     private var _overlayRules: [PlanPolicyRule] = []
 
     /// Plan-declared allow/deny rules, layered while a plan is engaged. Guarded by
-    /// `yoloLock` because it's set on engage (main) and read by the socket worker
+    /// `planPolicyLock` because it's set on engage (main) and read by the socket worker
     /// on every PreToolUse. Empty when no plan is engaged.
     var overlayRules: [PlanPolicyRule] {
-        get { yoloLock.lock(); defer { yoloLock.unlock() }; return _overlayRules }
-        set { yoloLock.lock(); _overlayRules = newValue; yoloLock.unlock() }
+        get { planPolicyLock.lock(); defer { planPolicyLock.unlock() }; return _overlayRules }
+        set { planPolicyLock.lock(); _overlayRules = newValue; planPolicyLock.unlock() }
     }
 
     // Worker-mutable state. NOT @Published on purpose — both are touched on
@@ -130,12 +130,12 @@ final class Session: ObservableObject, Identifiable {
         autoApproveUntil = nil
         sessionRules.removeAll()
         suppressedRuleIds.removeAll()
-        setYoloActive(false)
+        setPlanPolicyEngaged(false)
         overlayRules = []
-        yoloEngagedAt = nil
-        yoloPlanPath = nil
-        yoloPlanHash = nil
-        yoloDisabledReason = nil
+        planEngagedAt = nil
+        engagedPlanPath = nil
+        engagedPlanHash = nil
+        planPolicyDroppedReason = nil
     }
 
     /// Check if a tool call matches any session allow rule.
