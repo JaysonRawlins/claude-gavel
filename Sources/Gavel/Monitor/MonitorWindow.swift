@@ -391,7 +391,7 @@ private struct SessionRow: View {
             }
             .frame(width: 76, alignment: .leading)
 
-            yoloControl
+            planControl
 
             Button("Prompt") {
                 viewModel.promptSession(session)
@@ -428,9 +428,9 @@ private struct SessionRow: View {
     }
 
     @ViewBuilder
-    private var yoloControl: some View {
+    private var planControl: some View {
         Group {
-            if session.isYoloActive {
+            if session.isPlanPolicyEngaged {
                 disengageButton
             } else {
                 HStack(spacing: 4) {
@@ -444,22 +444,22 @@ private struct SessionRow: View {
 
     private var engageButton: some View {
         Button("Plan") {
-            if YoloMode.engage(session: session) {
+            if PlanPolicy.engage(session: session) {
                 viewModel.sessionManager.saveActiveSessions()
                 viewModel.noteInteraction()
             }
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
-        .tint(yoloDisabledReasonTint)
+        .tint(planPolicyDroppedReasonTint)
         .frame(width: 76)
         .disabled(session.lastPlanPath == nil)
-        .help(yoloIdleHelp)
+        .help(planIdleHelp)
     }
 
     private var disengageButton: some View {
         Button(action: {
-            YoloMode.disengage(session: session, reason: "manual")
+            PlanPolicy.disengage(session: session, reason: "manual")
             viewModel.sessionManager.saveActiveSessions()
             viewModel.noteInteraction()
         }) {
@@ -474,11 +474,11 @@ private struct SessionRow: View {
         .controlSize(.small)
         .tint(.red)
         .frame(width: 76)
-        .help(yoloActiveHelp)
+        .help(planActiveHelp)
     }
 
     private var planPickerMenu: some View {
-        let plans = YoloMode.recentPlans()
+        let plans = PlanPolicy.recentPlans()
         return Menu {
             if plans.isEmpty {
                 Text("No plans found")
@@ -521,18 +521,18 @@ private struct SessionRow: View {
         panel.allowsMultipleSelection = false
         panel.title = "Select Plan to Engage"
         panel.message = "Pick a plan markdown file to engage for this session."
-        panel.directoryURL = YoloMode.plansDirectory()
+        panel.directoryURL = PlanPolicy.plansDirectory()
         guard panel.runModal() == .OK, let url = panel.url else { return }
         armPlan(url.path)
     }
 
-    private var yoloActiveHelp: String {
-        let planName = (session.yoloPlanPath as NSString?)?.lastPathComponent ?? "unknown plan"
+    private var planActiveHelp: String {
+        let planName = (session.engagedPlanPath as NSString?)?.lastPathComponent ?? "unknown plan"
         return "Plan engaged — \(planName). Auto-approve is on for routine work; commit/infra still prompt and the plan's allow/deny apply. Click to drop."
     }
 
-    private var yoloIdleHelp: String {
-        if let reason = session.yoloDisabledReason {
+    private var planIdleHelp: String {
+        if let reason = session.planPolicyDroppedReason {
             return "Plan dropped: \(reason). Click to re-engage with the current plan."
         }
         if let plan = session.lastPlanPath {
@@ -542,8 +542,8 @@ private struct SessionRow: View {
         return "No plan armed — pick one from the menu, or run /propose."
     }
 
-    private var yoloDisabledReasonTint: Color {
-        session.yoloDisabledReason != nil ? .orange : .red
+    private var planPolicyDroppedReasonTint: Color {
+        session.planPolicyDroppedReason != nil ? .orange : .red
     }
 
     /// Width must match actionCluster so live and dead rows align.
