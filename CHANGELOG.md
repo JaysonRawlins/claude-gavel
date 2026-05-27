@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.15.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.14.0...v1.15.0) (2026-05-27)
+
+
+### Features
+
+* **approval:** replace YOLO bypass with a plan-policy overlay ([#97](https://github.com/JaysonRawlins/claude-gavel/issues/97)) ([aaeb04f](https://github.com/JaysonRawlins/claude-gavel/commit/aaeb04f86f34c1feb6be22ab69eb7970c42c3aad))
+* **approval:** standing commit + infra-apply checkpoints, panel label + minimize ([#95](https://github.com/JaysonRawlins/claude-gavel/issues/95)) ([f021cf2](https://github.com/JaysonRawlins/claude-gavel/commit/f021cf2e997e22ba37256c7fa4da15876057308b))
+
 ## [1.14.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.13.0...v1.14.0) (2026-05-23)
 
 
