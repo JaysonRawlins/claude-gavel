@@ -15,7 +15,14 @@ final class RuleStore: ObservableObject {
     private let configPath: String
 
     /// Current seed version — bump when adding new default rules.
-    private static let seedVersion = 8
+    private static let seedVersion = 9
+
+    /// Built-in patterns replaced by a corrected/broadened seeded rule. On re-seed
+    /// these are dropped from existing rules.json so a pattern fix swaps cleanly
+    /// instead of leaving the old (narrower) rule behind as a duplicate.
+    private static let supersededBuiltInPatterns: Set<String> = [
+        "\\bgit\\s+commit\\b"  // broadened to catch `git -C <path> commit` etc.
+    ]
 
     init(configPath: String? = nil) {
         self.configPath = configPath ?? Self.defaultConfigPath
@@ -252,9 +259,11 @@ final class RuleStore: ObservableObject {
         ),
 
         // ── Commit checkpoint (non-overridable: a broad allow rule can't silence it) ──
+        // Tolerates git global options before the subcommand (`-C <path>`, `-c k=v`,
+        // `--no-pager`) so `git -C /repo commit` can't slip past the bare-form pattern.
         PersistentRule(
             toolName: "Bash",
-            pattern: "\\bgit\\s+commit\\b",
+            pattern: "\\bgit\\b(\\s+-{1,2}\\S+(\\s+\\S+)?)*\\s+commit\\b",
             isRegex: true,
             verdict: .prompt,
             explanation: "Commit checkpoint — review staged changes before recording history",
@@ -329,10 +338,10 @@ final class RuleStore: ObservableObject {
     }
 
     private func seedDefaults(existingRules: [PersistentRule], version: Int, deleted: [String]) {
-        let existingPatterns = Set(existingRules.map(\.pattern))
+        var seeded = existingRules.filter { !($0.builtIn && Self.supersededBuiltInPatterns.contains($0.pattern)) }
+        let existingPatterns = Set(seeded.map(\.pattern))
         let deletedSet = Set(deleted)
 
-        var seeded = existingRules
         for rule in Self.seededDefaults {
             guard !existingPatterns.contains(rule.pattern),
                   !deletedSet.contains(rule.pattern) else { continue }
