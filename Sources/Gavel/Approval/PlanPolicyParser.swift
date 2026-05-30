@@ -8,19 +8,26 @@ import Foundation
 /// command must match, so an authorized prefix like `cdk deploy*` can't smuggle
 /// a chained `curl evil`. Deny rules match if ANY segment matches, so a
 /// prohibited command can't hide behind a benign prefix.
+///
+/// `isCheckpointOverride` marks an `override` rule: an allow that is also
+/// permitted to release a normally non-overridable checkpoint (the standing
+/// `git commit` rail — for GitOps repos where commit IS the deploy). It never
+/// touches sensitive paths or hard dangerous patterns; those stay immovable.
 struct PlanPolicyRule {
     let toolName: String
     let pattern: String
     let isRegex: Bool
     let verdict: DecisionVerdict
+    let isCheckpointOverride: Bool
     let explanation: String?
     private let regex: NSRegularExpression?
 
-    init(toolName: String, pattern: String, isRegex: Bool, verdict: DecisionVerdict, explanation: String? = nil) {
+    init(toolName: String, pattern: String, isRegex: Bool, verdict: DecisionVerdict, isCheckpointOverride: Bool = false, explanation: String? = nil) {
         self.toolName = toolName
         self.pattern = pattern
         self.isRegex = isRegex
         self.verdict = verdict
+        self.isCheckpointOverride = isCheckpointOverride
         self.explanation = explanation
         self.regex = PatternCompiler.compilePattern(pattern, isRegex: isRegex)
     }
@@ -49,14 +56,17 @@ struct PlanPolicyRule {
 /// Parses the first ```gavel-policy fenced block in a plan's markdown into
 /// session overlay rules. No YAML dependency — one rule per line:
 ///
-///     allow Bash: cdk deploy GreenfieldStack*
-///     deny  Bash: cdk destroy*
-///     block Bash: re:terraform\s+destroy
+///     allow    Bash: cdk deploy GreenfieldStack*
+///     deny     Bash: cdk destroy*
+///     block    Bash: re:terraform\s+destroy
+///     override Bash: git commit*
 ///
-/// Grammar: `<allow|deny|block> <ToolName>: <pattern>`. Pattern is glob by
-/// default; a `re:` prefix marks it regex. `deny` maps to a prompt (force
-/// dialog); `block` is a hard deny. Blank lines, `#` comments, and lines that
-/// don't parse are skipped.
+/// Grammar: `<allow|deny|block|override> <ToolName>: <pattern>`. Pattern is glob
+/// by default; a `re:` prefix marks it regex. `deny` maps to a prompt (force
+/// dialog); `block` is a hard deny; `override` is an allow that can additionally
+/// release a non-overridable checkpoint (git commit). Blank lines, `#` comments,
+/// and lines that don't parse — including unknown verbs — are skipped, so an
+/// older daemon reading a newer plan ignores verbs it doesn't understand.
 enum PlanPolicyParser {
     static func parse(_ planText: String) -> [PlanPolicyRule] {
         guard let body = fencedBlock(in: planText) else { return [] }
@@ -91,10 +101,12 @@ enum PlanPolicyParser {
         guard head.count == 2 else { return nil }
 
         let verdict: DecisionVerdict
+        var isCheckpointOverride = false
         switch head[0].lowercased() {
         case "allow": verdict = .allow
         case "deny": verdict = .prompt
         case "block": verdict = .block
+        case "override": verdict = .allow; isCheckpointOverride = true
         default: return nil
         }
 
@@ -105,6 +117,6 @@ enum PlanPolicyParser {
             isRegex = true
             pattern = String(pattern.dropFirst(3)).trimmingCharacters(in: .whitespaces)
         }
-        return PlanPolicyRule(toolName: head[1], pattern: pattern, isRegex: isRegex, verdict: verdict)
+        return PlanPolicyRule(toolName: head[1], pattern: pattern, isRegex: isRegex, verdict: verdict, isCheckpointOverride: isCheckpointOverride)
     }
 }

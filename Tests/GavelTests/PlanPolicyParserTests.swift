@@ -28,6 +28,19 @@ final class PlanPolicyParserTests: XCTestCase {
         XCTAssertTrue(rules[0].matches(toolName: "Bash", command: "terraform   destroy -auto-approve", filePath: nil))
     }
 
+    func testOverrideVerbParsesAsCheckpointReleasingAllow() {
+        let rules = PlanPolicyParser.parse(plan("override Bash: git commit*"))
+        XCTAssertEqual(rules.count, 1)
+        XCTAssertEqual(rules[0].verdict, .allow, "override is an allow")
+        XCTAssertTrue(rules[0].isCheckpointOverride, "override is flagged to release a checkpoint")
+        XCTAssertTrue(rules[0].matches(toolName: "Bash", command: "git commit -m wip", filePath: nil))
+    }
+
+    func testPlainAllowIsNotACheckpointOverride() {
+        let rules = PlanPolicyParser.parse(plan("allow Bash: git commit*"))
+        XCTAssertFalse(rules[0].isCheckpointOverride, "a plain allow must not gain checkpoint-release power")
+    }
+
     func testSkipsCommentsBlankAndMalformedLines() {
         let rules = PlanPolicyParser.parse(plan("""
         # this is a comment

