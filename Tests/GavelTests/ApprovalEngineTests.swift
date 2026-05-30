@@ -80,6 +80,44 @@ final class ApprovalEngineTests: XCTestCase {
         XCTAssertTrue(decision.askUser)
     }
 
+    func testCommitCheckpointCatchesGitGlobalOptionForms() {
+        session.autoApproveUntil = Date().addingTimeInterval(300)
+        for cmd in [
+            "git commit -m \"wip\"",
+            "git -C /repo commit -m \"deploy\"",
+            "git -c user.email=x@y.z commit -m wip",
+            "git --no-pager commit",
+        ] {
+            let decision = engine.evaluate(payload: payload(command: cmd), session: session)
+            XCTAssertEqual(decision.verdict, .block, "commit checkpoint should catch: \(cmd)")
+            XCTAssertTrue(decision.askUser, "expected dialog for: \(cmd)")
+        }
+    }
+
+    func testCommitCheckpointDoesNotFireOnNonCommitGit() {
+        session.autoApproveUntil = Date().addingTimeInterval(300)
+        for cmd in ["git -C /repo log --oneline", "git status", "git -c core.pager=cat diff"] {
+            let decision = engine.evaluate(payload: payload(command: cmd), session: session)
+            XCTAssertEqual(decision.verdict, .allow, "non-commit git must not trip the commit checkpoint: \(cmd)")
+        }
+    }
+
+    func testSeedMigrationReplacesSupersededCommitPattern() {
+        let path = NSTemporaryDirectory() + "seed-migrate-\(UUID().uuidString).json"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let oldNarrow = "\\bgit\\s+commit\\b"
+        let oldRule = PersistentRule(toolName: "Bash", pattern: oldNarrow, isRegex: true,
+                                     verdict: .prompt, explanation: "old", builtIn: true, overridable: false)
+        let data = try! JSONEncoder().encode(RulesFile(version: 8, deletedBuiltInPatterns: [], rules: [oldRule]))
+        FileManager.default.createFile(atPath: path, contents: data)
+
+        let store = RuleStore(configPath: path)
+        let commitPatterns = store.rules.map(\.pattern).filter { $0.contains("commit") }
+        XCTAssertEqual(commitPatterns.count, 1, "exactly one commit checkpoint after re-seed (no duplicate)")
+        XCTAssertFalse(commitPatterns.contains(oldNarrow), "old narrow commit pattern dropped on re-seed")
+        XCTAssertTrue(commitPatterns.first?.contains("-{1,2}") ?? false, "broadened pattern seeded")
+    }
+
     func testInfraApplyPromptsUnderAutoApprove() {
         session.autoApproveUntil = Date().addingTimeInterval(300)
         for cmd in ["cdk deploy MyStack", "terraform apply", "aws cloudformation deploy --template-file t.yaml --stack-name s"] {
