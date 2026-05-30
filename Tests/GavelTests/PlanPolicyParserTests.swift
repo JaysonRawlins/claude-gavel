@@ -28,6 +28,36 @@ final class PlanPolicyParserTests: XCTestCase {
         XCTAssertTrue(rules[0].matches(toolName: "Bash", command: "terraform   destroy -auto-approve", filePath: nil))
     }
 
+    func testOverrideVerbParsesAsCheckpointReleasingAllow() {
+        let rules = PlanPolicyParser.parse(plan("override Bash: git commit*"))
+        XCTAssertEqual(rules.count, 1)
+        XCTAssertEqual(rules[0].verdict, .allow, "override is an allow")
+        XCTAssertTrue(rules[0].isCheckpointOverride, "override is flagged to release a checkpoint")
+        XCTAssertTrue(rules[0].matches(toolName: "Bash", command: "git commit -m wip", filePath: nil))
+    }
+
+    func testPlainAllowIsNotACheckpointOverride() {
+        let rules = PlanPolicyParser.parse(plan("allow Bash: git commit*"))
+        XCTAssertFalse(rules[0].isCheckpointOverride, "a plain allow must not gain checkpoint-release power")
+    }
+
+    func testRealisticMultiVerbBlockParses() {
+        let rules = PlanPolicyParser.parse(plan("""
+        # greenfield deploy + migration, GitOps commit
+        allow    Bash: cdk deploy GreenfieldStack*
+        deny     Bash: cdk destroy*
+        allow    Bash: python3 scripts/migrate.py *
+        override Bash: git commit*
+        allow    Bash: git push*
+        """))
+        XCTAssertEqual(rules.count, 5, "comment skipped; five rules parsed despite column alignment")
+        XCTAssertEqual(rules.filter { $0.isCheckpointOverride }.count, 1)
+        let override = rules.first { $0.isCheckpointOverride }
+        XCTAssertEqual(override?.verdict, .allow)
+        XCTAssertTrue(override?.matches(toolName: "Bash", command: "git commit -m deploy", filePath: nil) ?? false)
+        XCTAssertFalse(rules[0].isCheckpointOverride, "a plain allow is not an override")
+    }
+
     func testSkipsCommentsBlankAndMalformedLines() {
         let rules = PlanPolicyParser.parse(plan("""
         # this is a comment

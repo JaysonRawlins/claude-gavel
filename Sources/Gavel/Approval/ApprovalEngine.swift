@@ -6,7 +6,8 @@ import Foundation
 /// 2.  Persistent DENY rules from RuleStore (block even under auto-approve)
 /// 3.  Plan overlay prohibitions — plan-declared deny/block (force dialog / hard block)
 /// 4.  Session pause state
-/// 5.  Non-overridable built-in checkpoints — e.g. git commit (force dialog, beats every allow)
+/// 5.  Non-overridable built-in checkpoints — e.g. git commit (force dialog; beats every
+///     allow, but a plan-declared `override` for the command releases it)
 /// 6.  Sensitive paths — gavel config, hooks, shell config (force dialog, not overridable)
 /// 7.  Plan overlay authorizations — plan pre-approved this command (beats user prompts + below)
 /// 8.  User PROMPT rules (force dialog even under auto-approve)
@@ -22,7 +23,9 @@ import Foundation
 /// Key invariants:
 /// - Deny rules ALWAYS win over auto-approve.
 /// - Plan overlay prohibitions beat everything except hard blocks and persistent deny.
-/// - The commit checkpoint + sensitive paths beat EVERY allow, including the overlay.
+/// - The commit checkpoint + sensitive paths beat EVERY allow, including the overlay —
+///   except a plan-declared `override`, which releases the commit checkpoint only
+///   (never sensitive paths, never hard dangerous patterns).
 /// - A plan overlay allow beats user PROMPT rules and below — a narrow, reviewed,
 ///   hash-locked authorization overrides a broad standing prompt for that command only.
 /// - User prompt rules still beat persistent allow rules (Stage 8 beats Stage 9).
@@ -59,8 +62,11 @@ final class ApprovalEngine {
         }
 
         // 4. Non-overridable built-in checkpoints (e.g. git commit) — force dialog,
-        //    checked before any allow (overlay or otherwise) so nothing can silence them.
+        //    checked before any allow rule. The one exception: a plan that explicitly
+        //    declares `override` for this command releases the checkpoint (GitOps repos
+        //    where commit IS the deploy). `allow` cannot do this — only `override`.
         if let decision = ruleStore.evaluateBuiltInPromptNonOverridable(payload: payload) {
+            if let release = overlayCheckpointOverride(overlay, payload) { return release }
             return decision
         }
 
@@ -117,6 +123,14 @@ final class ApprovalEngine {
         for rule in overlay where rule.verdict == .allow {
             guard rule.matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) else { continue }
             return Decision(verdict: .allow, reason: "Plan authorizes \(rule.toolName): \(rule.pattern)")
+        }
+        return nil
+    }
+
+    private func overlayCheckpointOverride(_ overlay: [PlanPolicyRule], _ payload: PreToolUsePayload) -> Decision? {
+        for rule in overlay where rule.isCheckpointOverride {
+            guard rule.matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) else { continue }
+            return Decision(verdict: .allow, reason: "Plan overrides checkpoint \(rule.toolName): \(rule.pattern)")
         }
         return nil
     }
