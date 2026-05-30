@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.15.0...v1.16.0) (2026-05-30)
+
+
+### Features
+
+* **approval:** add override verb to release commit checkpoint for GitOps plans ([#99](https://github.com/JaysonRawlins/claude-gavel/issues/99)) ([b6db3e7](https://github.com/JaysonRawlins/claude-gavel/commit/b6db3e7433d1f445dfe0ba00c3c269af8efbf0c5))
+
 ## [1.15.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.14.0...v1.15.0) (2026-05-27)
 
 
