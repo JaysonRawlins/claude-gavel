@@ -33,11 +33,13 @@ final class SessionManager: ObservableObject {
     init(
         homeDir: URL = FileManager.default.homeDirectoryForCurrentUser,
         autoStartTimers: Bool = true,
-        autoDiscover: Bool = true
+        autoDiscover: Bool = true,
+        liveness: @escaping (Int, String?) -> Bool = SessionManager.defaultLiveness
     ) {
         let base = homeDir.path + "/.claude/gavel"
         self.defaultsPath = base + "/session-defaults.json"
         self.sessionsPath = base + "/active-sessions.json"
+        self.livenessCheck = liveness
         try? FileManager.default.createDirectory(atPath: base, withIntermediateDirectories: true)
 
         loadDefaults()
@@ -204,7 +206,7 @@ final class SessionManager: ObservableObject {
     func clearDeadSessions() {
         lock.lock()
         let strayPids = sessions.compactMap { (pid, session) -> Int? in
-            (!session.isAlive || !isProcessAlive(pid: pid)) ? pid : nil
+            (!session.isAlive || !isProcessAlive(pid: pid, cwd: session.cwd)) ? pid : nil
         }
         for pid in strayPids {
             sessions.removeValue(forKey: pid)
@@ -300,7 +302,7 @@ final class SessionManager: ObservableObject {
         }
 
         for snap in live + dead {
-            if isProcessAlive(pid: snap.pid) {
+            if isProcessAlive(pid: snap.pid, cwd: snap.cwd) {
                 rehydrateLive(snap)
             } else if let sid = snap.sessionId {
                 rehydrateTombstone(snap, sessionId: sid)
@@ -393,9 +395,20 @@ final class SessionManager: ObservableObject {
         return added
     }
 
-    /// Check if a PID is still alive using kill(0).
-    func isProcessAlive(pid: Int) -> Bool {
-        kill(Int32(pid), 0) == 0 || errno == EPERM
+    /// Liveness predicate for a tracked PID; overridable so tests can fake a live session.
+    var livenessCheck: (Int, String?) -> Bool
+
+    func isProcessAlive(pid: Int, cwd: String?) -> Bool {
+        livenessCheck(pid, cwd)
+    }
+
+    // Match on cwd, not p_comm: Claude Code reports its version string (e.g. "2.1.158")
+    // as p_comm, so a recycled PID can't be ruled out by process name.
+    static func defaultLiveness(pid: Int, cwd expectedCwd: String?) -> Bool {
+        guard kill(Int32(pid), 0) == 0 || errno == EPERM else { return false }
+        guard let expectedCwd else { return true }
+        guard let actual = ProcessTree.cwd(of: Int32(pid)) else { return false }
+        return actual == expectedCwd
     }
 
     // MARK: - Cleanup
@@ -417,7 +430,10 @@ final class SessionManager: ObservableObject {
         let pids = Array(sessions.keys)
         lock.unlock()
         for pid in pids {
-            guard !isProcessAlive(pid: pid) else { continue }
+            lock.lock()
+            let cwd = sessions[pid]?.cwd
+            lock.unlock()
+            guard !isProcessAlive(pid: pid, cwd: cwd) else { continue }
             lock.lock()
             guard let session = sessions[pid] else {
                 lock.unlock()

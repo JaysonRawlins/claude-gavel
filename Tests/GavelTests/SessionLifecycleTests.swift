@@ -8,6 +8,11 @@ final class SessionLifecycleTests: XCTestCase {
     private var tmpHome: URL!
     private var manager: SessionManager!
 
+    /// Stands in a live result for the test runner's own PID; everything else uses the real cwd check.
+    private let liveOnOwnPid: (Int, String?) -> Bool = { pid, cwd in
+        pid == Int(getpid()) ? true : SessionManager.defaultLiveness(pid: pid, cwd: cwd)
+    }
+
     /// A PID effectively guaranteed not to exist on macOS. macOS reserves up
     /// to ~99999; anything above that range is unused by any real process.
     private let deadPid = 1_999_999
@@ -17,7 +22,7 @@ final class SessionLifecycleTests: XCTestCase {
         tmpHome = FileManager.default.temporaryDirectory
             .appendingPathComponent("gavel-test-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: tmpHome, withIntermediateDirectories: true)
-        manager = SessionManager(homeDir: tmpHome, autoStartTimers: false, autoDiscover: false)
+        manager = SessionManager(homeDir: tmpHome, autoStartTimers: false, autoDiscover: false, liveness: liveOnOwnPid)
     }
 
     override func tearDown() {
@@ -50,6 +55,36 @@ final class SessionLifecycleTests: XCTestCase {
 
         XCTAssertNil(manager.sessions[deadPid], "Live dict should drop")
         XCTAssertTrue(manager.deadSessions.isEmpty, "No sessionId means no tombstone")
+    }
+
+    // MARK: - PID reuse
+
+    func testDefaultLivenessRejectsLivePidWithMismatchedCwd() {
+        let livePid = Int(getpid())
+        let realCwd = ProcessTree.cwd(of: Int32(livePid))
+        XCTAssertNotNil(realCwd, "Test runner must have a readable cwd for this to be meaningful")
+
+        XCTAssertTrue(
+            SessionManager.defaultLiveness(pid: livePid, cwd: realCwd),
+            "A live PID still in its recorded cwd is alive"
+        )
+        XCTAssertFalse(
+            SessionManager.defaultLiveness(pid: livePid, cwd: (realCwd ?? "") + "/somewhere-else"),
+            "A live PID whose cwd drifted from the recorded one was reused — dead"
+        )
+    }
+
+    func testCleanupTombstonesPidReusedUnderDifferentCwd() {
+        manager.livenessCheck = SessionManager.defaultLiveness
+        let sid = "uuid-reused-pid"
+        let session = manager.session(for: Int(getpid()))
+        session.sessionId = sid
+        session.cwd = "/tmp/some-other-recorded-path"
+
+        manager.cleanupDeadSessions()
+
+        XCTAssertNil(manager.sessions[Int(getpid())], "PID whose cwd no longer matches must leave the live dict")
+        XCTAssertNotNil(manager.deadSessions[sid], "It must tombstone so the row flips to asleep")
     }
 
     // MARK: - Removal controls
@@ -137,7 +172,7 @@ final class SessionLifecycleTests: XCTestCase {
         manager.saveActiveSessions()
 
         // Spin up a fresh manager pointing at the same tmp home.
-        let reloaded = SessionManager(homeDir: tmpHome, autoStartTimers: false, autoDiscover: false)
+        let reloaded = SessionManager(homeDir: tmpHome, autoStartTimers: false, autoDiscover: false, liveness: liveOnOwnPid)
 
         XCTAssertNotNil(reloaded.sessions[livePid], "Live session must rehydrate")
         XCTAssertEqual(reloaded.sessions[livePid]?.sessionId, sidLive)
@@ -163,7 +198,7 @@ final class SessionLifecycleTests: XCTestCase {
         manager.recordSessionId("codex-sid", on: session)
         manager.saveActiveSessions()
 
-        let reloaded = SessionManager(homeDir: tmpHome, autoStartTimers: false, autoDiscover: false)
+        let reloaded = SessionManager(homeDir: tmpHome, autoStartTimers: false, autoDiscover: false, liveness: liveOnOwnPid)
         XCTAssertEqual(reloaded.sessions[pid]?.agent, .codex, "Codex agent must survive restart")
     }
 
@@ -181,7 +216,7 @@ final class SessionLifecycleTests: XCTestCase {
         )
         FileManager.default.createFile(atPath: path, contents: data)
 
-        let reloaded = SessionManager(homeDir: tmpHome, autoStartTimers: false, autoDiscover: false)
+        let reloaded = SessionManager(homeDir: tmpHome, autoStartTimers: false, autoDiscover: false, liveness: liveOnOwnPid)
 
         XCTAssertEqual(reloaded.sessions[livePid]?.sessionId, "legacy-sid")
         XCTAssertTrue(reloaded.deadSessions.isEmpty, "Legacy format has no tombstones")
