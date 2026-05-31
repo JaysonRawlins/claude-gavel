@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.16.0...v1.16.1) (2026-05-31)
+
+
+### Bug Fixes
+
+* **session:** detect PID reuse via cwd so stale sessions sleep correctly ([#102](https://github.com/JaysonRawlins/claude-gavel/issues/102)) ([f3895ba](https://github.com/JaysonRawlins/claude-gavel/commit/f3895bacfc42d817f3f647e4aa835a3b7cd97954))
+
 ## [1.16.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.15.0...v1.16.0) (2026-05-30)
 
 
