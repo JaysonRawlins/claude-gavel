@@ -416,7 +416,11 @@ private struct SessionRow: View {
             .frame(width: 76)
 
             Button("Sleep") {
-                kill(Int32(session.pid), SIGINT)
+                if viewModel.sessionManager.isProcessAlive(pid: session.pid, cwd: session.cwd) {
+                    kill(Int32(session.pid), SIGINT)
+                } else {
+                    viewModel.sessionManager.cleanupDeadSessions()
+                }
                 viewModel.noteInteraction()
             }
             .buttonStyle(.bordered)
