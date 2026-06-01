@@ -16,6 +16,12 @@ final class Session: ObservableObject, Identifiable {
     @Published var cwd: String?
     @Published var model: String?
     @Published var label: String = ""
+
+    /// True when `label` was auto-derived from the session's first prompt rather
+    /// than set explicitly (UI rename, `/rename`, or `--name`). An explicit name
+    /// always overrides a derived one and clears this flag.
+    @Published var labelIsDerived: Bool = false
+
     @Published var isPaused: Bool = false
     @Published var isAlive: Bool = true
     @Published var endedAt: Date?
