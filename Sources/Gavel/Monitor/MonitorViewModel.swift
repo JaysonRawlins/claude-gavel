@@ -91,6 +91,21 @@ final class MonitorViewModel: ObservableObject {
         approvalCoordinator.ruleStore?.rules.count ?? 0
     }
 
+    var compactSummary: String {
+        let live = sessionManager.sessions.count
+        let asleep = sessionManager.deadSessions.count
+        var tools = 0, block = 0
+        for session in sessionManager.sessions.values {
+            tools += session.toolCallCount
+            block += session.blockCount
+        }
+        var parts = ["Gavel", "\(live) live"]
+        if asleep > 0 { parts.append("\(asleep) asleep") }
+        parts.append("Tools \(tools)")
+        parts.append("Block \(block)")
+        return parts.joined(separator: " · ")
+    }
+
     var persistentRules: [PersistentRule] {
         approvalCoordinator.ruleStore?.rules ?? []
     }
