@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.17.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.16.1...v1.17.0) (2026-06-01)
+
+
+### Features
+
+* **monitor:** collapsible compact monitor bar ([#105](https://github.com/JaysonRawlins/claude-gavel/issues/105)) ([b8dea39](https://github.com/JaysonRawlins/claude-gavel/commit/b8dea3900f1d573913bd917faa7ac10b37372c2f))
+* **monitor:** log session appear/disappear to gavel.log and the Feed ([#104](https://github.com/JaysonRawlins/claude-gavel/issues/104)) ([067b877](https://github.com/JaysonRawlins/claude-gavel/commit/067b877a83398a7302bc072590993aeb12fd8690))
+
 ## [1.16.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.16.0...v1.16.1) (2026-05-31)
 
 
