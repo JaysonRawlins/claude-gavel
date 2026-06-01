@@ -290,6 +290,12 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        sessionManager.onLifecycle = { [weak self] message, pid, at in
+            DispatchQueue.main.async {
+                self?.viewModel.appendFeedEntry(.system(message, pid: pid, at: at))
+            }
+        }
+
         socketServer?.onEvent = { [weak self] data, respond in
             self?.hookRouter.handle(data: data, respond: respond)
         }
