@@ -221,4 +221,20 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertEqual(reloaded.sessions[livePid]?.sessionId, "legacy-sid")
         XCTAssertTrue(reloaded.deadSessions.isEmpty, "Legacy format has no tombstones")
     }
+
+    // MARK: - Compact summary
+
+    func testCompactSummaryReflectsLiveAndAsleepCounts() {
+        let vm = MonitorViewModel(sessionManager: manager, approvalCoordinator: ApprovalCoordinator())
+
+        _ = manager.session(for: Int(getpid()))
+        let dead = manager.session(for: deadPid)
+        dead.sessionId = "compact-summary-uuid"
+        manager.cleanupDeadSessions()
+
+        let summary = vm.compactSummary
+        XCTAssertTrue(summary.hasPrefix("Gavel"), summary)
+        XCTAssertTrue(summary.contains("1 live"), summary)
+        XCTAssertTrue(summary.contains("1 asleep"), summary)
+    }
 }

@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 struct MonitorWindow: View {
     @ObservedObject var viewModel: MonitorViewModel
     @State private var isPinned: Bool = false
+    @State private var isCompact: Bool = false
+    @State private var savedFrame: NSRect?
     @State private var selectedTab: MonitorTab = .feed
     @State private var sessionFilter: String = ""
     @State private var hideTombstones: Bool = false
@@ -14,14 +16,51 @@ struct MonitorWindow: View {
     }
 
     var body: some View {
+        Group {
+            if isCompact {
+                compactBar
+            } else {
+                fullBody
+            }
+        }
+        .frame(minWidth: isCompact ? 320 : 600, minHeight: isCompact ? 28 : 400)
+    }
+
+    private var compactBar: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(viewModel.sessionManager.sessions.isEmpty ? Color.secondary : Color.green)
+                .frame(width: 7, height: 7)
+            Text(viewModel.compactSummary)
+                .font(.system(.caption, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 4)
+            Button(action: { setCompact(false) }) {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+            }
+            .buttonStyle(.plain)
+            .help("Expand the monitor")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private var fullBody: some View {
         VStack(spacing: 0) {
-            // Status bar with pin toggle
             HStack {
                 StatusView(viewModel: viewModel)
                 Spacer()
+                Button(action: { setCompact(true) }) {
+                    Image(systemName: "rectangle.compress.vertical")
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Collapse to a compact bar")
                 Button(action: {
                     isPinned.toggle()
-                    if let window = NSApp.windows.first(where: { $0.title.contains("Monitor") }) {
+                    if let window = monitorWindow() {
                         window.level = isPinned ? .floating : .normal
                     }
                 }) {
@@ -75,7 +114,36 @@ struct MonitorWindow: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
         }
-        .frame(minWidth: 600, minHeight: 400)
+    }
+
+    private func monitorWindow() -> NSWindow? {
+        NSApp.windows.first { $0.title.contains("Monitor") }
+    }
+
+    private func setCompact(_ compact: Bool) {
+        isCompact = compact
+        guard let window = monitorWindow() else { return }
+        if compact {
+            savedFrame = window.frame
+            window.level = .floating
+            let area = (window.screen ?? NSScreen.main)?.visibleFrame
+            if let area {
+                let size = NSSize(width: 420, height: 64)
+                let rect = NSRect(
+                    x: area.maxX - size.width - 16,
+                    y: area.maxY - size.height - 16,
+                    width: size.width,
+                    height: size.height
+                )
+                window.setFrame(rect, display: true, animate: true)
+            }
+        } else {
+            window.level = isPinned ? .floating : .normal
+            if let savedFrame {
+                window.setFrame(savedFrame, display: true, animate: true)
+            }
+        }
+        viewModel.noteInteraction()
     }
 
     private var sessionControls: some View {
