@@ -27,6 +27,9 @@ final class SessionManager: ObservableObject {
 
     private var lastInteraction: Date = Date()
 
+    /// Fired on session create / tombstone / discover; the daemon mirrors it to gavel.log + the Feed.
+    var onLifecycle: ((_ message: String, _ pid: Int, _ at: Date) -> Void)?
+
     private let defaultsPath: String
     private let sessionsPath: String
 
@@ -60,8 +63,8 @@ final class SessionManager: ObservableObject {
     /// New sessions inherit the default Auto/Sub settings.
     func session(for pid: Int, agent: AgentKind = .claude) -> Session {
         lock.lock()
-        defer { lock.unlock() }
         if let existing = sessions[pid] {
+            lock.unlock()
             return existing
         }
         let session = Session(pid: pid, agent: agent)
@@ -70,7 +73,15 @@ final class SessionManager: ObservableObject {
         session.isPaused = defaultPaused
         sessions[pid] = session
         saveActiveSessionsLocked()
+        lock.unlock()
+        noteLifecycle("session appeared (\(agent.rawValue))", pid: pid)
         return session
+    }
+
+    // Call outside `lock` — does file IO and forwards to a main-thread sink.
+    private func noteLifecycle(_ message: String, pid: Int, at: Date = Date()) {
+        gavelLog("[session] \(message) pid=\(pid)")
+        onLifecycle?(message, pid, at)
     }
 
     /// Save current defaults to disk (called when user toggles).
@@ -377,7 +388,7 @@ final class SessionManager: ObservableObject {
     @discardableResult
     func discoverRunningSessions() -> Int {
         let discovered = ProcessTree.findClaudeCliSessions()
-        var added = 0
+        var addedPids: [Int] = []
         lock.lock()
         for (pid, cwd) in discovered {
             let pidInt = Int(pid)
@@ -388,11 +399,12 @@ final class SessionManager: ObservableObject {
             session.isSubAgentInheritEnabled = defaultSubAgentInherit
             session.isPaused = defaultPaused
             sessions[pidInt] = session
-            added += 1
+            addedPids.append(pidInt)
         }
-        if added > 0 { saveActiveSessionsLocked() }
+        if !addedPids.isEmpty { saveActiveSessionsLocked() }
         lock.unlock()
-        return added
+        for pid in addedPids { noteLifecycle("session discovered (already running)", pid: pid) }
+        return addedPids.count
     }
 
     /// Liveness predicate for a tracked PID; overridable so tests can fake a live session.
@@ -440,6 +452,7 @@ final class SessionManager: ObservableObject {
                 continue
             }
             let now = Date()
+            let resumable = session.sessionId != nil
             sessions.removeValue(forKey: pid)
             if let sid = session.sessionId {
                 deadSessions[sid] = session
@@ -447,6 +460,7 @@ final class SessionManager: ObservableObject {
             saveActiveSessionsLocked()
             lock.unlock()
             stopWatcher(forPid: pid)
+            noteLifecycle(resumable ? "session asleep (process exited)" : "session disappeared (process exited)", pid: pid, at: now)
             // @Published mutations need main thread; this runs on a utility queue.
             DispatchQueue.main.async {
                 session.isAlive = false

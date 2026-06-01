@@ -57,6 +57,37 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertTrue(manager.deadSessions.isEmpty, "No sessionId means no tombstone")
     }
 
+    // MARK: - Lifecycle events
+
+    func testLifecycleCallbackFiresOnAppearAndTeardown() {
+        var events: [(message: String, pid: Int)] = []
+        manager.onLifecycle = { msg, pid, _ in events.append((msg, pid)) }
+
+        let resumablePid = deadPid
+        let resumable = manager.session(for: resumablePid)
+        resumable.sessionId = "uuid-lifecycle"
+
+        let droppedPid = deadPid + 1
+        _ = manager.session(for: droppedPid)
+
+        XCTAssertEqual(
+            events.filter { $0.message.contains("appeared") }.map { $0.pid }.sorted(),
+            [resumablePid, droppedPid].sorted(),
+            "Both new sessions must emit an 'appeared' event"
+        )
+
+        manager.cleanupDeadSessions()
+
+        XCTAssertTrue(
+            events.contains { $0.pid == resumablePid && $0.message.contains("asleep") },
+            "A dead session with a sessionId tombstones → 'asleep'"
+        )
+        XCTAssertTrue(
+            events.contains { $0.pid == droppedPid && $0.message.contains("disappeared") },
+            "A dead session without a sessionId is dropped → 'disappeared'"
+        )
+    }
+
     // MARK: - PID reuse
 
     func testDefaultLivenessRejectsLivePidWithMismatchedCwd() {
