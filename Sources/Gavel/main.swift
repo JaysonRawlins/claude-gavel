@@ -110,9 +110,9 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Show Monitor", action: #selector(showMonitor), keyEquivalent: ""))
-        let contextItem = NSMenuItem(title: "Edit Session Context", action: nil, keyEquivalent: "")
-        contextItem.submenu = buildEditorSubmenu()
-        menu.addItem(contextItem)
+        let editorItem = NSMenuItem(title: "Editor Preference", action: nil, keyEquivalent: "")
+        editorItem.submenu = buildEditorSubmenu()
+        menu.addItem(editorItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Pause All Sessions", action: #selector(togglePauseAll), keyEquivalent: ""))
         let promptAllItem = NSMenuItem(title: "Prompt All Sessions", action: #selector(promptAll), keyEquivalent: "P")
@@ -168,7 +168,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         let preferred = EditorPreference.preferredBundleID
 
         for editor in editors {
-            let item = NSMenuItem(title: editor.name, action: #selector(openContextWithEditor(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: editor.name, action: #selector(selectPreferredEditor(_:)), keyEquivalent: "")
             item.representedObject = editor.bundleID
             item.target = self
             if editor.bundleID == preferred {
@@ -184,53 +184,13 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         return submenu
     }
 
-    @objc private func openContextWithEditor(_ sender: NSMenuItem) {
+    @objc private func selectPreferredEditor(_ sender: NSMenuItem) {
         guard let bundleID = sender.representedObject as? String else { return }
         EditorPreference.preferredBundleID = bundleID
 
-        // Rebuild submenu to update checkmark
-        if let contextItem = statusItem.menu?.items.first(where: { $0.title == "Edit Session Context" }) {
-            contextItem.submenu = buildEditorSubmenu()
+        if let editorItem = statusItem.menu?.items.first(where: { $0.title == "Editor Preference" }) {
+            editorItem.submenu = buildEditorSubmenu()
         }
-
-        let contextPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude/gavel/session-context.md")
-        if !FileManager.default.fileExists(atPath: contextPath.path) {
-            seedSessionContext()
-        }
-        EditorPreference.open(contextPath)
-    }
-
-    /// Copy the default session-context.md if none exists.
-    private func seedSessionContext() {
-        let dest = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude/gavel/session-context.md")
-        guard !FileManager.default.fileExists(atPath: dest.path) else { return }
-        let fallback = """
-        # Session Context — Gavel Performance Tuning
-
-        These instructions are injected into every Claude Code session at startup.
-        Edit this file to customize how Claude behaves in your projects.
-
-        ## Engineering Principles
-
-        - Orthogonal design: single responsibility per component, changes don't cascade
-        - Fail fast, fail loud: validate early, surface errors immediately, never swallow exceptions
-        - Minimal coupling: depend on interfaces not implementations, composition over inheritance
-
-        ## Code Quality
-
-        - Functions under 30 lines, files under 300: if it's longer, split it
-        - Name things for the reader: variable names explain WHY not WHAT
-        - One level of abstraction per function
-        - Reduce nesting: early returns > deeply nested if/else
-
-        ## Verification
-
-        - A successful build proves syntax, not behavior. Run the actual feature path.
-        - If something fails: read the error and trace it. Don't guess-and-retry.
-        """
-        FileManager.default.createFile(atPath: dest.path, contents: Data(fallback.utf8))
     }
 
     @objc private func togglePauseAll() {

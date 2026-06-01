@@ -213,6 +213,14 @@ struct MonitorWindow: View {
                 .tint(.gray)
                 .help("Remove every sleeping (tombstoned) session from the monitor.")
 
+                Button("Forget Unnamed") {
+                    viewModel.sessionManager.clearUnnamedDeadSessions()
+                    viewModel.noteInteraction()
+                }
+                .buttonStyle(.bordered)
+                .tint(.gray)
+                .help("Remove only the sleeping sessions that still have no name.")
+
                 Button("Discover") {
                     viewModel.sessionManager.discoverRunningSessions()
                     viewModel.noteInteraction()
@@ -380,10 +388,36 @@ private struct SessionRow: View {
                 .strikethrough(!session.isAlive)
 
             if let cwd = session.cwd {
-                Text(cwd.split(separator: "/").suffix(2).joined(separator: "/"))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Button {
+                        EditorPreference.open(URL(fileURLWithPath: cwd))
+                        viewModel.noteInteraction()
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "folder")
+                                .font(.caption2)
+                            Text(cwd.split(separator: "/").suffix(2).joined(separator: "/"))
+                                .font(.caption)
+                                .lineLimit(1)
+                        }
+                        .foregroundColor(.secondary)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open \(cwd) in your editor")
+
+                    Button {
+                        RepoBrowser.open(cwd: cwd)
+                        viewModel.noteInteraction()
+                    } label: {
+                        Image(systemName: "arrow.triangle.branch")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open in Tower — staged, unstaged & untracked changes")
+                }
             }
 
             SessionLabelField(session: session) { newVal in
@@ -714,7 +748,8 @@ private struct SessionLabelField: View {
                 Button(action: beginEditing) {
                     Text(session.label.isEmpty ? "Name…" : session.label)
                         .font(.caption)
-                        .foregroundColor(session.label.isEmpty ? .secondary : .primary)
+                        .italic(session.labelIsDerived)
+                        .foregroundColor(labelColor)
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .frame(width: 130, alignment: .leading)
@@ -733,7 +768,19 @@ private struct SessionLabelField: View {
                 .buttonStyle(.plain)
             }
         }
-        .help(session.sessionId.map { "Session ID: \($0)" } ?? "Click to name this session")
+        .help(helpText)
+    }
+
+    private var labelColor: Color {
+        if session.label.isEmpty { return .secondary }
+        return session.labelIsDerived ? .secondary : .primary
+    }
+
+    private var helpText: String {
+        if session.labelIsDerived {
+            return "Auto-named from the first prompt — click to rename"
+        }
+        return session.sessionId.map { "Session ID: \($0)" } ?? "Click to name this session"
     }
 
     private func beginEditing() {
@@ -744,6 +791,7 @@ private struct SessionLabelField: View {
 
     private func commit() {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        session.labelIsDerived = false
         session.label = trimmed
         onCommit(trimmed)
         isEditing = false
