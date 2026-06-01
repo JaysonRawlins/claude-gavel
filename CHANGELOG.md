@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.17.0...v1.18.0) (2026-06-01)
+
+
+### Features
+
+* **monitor:** auto-name sessions, open cwd in editor/Tower, forget unnamed ([#107](https://github.com/JaysonRawlins/claude-gavel/issues/107)) ([8e191ef](https://github.com/JaysonRawlins/claude-gavel/commit/8e191efa54607ed7e1fc9941c98cbbbf7c2bd360))
+
 ## [1.17.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.16.1...v1.17.0) (2026-06-01)
 
 
