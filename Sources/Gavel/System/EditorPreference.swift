@@ -21,6 +21,7 @@ enum EditorPreference {
             "com.sublimetext.4",
             "com.sublimetext.3",
             "com.jetbrains.intellij",
+            "com.jetbrains.CLion",
             "com.apple.dt.Xcode",
             "com.apple.TextEdit",
         ]
@@ -29,6 +30,15 @@ enum EditorPreference {
         for url in appURLs {
             guard let bundle = Bundle(url: url),
                   let bundleID = bundle.bundleIdentifier else { continue }
+            let name = FileManager.default.displayName(atPath: url.path)
+            editors.append((name: name, bundleID: bundleID, url: url))
+        }
+
+        // Project-folder IDEs (e.g. CLion) may not advertise .md support, so
+        // they're absent from the type lookup above. Add any that are installed.
+        let alreadyListed = Set(editors.map(\.bundleID))
+        for bundleID in priorityBundles where !alreadyListed.contains(bundleID) {
+            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { continue }
             let name = FileManager.default.displayName(atPath: url.path)
             editors.append((name: name, bundleID: bundleID, url: url))
         }

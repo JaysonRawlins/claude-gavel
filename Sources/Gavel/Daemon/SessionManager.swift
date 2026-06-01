@@ -121,7 +121,7 @@ final class SessionManager: ObservableObject {
             }
             self?.tryJsonlSeed(session: session)
         }
-        if !currentLabel.isEmpty && savedLabel != currentLabel {
+        if !currentLabel.isEmpty && !session.labelIsDerived && savedLabel != currentLabel {
             sessionLabels[sid] = currentLabel
             saveDefaults()
         }
@@ -153,9 +153,16 @@ final class SessionManager: ObservableObject {
         guard session.label.isEmpty, !jsonlSeedTriedPids.contains(session.pid) else { return }
         guard let sid = session.sessionId, let cwd = session.cwd else { return }
         jsonlSeedTriedPids.insert(session.pid)
-        guard let seeded = JsonlRenameReader.latestRename(cwd: cwd, sessionId: sid) else { return }
-        session.label = seeded
-        setLabel(seeded, for: sid)
+        if let seeded = JsonlRenameReader.latestRename(cwd: cwd, sessionId: sid) {
+            session.labelIsDerived = false
+            session.label = seeded
+            setLabel(seeded, for: sid)
+            return
+        }
+        guard let derived = JsonlRenameReader.firstPromptTitle(cwd: cwd, sessionId: sid) else { return }
+        session.labelIsDerived = true
+        session.label = derived
+        saveActiveSessions()
     }
 
     /// Apply an externally-sourced label update (e.g., from JSONL watcher); no-op on empty or unchanged input.
@@ -165,6 +172,7 @@ final class SessionManager: ObservableObject {
         let currentLabel = session.label
         guard currentLabel != trimmed else { return }
         DispatchQueue.main.async {
+            session.labelIsDerived = false
             session.label = trimmed
         }
         if let sid = sessionId ?? session.sessionId {
@@ -214,6 +222,19 @@ final class SessionManager: ObservableObject {
         lock.unlock()
     }
 
+    /// Forget only the tombstones that still have no name (derived or explicit).
+    func clearUnnamedDeadSessions() {
+        lock.lock()
+        let unnamed = deadSessions.filter { $0.value.label.isEmpty }.map(\.key)
+        for sid in unnamed {
+            deadSessions.removeValue(forKey: sid)
+        }
+        if !unnamed.isEmpty {
+            saveActiveSessionsLocked()
+        }
+        lock.unlock()
+    }
+
     func clearDeadSessions() {
         lock.lock()
         let strayPids = sessions.compactMap { (pid, session) -> Int? in
@@ -241,6 +262,7 @@ final class SessionManager: ObservableObject {
         let isSubAgentInheritEnabled: Bool?
         let isPaused: Bool?
         let label: String?
+        let labelIsDerived: Bool?
         let endedAt: Date?
         let agent: AgentKind?
         let lastPlanPath: String?
@@ -285,6 +307,7 @@ final class SessionManager: ObservableObject {
             isSubAgentInheritEnabled: session.isSubAgentInheritEnabled,
             isPaused: session.isPaused,
             label: session.label.isEmpty ? nil : session.label,
+            labelIsDerived: session.labelIsDerived ? true : nil,
             endedAt: session.endedAt,
             agent: session.agent,
             lastPlanPath: session.lastPlanPath,
@@ -332,6 +355,7 @@ final class SessionManager: ObservableObject {
             session.label = savedLabel
         } else if let label = snap.label {
             session.label = label
+            session.labelIsDerived = snap.labelIsDerived ?? false
         }
         session.lastPlanPath = snap.lastPlanPath
         rehydratePlanPolicy(snap, into: session)
@@ -377,6 +401,11 @@ final class SessionManager: ObservableObject {
             session.label = savedLabel
         } else if let label = snap.label {
             session.label = label
+            session.labelIsDerived = snap.labelIsDerived ?? false
+        } else if let cwd = snap.cwd,
+                  let derived = JsonlRenameReader.firstPromptTitle(cwd: cwd, sessionId: sessionId) {
+            session.label = derived
+            session.labelIsDerived = true
         }
         deadSessions[sessionId] = session
     }
