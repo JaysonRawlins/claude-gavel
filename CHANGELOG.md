@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.21.0...v1.22.0) (2026-06-04)
+
+
+### Features
+
+* **monitor:** collapse to top-most compact bar on deactivate instead of hiding ([#117](https://github.com/JaysonRawlins/claude-gavel/issues/117)) ([20fccbc](https://github.com/JaysonRawlins/claude-gavel/commit/20fccbc68c962765e857a937ca9d9928cbe92b20))
+
 ## [1.21.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.20.0...v1.21.0) (2026-06-04)
 
 
