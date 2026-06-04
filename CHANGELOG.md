@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.20.0...v1.21.0) (2026-06-04)
+
+
+### Features
+
+* **approval:** verify rules.json integrity on load via keyed baseline (tier 2.5) ([#115](https://github.com/JaysonRawlins/claude-gavel/issues/115)) ([d3f39f7](https://github.com/JaysonRawlins/claude-gavel/commit/d3f39f7f322941ceaf0a366fd9c9a834d483c5e3))
+
 ## [1.20.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.19.0...v1.20.0) (2026-06-04)
 
 
