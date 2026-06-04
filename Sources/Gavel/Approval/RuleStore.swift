@@ -14,6 +14,15 @@ final class RuleStore: ObservableObject {
     private var fileVersion: Int = 0
     private let configPath: String
 
+    enum IntegrityStatus { case intact, established, restoredFromBackup, resetToDefaults }
+    private(set) var lastLoadIntegrityStatus: IntegrityStatus = .intact
+
+    private var signaturePath: String { configPath + ".integrity" }
+    private var backupPath: String { configPath + ".bak" }
+    private lazy var baseline = ConfigBaseline(
+        keyPath: (configPath as NSString).deletingLastPathComponent + "/.integrity-key"
+    )
+
     /// Current seed version — bump when adding new default rules.
     private static let seedVersion = 10
 
@@ -365,8 +374,12 @@ final class RuleStore: ObservableObject {
             deletedBuiltInPatterns = []
         }
 
+        let needsPersist = validateOrRecover()
+
         if fileVersion < Self.seedVersion {
             seedDefaults(existingRules: rules, version: fileVersion, deleted: deletedBuiltInPatterns)
+        } else if needsPersist || !baseline.signatureExists(at: signaturePath) || !FileManager.default.fileExists(atPath: backupPath) {
+            saveRules()
         }
     }
 
@@ -391,11 +404,8 @@ final class RuleStore: ObservableObject {
 
     func onDiskMatchesMemory() -> Bool {
         guard let raw = FileManager.default.contents(atPath: configPath),
-              let onDisk = try? JSONDecoder().decode(RulesFile.self, from: raw) else { return false }
-        let memory = RulesFile(version: fileVersion, deletedBuiltInPatterns: deletedBuiltInPatterns, rules: rules)
-        let canonical = JSONEncoder()
-        canonical.outputFormatting = .sortedKeys
-        guard let a = try? canonical.encode(onDisk), let b = try? canonical.encode(memory) else { return false }
+              let onDisk = try? JSONDecoder().decode(RulesFile.self, from: raw),
+              let a = canonical(onDisk), let b = canonicalRules() else { return false }
         return a == b
     }
 
@@ -403,11 +413,55 @@ final class RuleStore: ObservableObject {
         saveRules()
     }
 
+    func canonicalRules() -> Data? {
+        canonical(currentRulesFile())
+    }
+
+    private func currentRulesFile() -> RulesFile {
+        RulesFile(version: fileVersion, deletedBuiltInPatterns: deletedBuiltInPatterns, rules: rules)
+    }
+
+    private func canonical(_ file: RulesFile) -> Data? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return try? encoder.encode(file)
+    }
+
     private func encodedRules() -> Data? {
-        let file = RulesFile(version: fileVersion, deletedBuiltInPatterns: deletedBuiltInPatterns, rules: rules)
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
-        return try? encoder.encode(file)
+        return try? encoder.encode(currentRulesFile())
+    }
+
+    private func validateOrRecover() -> Bool {
+        guard baseline.signatureExists(at: signaturePath) else {
+            lastLoadIntegrityStatus = .established
+            return true
+        }
+        if let canon = canonicalRules(), baseline.isValid(canon, against: signaturePath) {
+            lastLoadIntegrityStatus = .intact
+            return false
+        }
+        if let recovered = trustedBackup() {
+            rules = recovered.rules
+            fileVersion = recovered.version
+            deletedBuiltInPatterns = recovered.deletedBuiltInPatterns
+            lastLoadIntegrityStatus = .restoredFromBackup
+            return true
+        }
+        rules = []
+        fileVersion = 0
+        deletedBuiltInPatterns = []
+        lastLoadIntegrityStatus = .resetToDefaults
+        return true
+    }
+
+    private func trustedBackup() -> RulesFile? {
+        guard let data = FileManager.default.contents(atPath: backupPath),
+              let file = try? JSONDecoder().decode(RulesFile.self, from: data),
+              let canon = canonical(file),
+              baseline.isValid(canon, against: signaturePath) else { return nil }
+        return file
     }
 
     private func saveRules() {
@@ -417,6 +471,10 @@ final class RuleStore: ObservableObject {
         guard let data = encodedRules() else { return }
         ConfigIntegrity.shared.withWriteWindow(path: configPath) {
             FileManager.default.createFile(atPath: configPath, contents: data)
+        }
+        try? data.write(to: URL(fileURLWithPath: backupPath))
+        if let canon = canonicalRules() {
+            baseline.recordSignature(of: canon, to: signaturePath)
         }
     }
 }
