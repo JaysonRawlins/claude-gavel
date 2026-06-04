@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.18.0...v1.18.1) (2026-06-04)
+
+
+### Bug Fixes
+
+* **approval:** block container bind-mount bypass of config self-protection ([#109](https://github.com/JaysonRawlins/claude-gavel/issues/109)) ([eeac163](https://github.com/JaysonRawlins/claude-gavel/commit/eeac16305eaad9c57170b5c0783dcddbf12bd1a6))
+
 ## [1.18.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.17.0...v1.18.0) (2026-06-01)
 
 
