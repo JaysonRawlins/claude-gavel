@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.18.1...v1.19.0) (2026-06-04)
+
+
+### Features
+
+* **approval:** enforce rules.json immutability (config integrity tier 1) ([#111](https://github.com/JaysonRawlins/claude-gavel/issues/111)) ([c6348b9](https://github.com/JaysonRawlins/claude-gavel/commit/c6348b98f2674ee6efc701792d8ad11a2e66d74b))
+
 ## [1.18.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.18.0...v1.18.1) (2026-06-04)
 
 
