@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.19.0...v1.20.0) (2026-06-04)
+
+
+### Features
+
+* **approval:** watch rules.json and revert out-of-band writes (config integrity tier 2) ([#113](https://github.com/JaysonRawlins/claude-gavel/issues/113)) ([1d1b812](https://github.com/JaysonRawlins/claude-gavel/commit/1d1b812ee36d90b6a3f1e238685199c54c1e2cb5))
+
 ## [1.19.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.18.1...v1.19.0) (2026-06-04)
 
 
