@@ -15,13 +15,14 @@ final class RuleStore: ObservableObject {
     private let configPath: String
 
     /// Current seed version — bump when adding new default rules.
-    private static let seedVersion = 9
+    private static let seedVersion = 10
 
     /// Built-in patterns replaced by a corrected/broadened seeded rule. On re-seed
     /// these are dropped from existing rules.json so a pattern fix swaps cleanly
     /// instead of leaving the old (narrower) rule behind as a duplicate.
     private static let supersededBuiltInPatterns: Set<String> = [
-        "\\bgit\\s+commit\\b"  // broadened to catch `git -C <path> commit` etc.
+        "\\bgit\\s+commit\\b",  // broadened to catch `git -C <path> commit` etc.
+        "\\.claude/(gavel/|settings|hooks/)"  // trailing-slash form missed `-v ~/.claude/gavel:/dst` (colon)
     ]
 
     init(configPath: String? = nil) {
@@ -183,12 +184,44 @@ final class RuleStore: ObservableObject {
         ),
 
         // ── Gavel/Claude self-protection: any Bash command referencing config paths ──
+        // The path segment is followed by `\b` (not a literal `/`) so the directory
+        // also matches when it precedes a `:` — the form a container `-v src:dst`
+        // bind-mount produces (`-v ~/.claude/gavel:/dst`), which the older
+        // trailing-slash pattern silently missed.
         PersistentRule(
             toolName: "Bash",
-            pattern: "\\.claude/(gavel/|settings|hooks/)",
+            pattern: "\\.claude/(gavel|settings|hooks)\\b|\\.codex/(config|hooks)\\b",
             isRegex: true,
             verdict: .prompt,
-            explanation: "Bash command references Gavel/Claude config — session allow for legitimate use",
+            explanation: "Bash command references Gavel/Claude/Codex config — session allow for legitimate use",
+            builtIn: true
+        ),
+
+        // ── Container-runtime bind-mount of a config dir ──
+        // A container started by Claude can run as root-in-container and bind-mount
+        // host paths writable; the actual write happens inside the container, so the
+        // protected path only appears as a `-v`/`--mount` source, evading the
+        // path-write rules. Catches mounts of `.claude`/`.codex` even when the mount
+        // is the parent dir (descended to inside the container).
+        PersistentRule(
+            toolName: "Bash",
+            pattern: "\\b(docker|podman|nerdctl|finch|orbctl|lima|colima|ctr|apptainer|singularity)\\b.*(-v|--volume|--mount)\\b[^\\n]*\\.(claude|codex)\\b",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "Container bind-mounts a Claude/Codex config dir — bypasses path-write protection",
+            builtIn: true
+        ),
+
+        // ── Container-runtime bind-mount of home root or filesystem root ──
+        // Mounting the whole home dir (or `/`) reaches every protected path with no
+        // literal `.claude` token in the command, so the rule above can't see it.
+        // Project-subdir mounts (`-v ~/proj:/app`, `-v $(pwd):/app`) are unaffected.
+        PersistentRule(
+            toolName: "Bash",
+            pattern: "\\b(docker|podman|nerdctl|finch|orbctl|lima|colima|ctr|apptainer|singularity)\\b.*(-v|--volume)\\s*=?\\s*(~|\\$HOME|/Users/[^:/\\s]+|/)\\s*:",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "Container bind-mounts home or filesystem root — reaches every protected path",
             builtIn: true
         ),
 

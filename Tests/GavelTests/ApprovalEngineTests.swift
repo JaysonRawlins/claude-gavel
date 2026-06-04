@@ -127,6 +127,68 @@ final class ApprovalEngineTests: XCTestCase {
         }
     }
 
+    // MARK: - Container bind-mount self-protection (docker-group bypass class)
+
+    func testContainerBindMountOfConfigPromptsUnderAutoApprove() {
+        session.autoApproveUntil = Date().addingTimeInterval(300)
+        for cmd in [
+            "docker run --rm --pull=never -v ~/.claude/gavel:/hg:rw postgres:16 /usr/bin/install -m 0644 /etc/hostname /hg/rules.json",
+            "docker run --rm -v ~/.claude:/hc:rw postgres:16 find /hc/gavel -name x -delete",
+            "podman run -v ~/.codex:/hc alpine cp /etc/hostname /hc/config.toml",
+            "nerdctl run --mount type=bind,src=$HOME/.claude/hooks,dst=/h busybox true",
+        ] {
+            let decision = engine.evaluate(payload: payload(command: cmd), session: session)
+            XCTAssertEqual(decision.verdict, .block, "container config bind-mount must prompt: \(cmd)")
+            XCTAssertTrue(decision.askUser, "expected dialog for: \(cmd)")
+        }
+    }
+
+    func testContainerBindMountOfHomeOrRootPromptsUnderAutoApprove() {
+        session.autoApproveUntil = Date().addingTimeInterval(300)
+        for cmd in [
+            "docker run -v ~:/h ubuntu:22.04 /usr/bin/install -m 0644 /etc/hostname /h/somefile",
+            "podman run -v $HOME:/h alpine cp /etc/hostname /h/x",
+            "docker run -v /Users/jjrawlins:/host ubuntu touch /host/x",
+            "docker run -v /:/rootfs busybox true",
+        ] {
+            let decision = engine.evaluate(payload: payload(command: cmd), session: session)
+            XCTAssertEqual(decision.verdict, .block, "container home/root bind-mount must prompt: \(cmd)")
+            XCTAssertTrue(decision.askUser, "expected dialog for: \(cmd)")
+        }
+    }
+
+    func testBenignContainerMountsNotFlagged() {
+        session.autoApproveUntil = Date().addingTimeInterval(300)
+        for cmd in [
+            "docker run --rm -v $(pwd):/app -w /app node:20 npm test",
+            "docker run -v ./data:/data postgres:16",
+            "docker run -v ~/projects/myapp:/app golang:1.22 go build",
+            "docker run -v /Users/jjrawlins/code/app:/app ubuntu make",
+            "docker run -v /data:/data postgres:16",
+            "docker compose up -d",
+            "docker ps",
+        ] {
+            let decision = engine.evaluate(payload: payload(command: cmd), session: session)
+            XCTAssertEqual(decision.verdict, .allow, "benign container command must not prompt: \(cmd)")
+        }
+    }
+
+    func testSeedMigrationReplacesSupersededSelfProtectionPattern() {
+        let path = NSTemporaryDirectory() + "seed-selfprotect-\(UUID().uuidString).json"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let oldNarrow = "\\.claude/(gavel/|settings|hooks/)"
+        let oldRule = PersistentRule(toolName: "Bash", pattern: oldNarrow, isRegex: true,
+                                     verdict: .prompt, explanation: "old", builtIn: true)
+        let data = try! JSONEncoder().encode(RulesFile(version: 9, deletedBuiltInPatterns: [], rules: [oldRule]))
+        FileManager.default.createFile(atPath: path, contents: data)
+
+        let store = RuleStore(configPath: path)
+        let selfProtect = store.rules.filter { $0.toolName == "Bash" && $0.pattern.contains("gavel") }.map(\.pattern)
+        XCTAssertEqual(selfProtect.count, 1, "exactly one Bash self-protection rule after re-seed (no duplicate)")
+        XCTAssertFalse(selfProtect.contains(oldNarrow), "old trailing-slash pattern dropped on re-seed")
+        XCTAssertTrue(selfProtect.first?.contains("gavel|settings|hooks") ?? false, "broadened pattern seeded")
+    }
+
     func testCommitCheckpointNotSilencedByAllowRule() {
         engine.ruleStore.addRule(PersistentRule(toolName: "Bash", pattern: "git *", verdict: .allow))
         let decision = engine.evaluate(payload: payload(command: "git commit -m \"wip\""), session: session)
