@@ -47,6 +47,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         setupHookRouter()
         ConfigIntegrity.shared.protect()
         setupConfigWatcher()
+        reportLoadIntegrity()
         GavelNotifications.requestPermission()
 
         sessionManager.$defaultAutoApprove
@@ -74,6 +75,20 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         configWatcher?.stop()
         ConfigIntegrity.shared.unprotect()
         socketServer?.stop()
+    }
+
+    private func reportLoadIntegrity() {
+        let message: String
+        switch approvalEngine.ruleStore.lastLoadIntegrityStatus {
+        case .intact, .established:
+            return
+        case .restoredFromBackup:
+            message = "rules.json was modified while gavel was stopped — restored from verified backup"
+        case .resetToDefaults:
+            message = "rules.json failed integrity check on load with no valid backup — reset to built-in defaults"
+        }
+        gavelLog("ConfigBaseline: \(message)")
+        viewModel.appendFeedEntry(.system("⚠️ \(message)", pid: Int(getpid()), at: Date()))
     }
 
     private func setupConfigWatcher() {
