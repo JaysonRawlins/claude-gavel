@@ -394,7 +394,8 @@ final class RuleStore: ObservableObject {
         let file = RulesFile(version: fileVersion, deletedBuiltInPatterns: deletedBuiltInPatterns, rules: rules)
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
-        if let data = try? encoder.encode(file) {
+        guard let data = try? encoder.encode(file) else { return }
+        ConfigIntegrity.shared.withWriteWindow(path: configPath) {
             FileManager.default.createFile(atPath: configPath, contents: data)
         }
     }

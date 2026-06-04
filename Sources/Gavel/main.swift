@@ -44,6 +44,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         setupMenuBar()
         setupSocketServer()
         setupHookRouter()
+        ConfigIntegrity.shared.protect()
         GavelNotifications.requestPermission()
 
         sessionManager.$defaultAutoApprove
@@ -68,6 +69,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        ConfigIntegrity.shared.unprotect()
         socketServer?.stop()
     }
 
@@ -301,6 +303,23 @@ for sig: Int32 in [SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE] {
         gavelLog("SIGNAL: \(signum)")
         exit(signum)
     }
+}
+
+// SIGTERM (launchd / `brew services stop`) and SIGINT (dev Ctrl-C) do NOT
+// trigger applicationWillTerminate, so config would stay immutable after a
+// graceful stop. Handle them via DispatchSource (runs off the signal context,
+// so the lock + chflags in unprotect() are safe) to clear the flag before exit.
+let signalQueue = DispatchQueue(label: "com.gavel.signals")
+let terminationSignalSources: [DispatchSourceSignal] = [SIGTERM, SIGINT].map { sig in
+    signal(sig, SIG_IGN)
+    let source = DispatchSource.makeSignalSource(signal: sig, queue: signalQueue)
+    source.setEventHandler {
+        gavelLog("SIGNAL: \(sig) — unprotecting config before exit")
+        ConfigIntegrity.shared.unprotect()
+        exit(0)
+    }
+    source.resume()
+    return source
 }
 
 gavelLog("Gavel starting")
