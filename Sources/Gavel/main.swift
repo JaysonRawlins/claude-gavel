@@ -44,6 +44,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         setupMenuBar()
         setupSocketServer()
         setupHookRouter()
+        ConfigIntegrity.shared.protect()
         GavelNotifications.requestPermission()
 
         sessionManager.$defaultAutoApprove
@@ -68,6 +69,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        ConfigIntegrity.shared.unprotect()
         socketServer?.stop()
     }
 
