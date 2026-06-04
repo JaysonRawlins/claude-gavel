@@ -190,7 +190,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
                 defer: false
             )
             window.title = "Gavel — Claude Code Monitor"
-            window.contentView = NSHostingView(rootView: contentView)
+            window.contentView = FirstMouseHostingView(rootView: contentView)
             window.center()
             window.isReleasedWhenClosed = false
             monitorWindow = window

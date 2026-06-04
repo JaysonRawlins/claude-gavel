@@ -24,6 +24,21 @@ struct MonitorWindow: View {
             }
         }
         .frame(minWidth: isCompact ? 320 : 600, minHeight: isCompact ? 28 : 400)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            collapseOnDeactivate()
+        }
+    }
+
+    private func collapseOnDeactivate() {
+        guard !isCompact, !isPinned else { return }
+        guard let window = monitorWindow(), window.isVisible else { return }
+        setCompact(true)
+    }
+
+    private func expandFromCompact() {
+        NSApp.activate(ignoringOtherApps: true)
+        setCompact(false)
+        monitorWindow()?.makeKeyAndOrderFront(nil)
     }
 
     private var compactBar: some View {
@@ -36,7 +51,7 @@ struct MonitorWindow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 4)
-            Button(action: { setCompact(false) }) {
+            Button(action: { expandFromCompact() }) {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
             }
             .buttonStyle(.plain)
@@ -45,6 +60,8 @@ struct MonitorWindow: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Color(nsColor: .controlBackgroundColor))
+        .contentShape(Rectangle())
+        .onTapGesture { expandFromCompact() }
     }
 
     private var fullBody: some View {
@@ -68,7 +85,9 @@ struct MonitorWindow: View {
                         .foregroundColor(isPinned ? .orange : .secondary)
                 }
                 .buttonStyle(.plain)
-                .help(isPinned ? "Unpin window" : "Pin window on top")
+                .help(isPinned
+                      ? "Unpin — clicking another app collapses the monitor to the compact bar"
+                      : "Pin the full window on top — stays expanded when you click another app")
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
