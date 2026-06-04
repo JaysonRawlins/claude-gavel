@@ -387,14 +387,34 @@ final class RuleStore: ObservableObject {
         saveRules()
     }
 
+    var filePath: String { configPath }
+
+    func onDiskMatchesMemory() -> Bool {
+        guard let raw = FileManager.default.contents(atPath: configPath),
+              let onDisk = try? JSONDecoder().decode(RulesFile.self, from: raw) else { return false }
+        let memory = RulesFile(version: fileVersion, deletedBuiltInPatterns: deletedBuiltInPatterns, rules: rules)
+        let canonical = JSONEncoder()
+        canonical.outputFormatting = .sortedKeys
+        guard let a = try? canonical.encode(onDisk), let b = try? canonical.encode(memory) else { return false }
+        return a == b
+    }
+
+    func reassertOnDisk() {
+        saveRules()
+    }
+
+    private func encodedRules() -> Data? {
+        let file = RulesFile(version: fileVersion, deletedBuiltInPatterns: deletedBuiltInPatterns, rules: rules)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        return try? encoder.encode(file)
+    }
+
     private func saveRules() {
         let dir = (configPath as NSString).deletingLastPathComponent
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
 
-        let file = RulesFile(version: fileVersion, deletedBuiltInPatterns: deletedBuiltInPatterns, rules: rules)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .prettyPrinted
-        guard let data = try? encoder.encode(file) else { return }
+        guard let data = encodedRules() else { return }
         ConfigIntegrity.shared.withWriteWindow(path: configPath) {
             FileManager.default.createFile(atPath: configPath, contents: data)
         }

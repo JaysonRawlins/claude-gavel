@@ -33,6 +33,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         approvalCoordinator: approvalCoordinator
     )
     var socketServer: SocketServer?
+    var configWatcher: ConfigWatcher?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Disable macOS smart dashes/quotes — gavel needs exact ASCII for patterns
@@ -45,6 +46,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         setupSocketServer()
         setupHookRouter()
         ConfigIntegrity.shared.protect()
+        setupConfigWatcher()
         GavelNotifications.requestPermission()
 
         sessionManager.$defaultAutoApprove
@@ -69,8 +71,26 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        configWatcher?.stop()
         ConfigIntegrity.shared.unprotect()
         socketServer?.stop()
+    }
+
+    private func setupConfigWatcher() {
+        let ruleStore = approvalEngine.ruleStore
+        configWatcher = ConfigWatcher(
+            path: ruleStore.filePath,
+            isIntact: { ruleStore.onDiskMatchesMemory() },
+            restore: { ruleStore.reassertOnDisk() },
+            onTamper: { [weak self] in
+                let message = "rules.json modified out-of-band — reverted from in-memory rules"
+                gavelLog("ConfigWatcher: \(message)")
+                DispatchQueue.main.async {
+                    self?.viewModel.appendFeedEntry(.system("⚠️ \(message)", pid: Int(getpid()), at: Date()))
+                }
+            }
+        )
+        configWatcher?.start()
     }
 
     // MARK: - Main Menu (needed for Cmd+V/C/X/A in text fields)
