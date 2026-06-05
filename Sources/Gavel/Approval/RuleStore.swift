@@ -602,11 +602,7 @@ struct PersistentRule: Codable, Identifiable {
             raw = command ?? filePath ?? ""
         }
 
-        // Sanitize typographic dashes so patterns match consistently
-        let target = raw
-            .replacingOccurrences(of: "\u{2013}", with: "-")
-            .replacingOccurrences(of: "\u{2014}", with: "--")
-            .replacingOccurrences(of: "\u{2012}", with: "-")
+        let target = Self.sanitizeDashes(raw)
 
         guard let regex = compiledRegex else { return false }
 
@@ -627,12 +623,21 @@ struct PersistentRule: Codable, Identifiable {
         if toolName == "Bash" && !raw.isEmpty {
             let expanded = PatternMatcher.expandInlineVariables(raw)
             if expanded != raw {
-                let expandedTarget = expanded
-                    .replacingOccurrences(of: "\u{2013}", with: "-")
-                    .replacingOccurrences(of: "\u{2014}", with: "--")
-                    .replacingOccurrences(of: "\u{2012}", with: "-")
+                let expandedTarget = Self.sanitizeDashes(expanded)
                 let strippedExpanded = PatternMatcher.stripQuotedContent(expandedTarget)
                 if matchesRegex(regex, in: strippedExpanded) {
+                    return true
+                }
+            }
+        }
+
+        // Per-segment match: a negative lookahead (e.g. (?!.*--only-names)) on the
+        // whole compound command is suppressed by a safe token in a LATER segment.
+        if toolName == "Bash" && (verdict == .block || verdict == .prompt) {
+            if matchesAnySegment(regex, in: target) { return true }
+            if !raw.isEmpty {
+                let expanded = PatternMatcher.expandInlineVariables(raw)
+                if expanded != raw, matchesAnySegment(regex, in: Self.sanitizeDashes(expanded)) {
                     return true
                 }
             }
@@ -650,6 +655,22 @@ struct PersistentRule: Codable, Identifiable {
 
     private func matchesRegex(_ regex: NSRegularExpression, in string: String) -> Bool {
         regex.firstMatch(in: string, range: NSRange(string.startIndex..., in: string)) != nil
+    }
+
+    private func matchesAnySegment(_ regex: NSRegularExpression, in command: String) -> Bool {
+        for segment in SessionRule.splitCommandSegments(command) {
+            let stripped = PatternMatcher.stripQuotedContent(segment)
+            if matchesRegex(regex, in: segment) && matchesRegex(regex, in: stripped) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func sanitizeDashes(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "\u{2013}", with: "-")
+            .replacingOccurrences(of: "\u{2014}", with: "--")
+            .replacingOccurrences(of: "\u{2012}", with: "-")
     }
 
     /// Compile a pattern to regex. Glob patterns are converted; regex patterns used as-is.
