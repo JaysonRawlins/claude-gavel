@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.22.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.22.0...v1.22.1) (2026-06-05)
+
+
+### Bug Fixes
+
+* **approval:** evaluate deny/prompt rules per command segment ([#119](https://github.com/JaysonRawlins/claude-gavel/issues/119)) ([e66645b](https://github.com/JaysonRawlins/claude-gavel/commit/e66645bd9042241b7313bff82290be31960c3972))
+* **approval:** protect .mcp.json and ANTHROPIC_BASE_URL writes ([#120](https://github.com/JaysonRawlins/claude-gavel/issues/120)) ([6b044b1](https://github.com/JaysonRawlins/claude-gavel/commit/6b044b1e34f59eca6f5d838b21f7b0834159990c))
+* **matcher:** normalize shell line-continuations before bash matching ([#121](https://github.com/JaysonRawlins/claude-gavel/issues/121)) ([e852a16](https://github.com/JaysonRawlins/claude-gavel/commit/e852a16f5b752fac207ce76fa974484beb378868))
+
 ## [1.22.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.21.0...v1.22.0) (2026-06-04)
 
 
