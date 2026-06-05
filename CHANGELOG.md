@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.2](https://github.com/JaysonRawlins/claude-gavel/compare/v1.22.1...v1.22.2) (2026-06-05)
+
+
+### Bug Fixes
+
+* **approval:** normalize line-continuations in PersistentRule bash matching ([#123](https://github.com/JaysonRawlins/claude-gavel/issues/123)) ([c1e150f](https://github.com/JaysonRawlins/claude-gavel/commit/c1e150f09f3884035b774b5b8431cc3c6eb9dbb0))
+
 ## [1.22.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.22.0...v1.22.1) (2026-06-05)
 
 
