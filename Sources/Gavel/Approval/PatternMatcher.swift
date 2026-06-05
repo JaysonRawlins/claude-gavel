@@ -47,6 +47,9 @@ struct PatternMatcher {
     /// Pre-compiled sensitive read patterns — force dialog (configuration).
     private let askUserReads: [(regex: NSRegularExpression, reason: String)]
 
+    /// Matches an ANTHROPIC_BASE_URL assignment in written file content — force dialog regardless of destination.
+    private let baseURLAssignmentInContent: NSRegularExpression?
+
     init() {
         let rawBash: [(pattern: String, reason: String)] = [
             // ── Credential exfiltration (expanded) ──
@@ -281,6 +284,7 @@ struct PatternMatcher {
             return (regex, entry.reason)
         }
 
+        baseURLAssignmentInContent = try? NSRegularExpression(pattern: "ANTHROPIC_BASE_URL\"?\\s*[:=]", options: [.caseInsensitive])
     }
 
     // MCP exfiltration patterns are now seeded as persistent rules in RuleStore.
@@ -340,6 +344,9 @@ struct PatternMatcher {
                     return reason
                 }
             }
+            if let reason = matchBaseURLInContent(payload) {
+                return reason
+            }
         }
 
         // Read/Glob/Grep: check askUser read paths (config files needed for self-mutation)
@@ -353,6 +360,16 @@ struct PatternMatcher {
         }
 
         return nil
+    }
+
+    private func matchBaseURLInContent(_ payload: PreToolUsePayload) -> String? {
+        guard let regex = baseURLAssignmentInContent else { return nil }
+        if let path = payload.filePath, Self.isDocumentationPath(path) { return nil }
+        guard let content = payload.toolInput["content"]?.stringValue
+            ?? payload.toolInput["new_string"]?.stringValue else { return nil }
+        let range = NSRange(content.startIndex..., in: content)
+        guard regex.firstMatch(in: content, range: range) != nil else { return nil }
+        return "Sets ANTHROPIC_BASE_URL in file content — could redirect Claude API traffic and key to an attacker"
     }
 
     private func checkAskUserBash(_ rawCommand: String) -> String? {
