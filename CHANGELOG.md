@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.3](https://github.com/JaysonRawlins/claude-gavel/compare/v1.22.2...v1.22.3) (2026-06-05)
+
+
+### Bug Fixes
+
+* **approval:** gate ANTHROPIC_BASE_URL written into file content ([#125](https://github.com/JaysonRawlins/claude-gavel/issues/125)) ([b8f50c7](https://github.com/JaysonRawlins/claude-gavel/commit/b8f50c78c660dbf1c53de9f9196c128b0917e199))
+
 ## [1.22.2](https://github.com/JaysonRawlins/claude-gavel/compare/v1.22.1...v1.22.2) (2026-06-05)
 
 
