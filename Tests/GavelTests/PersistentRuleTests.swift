@@ -185,10 +185,11 @@ final class PersistentRuleTests: XCTestCase {
         let store = RuleStore(configPath: "/dev/null")
         let builtInRules = store.rules.filter { $0.builtIn }
         XCTAssertEqual(builtInRules.count, RuleStore.seededDefaults.count)
-        // v10: 5 MCP exfil + 1 Bash self-protection + 1 apply_patch self-protection
-        //      + 2 container bind-mount self-protection + 1 scripting + 3 sandbox escape
-        //      + 2 git safety + 1 commit checkpoint + 1 infra apply + 3 scheduler = 20
-        XCTAssertEqual(builtInRules.count, 20)
+        // v11: 5 MCP exfil + 1 Bash self-protection + 1 ANTHROPIC_BASE_URL
+        //      + 1 apply_patch self-protection + 2 container bind-mount self-protection
+        //      + 1 scripting + 3 sandbox escape + 2 git safety + 1 commit checkpoint
+        //      + 1 infra apply + 3 scheduler = 21
+        XCTAssertEqual(builtInRules.count, 21)
     }
 
     func testSeededRulesArePromptVerdict() {
