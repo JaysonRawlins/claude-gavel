@@ -24,14 +24,16 @@ final class RuleStore: ObservableObject {
     )
 
     /// Current seed version — bump when adding new default rules.
-    private static let seedVersion = 10
+    private static let seedVersion = 11
 
     /// Built-in patterns replaced by a corrected/broadened seeded rule. On re-seed
     /// these are dropped from existing rules.json so a pattern fix swaps cleanly
     /// instead of leaving the old (narrower) rule behind as a duplicate.
     private static let supersededBuiltInPatterns: Set<String> = [
         "\\bgit\\s+commit\\b",  // broadened to catch `git -C <path> commit` etc.
-        "\\.claude/(gavel/|settings|hooks/)"  // trailing-slash form missed `-v ~/.claude/gavel:/dst` (colon)
+        "\\.claude/(gavel/|settings|hooks/)",  // trailing-slash form missed `-v ~/.claude/gavel:/dst` (colon)
+        "\\.claude/(gavel|settings|hooks)\\b|\\.codex/(config|hooks)\\b",  // broadened to cover .mcp.json
+        "\\.claude/(gavel/|settings|hooks/)|\\.codex/(config|hooks)|\\.(zshrc|bashrc|bash_profile|profile)\\b"  // apply_patch: + .mcp.json
     ]
 
     init(configPath: String? = nil) {
@@ -199,10 +201,22 @@ final class RuleStore: ObservableObject {
         // trailing-slash pattern silently missed.
         PersistentRule(
             toolName: "Bash",
-            pattern: "\\.claude/(gavel|settings|hooks)\\b|\\.codex/(config|hooks)\\b",
+            pattern: "\\.claude/(gavel|settings|hooks)\\b|\\.codex/(config|hooks)\\b|\\.mcp\\.json\\b",
             isRegex: true,
             verdict: .prompt,
-            explanation: "Bash command references Gavel/Claude/Codex config — session allow for legitimate use",
+            explanation: "Bash command references Gavel/Claude/Codex config or .mcp.json — session allow for legitimate use",
+            builtIn: true
+        ),
+
+        // ── ANTHROPIC_BASE_URL: redirects all Claude API traffic ──
+        // Setting it (export, inline env prefix, or written into a config file)
+        // can route requests — and the API key — to an attacker endpoint.
+        PersistentRule(
+            toolName: "Bash",
+            pattern: "ANTHROPIC_BASE_URL\\s*=",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "Sets ANTHROPIC_BASE_URL — could redirect Claude API traffic and key to an attacker",
             builtIn: true
         ),
 
@@ -237,10 +251,10 @@ final class RuleStore: ObservableObject {
         // ── Codex apply_patch self-protection ──
         PersistentRule(
             toolName: "apply_patch",
-            pattern: "\\.claude/(gavel/|settings|hooks/)|\\.codex/(config|hooks)|\\.(zshrc|bashrc|bash_profile|profile)\\b",
+            pattern: "\\.claude/(gavel/|settings|hooks/)|\\.codex/(config|hooks)|\\.mcp\\.json\\b|\\.(zshrc|bashrc|bash_profile|profile)\\b",
             isRegex: true,
             verdict: .prompt,
-            explanation: "apply_patch references Gavel/Claude/Codex config or shell init — verify intent",
+            explanation: "apply_patch references Gavel/Claude/Codex config, .mcp.json, or shell init — verify intent",
             builtIn: true
         ),
 

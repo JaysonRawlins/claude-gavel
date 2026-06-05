@@ -203,6 +203,8 @@ struct PatternMatcher {
             ("\\.claude/gavel/(rules\\.json|session-defaults\\.json|hooks/|bin/)", "Sensitive: Gavel config"),
             // Claude Code hooks and settings
             ("\\.claude/(settings\\.json|settings\\.local\\.json|hooks/)", "Sensitive: Claude Code settings/hooks"),
+            // Project MCP server config (auto-enable / server-definition vector)
+            ("\\.mcp\\.json$", "Sensitive: MCP server config"),
             // Shell config
             ("\\.(bash_profile|bashrc|zshrc|zprofile|profile|zshenv)$", "Sensitive: Shell config"),
         ]
