@@ -353,7 +353,8 @@ struct PatternMatcher {
         return nil
     }
 
-    private func checkAskUserBash(_ command: String) -> String? {
+    private func checkAskUserBash(_ rawCommand: String) -> String? {
+        let command = Self.joinLineContinuations(rawCommand)
         let stripped = Self.stripQuotedContent(command)
         if Self.containsAwsWriteOperation(stripped) {
             return "AWS CLI write operation"
@@ -428,8 +429,9 @@ struct PatternMatcher {
 
     // MARK: - Bash command matching
 
-    private func matchBashCommand(_ command: String?) -> String? {
-        guard let command = command else { return nil }
+    private func matchBashCommand(_ rawCommand: String?) -> String? {
+        guard let rawCommand = rawCommand else { return nil }
+        let command = Self.joinLineContinuations(rawCommand)
 
         if let reason = checkBashPatterns(command) { return reason }
 
@@ -455,6 +457,15 @@ struct PatternMatcher {
             }
         }
         return nil
+    }
+
+    /// Collapse shell line-continuations (`\` + newline) to a space, mirroring what
+    /// the shell does before execution — so `curl \<newline> -d @secret` can't split
+    /// a flag away from its command to slip past a single-line anchored pattern.
+    static func joinLineContinuations(_ command: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: #"\\\r?\n[ \t]*"#) else { return command }
+        let range = NSRange(command.startIndex..., in: command)
+        return regex.stringByReplacingMatches(in: command, range: range, withTemplate: " ")
     }
 
     /// Strip message/string-literal content to reduce false positives.
