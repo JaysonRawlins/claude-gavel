@@ -609,7 +609,7 @@ struct PersistentRule: Codable, Identifiable {
         let raw: String
         switch toolName {
         case "Bash":
-            raw = command ?? ""
+            raw = PatternMatcher.joinLineContinuations(command ?? "")
         case "Edit", "MultiEdit", "Write", "Read", "Glob", "Grep":
             raw = filePath ?? command ?? ""
         default:
