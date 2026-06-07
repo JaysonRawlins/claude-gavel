@@ -208,6 +208,7 @@ final class HookRouter {
                     payload: payload, session: session, timestamp: timestamp,
                     forceDialog: true,
                     triggerReason: engineDecision.reason,
+                    overlayContext: engineDecision.overlayContext,
                     triggeringRuleId: engineDecision.triggeringRuleId
                 )
                 switch decision.verdict {

@@ -32,6 +32,15 @@ struct PlanPolicyRule {
         self.regex = PatternCompiler.compilePattern(pattern, isRegex: isRegex)
     }
 
+    func appliesTo(toolName: String) -> Bool {
+        self.toolName == toolName || self.toolName == "*"
+    }
+
+    func matchesSegment(_ segment: String) -> Bool {
+        guard let regex else { return false }
+        return PatternCompiler.matches(regex, in: Self.sanitize(segment))
+    }
+
     func matches(toolName: String, command: String?, filePath: String?) -> Bool {
         guard self.toolName == toolName || self.toolName == "*", let regex else { return false }
         if toolName == "Bash" {

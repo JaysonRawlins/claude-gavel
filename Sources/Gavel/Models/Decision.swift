@@ -23,14 +23,31 @@ struct Decision: Codable {
     let askUser: Bool
     /// Set when a persistent prompt rule fired — used by per-session rule suppression.
     let triggeringRuleId: UUID?
+    /// Set when a plan was engaged but its overlay did not authorize the command — shown in the approval panel so the gap is legible.
+    let overlayContext: String?
 
-    init(verdict: DecisionVerdict, reason: String?, additionalContext: String? = nil, updatedInput: [String: AnyCodable]? = nil, askUser: Bool = false, triggeringRuleId: UUID? = nil) {
+    init(verdict: DecisionVerdict, reason: String?, additionalContext: String? = nil, updatedInput: [String: AnyCodable]? = nil, askUser: Bool = false, triggeringRuleId: UUID? = nil, overlayContext: String? = nil) {
         self.verdict = verdict
         self.reason = reason
         self.additionalContext = additionalContext
         self.updatedInput = updatedInput
         self.askUser = askUser
         self.triggeringRuleId = triggeringRuleId
+        self.overlayContext = overlayContext
+    }
+
+    /// Returns a copy annotated with an engaged plan's miss explanation; self when context is nil.
+    func withOverlayContext(_ context: String?) -> Decision {
+        guard let context else { return self }
+        return Decision(
+            verdict: verdict,
+            reason: reason,
+            additionalContext: additionalContext,
+            updatedInput: updatedInput,
+            askUser: askUser,
+            triggeringRuleId: triggeringRuleId,
+            overlayContext: context
+        )
     }
 
     /// Internal protocol JSON sent to the gavel-hook shim via socket.
