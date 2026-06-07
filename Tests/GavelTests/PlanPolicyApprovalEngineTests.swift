@@ -209,6 +209,65 @@ final class PlanPolicyApprovalEngineTests: XCTestCase {
                           "a chained command must not ride the overlay allow")
     }
 
+    func testOverlayMissContextNamesUnmatchedSegment() {
+        ruleStore.addRule(PersistentRule(toolName: "Bash", pattern: "doppler secrets*", verdict: .prompt, explanation: "user prompt"))
+        engageWithPolicy([
+            "allow Bash: doppler secrets set CONFLUENCE_URL*",
+            "allow Bash: doppler secrets set CONFLUENCE_USERNAME*",
+        ])
+        let decision = engine.evaluate(
+            payload: payload(command: "doppler secrets set CONFLUENCE_URL=x --silent && doppler secrets get JIRA_USERNAME --plain | doppler secrets set CONFLUENCE_USERNAME --silent"),
+            session: session
+        )
+        XCTAssertEqual(decision.verdict, .block)
+        XCTAssertTrue(decision.askUser)
+        XCTAssertTrue(decision.overlayContext?.contains("doppler secrets get JIRA_USERNAME") ?? false,
+                      "the panel context should name the segment the overlay didn't cover, got: \(decision.overlayContext ?? "nil")")
+    }
+
+    func testOverlayMissContextWhenNoSingleRuleCoversChain() {
+        ruleStore.addRule(PersistentRule(toolName: "Bash", pattern: "*", verdict: .prompt, explanation: "prompt everything"))
+        engageWithPolicy(["allow Bash: echo*", "allow Bash: ls*"])
+        let decision = engine.evaluate(payload: payload(command: "echo hi && ls"), session: session)
+        XCTAssertTrue(decision.askUser)
+        XCTAssertTrue(decision.overlayContext?.contains("no single allow covers") ?? false,
+                      "union coverage across rules must be called out, got: \(decision.overlayContext ?? "nil")")
+    }
+
+    func testOverlayMissContextWhenPolicyHasNoAllowsForTool() {
+        ruleStore.addRule(PersistentRule(toolName: "Bash", pattern: "rm *", verdict: .prompt, explanation: "user prompt"))
+        engageWithPolicy(["deny Bash: cdk destroy*"])
+        let decision = engine.evaluate(payload: payload(command: "rm /tmp/foo"), session: session)
+        XCTAssertTrue(decision.askUser)
+        XCTAssertTrue(decision.overlayContext?.contains("no allow rules") ?? false)
+    }
+
+    func testBuiltInPromptCarriesOverlayContext() {
+        engageWithPolicy(["allow Bash: ls*"])
+        let decision = engine.evaluate(
+            payload: payload(command: #"python3 -c "print(1)""#),
+            session: session
+        )
+        XCTAssertTrue(decision.askUser)
+        XCTAssertNotNil(decision.overlayContext, "stage-9 built-in prompts under an engaged plan should carry the miss context")
+    }
+
+    func testNoOverlayContextWithoutEngagedPlan() {
+        PlanPolicy.disengage(session: session, reason: "test")
+        drainMain()
+        ruleStore.addRule(PersistentRule(toolName: "Bash", pattern: "rm *", verdict: .prompt, explanation: "user prompt"))
+        let decision = engine.evaluate(payload: payload(command: "rm /tmp/foo"), session: session)
+        XCTAssertTrue(decision.askUser)
+        XCTAssertNil(decision.overlayContext, "no plan engaged — nothing to explain")
+    }
+
+    func testOverlayAllowedCommandHasNoMissContext() {
+        engageWithPolicy(["allow Bash: cdk deploy GreenfieldStack*"])
+        let decision = engine.evaluate(payload: payload(command: "cdk deploy GreenfieldStack-Api"), session: session)
+        XCTAssertEqual(decision.verdict, .allow)
+        XCTAssertNil(decision.overlayContext)
+    }
+
     // MARK: - Sensitive paths, hard blocks, pause still apply
 
     func testSensitivePathPromptsWithPlanEngaged() {

@@ -111,7 +111,7 @@ struct ApprovalPanelView: View {
         VStack(spacing: 0) {
             toolHeader(approval)
             if let reason = approval.triggerReason, !reason.isEmpty {
-                triggerBanner(reason)
+                triggerBanner(reason, overlayContext: approval.overlayContext)
             }
             Divider()
             toolDetails(approval)
@@ -267,7 +267,7 @@ struct ApprovalPanelView: View {
     // MARK: - Trigger Banner
 
     @ViewBuilder
-    private func triggerBanner(_ reason: String) -> some View {
+    private func triggerBanner(_ reason: String, overlayContext: String? = nil) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundColor(.orange)
@@ -280,6 +280,12 @@ struct ApprovalPanelView: View {
                     .font(.system(.callout, design: .monospaced))
                     .foregroundColor(.primary)
                     .textSelection(.enabled)
+                if let overlayContext {
+                    Text(overlayContext)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .textSelection(.enabled)
+                }
             }
             Spacer()
         }

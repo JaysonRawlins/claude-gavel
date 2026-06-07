@@ -87,7 +87,7 @@ final class ApprovalEngine {
 
         // 7. User PROMPT rules (builtIn=false) — force dialog, beats allow rules below
         if let decision = ruleStore.evaluateUserPrompt(payload: payload) {
-            return decision
+            return decision.withOverlayContext(overlayMiss(overlay, payload))
         }
 
         // 8. Persistent ALLOW rules
@@ -97,7 +97,7 @@ final class ApprovalEngine {
 
         // 9. Overridable built-in PROMPT rules — overridable by allow rules above
         if let decision = ruleStore.evaluateBuiltInPrompt(payload: payload) {
-            return decision
+            return decision.withOverlayContext(overlayMiss(overlay, payload))
         }
 
         // 10. Timed auto-approve
@@ -107,6 +107,25 @@ final class ApprovalEngine {
 
         // 11. Default: pass through (HookRouter decides: auto-approve, session rules, or dialog)
         return Decision(verdict: .allow, reason: nil)
+    }
+
+    private func overlayMiss(_ overlay: [PlanPolicyRule], _ payload: PreToolUsePayload) -> String? {
+        guard !overlay.isEmpty else { return nil }
+        let allows = overlay.filter { $0.verdict == .allow && $0.appliesTo(toolName: payload.toolName) }
+        guard !allows.isEmpty else {
+            return "Plan engaged — its policy has no allow rules for \(payload.toolName)"
+        }
+        guard payload.toolName == "Bash", let command = payload.command else {
+            return "Plan engaged — no overlay allow matches this \(payload.toolName) call"
+        }
+        let segments = SessionRule.splitCommandSegments(command)
+        guard !segments.isEmpty else {
+            return "Plan engaged — no overlay allow matches this command"
+        }
+        if let unmatched = segments.first(where: { segment in !allows.contains { $0.matchesSegment(segment) } }) {
+            return "Plan engaged — overlay does not authorize this command. Unmatched segment: \(unmatched)"
+        }
+        return "Plan engaged — segments match different allow rules, but no single allow covers the whole chain"
     }
 
     private func overlayProhibition(_ overlay: [PlanPolicyRule], _ payload: PreToolUsePayload) -> Decision? {
