@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.22.3...v1.23.0) (2026-06-07)
+
+
+### Features
+
+* **approval:** show plan-overlay miss context in approval panel ([#128](https://github.com/JaysonRawlins/claude-gavel/issues/128)) ([04bf1de](https://github.com/JaysonRawlins/claude-gavel/commit/04bf1de259a1b5a992f368a367bec65a303b4a21))
+
 ## [1.22.3](https://github.com/JaysonRawlins/claude-gavel/compare/v1.22.2...v1.22.3) (2026-06-05)
 
 
