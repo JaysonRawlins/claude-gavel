@@ -179,15 +179,21 @@ struct ApprovalPanelView: View {
             sessionPanel.savedFrame = panel.frame
             panel.setFrame(collapsedRect(for: panel), display: true, animate: true)
         } else if wasCollapsed, let saved = sessionPanel.savedFrame {
+            sessionPanel.savedCollapsedOrigin = panel.frame.origin
             panel.setFrame(saved, display: true, animate: true)
         }
     }
 
     private func collapsedRect(for panel: NSPanel) -> NSRect {
-        let width: CGFloat = 480
-        let height: CGFloat = 52
+        let size = NSSize(width: 480, height: 52)
+        if let origin = sessionPanel.savedCollapsedOrigin {
+            let remembered = NSRect(origin: origin, size: size)
+            if NSScreen.screens.contains(where: { $0.visibleFrame.intersects(remembered) }) {
+                return remembered
+            }
+        }
         let area = panel.screen?.visibleFrame ?? panel.frame
-        return NSRect(x: area.maxX - width - 16, y: area.maxY - height - 16, width: width, height: height)
+        return NSRect(x: area.maxX - size.width - 16, y: area.maxY - size.height - 16, width: size.width, height: size.height)
     }
 
     private func resetFields() {
