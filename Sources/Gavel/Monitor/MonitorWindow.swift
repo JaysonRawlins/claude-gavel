@@ -7,6 +7,7 @@ struct MonitorWindow: View {
     @State private var isPinned: Bool = false
     @State private var isCompact: Bool = false
     @State private var savedFrame: NSRect?
+    @State private var savedCompactOrigin: NSPoint?
     @State private var selectedTab: MonitorTab = .feed
     @State private var sessionFilter: String = ""
     @State private var hideTombstones: Bool = false
@@ -140,29 +141,35 @@ struct MonitorWindow: View {
     }
 
     private func setCompact(_ compact: Bool) {
+        let wasCompact = isCompact
         isCompact = compact
         guard let window = monitorWindow() else { return }
         if compact {
             savedFrame = window.frame
             window.level = .floating
-            let area = (window.screen ?? NSScreen.main)?.visibleFrame
-            if let area {
-                let size = NSSize(width: 420, height: 64)
-                let rect = NSRect(
-                    x: area.maxX - size.width - 16,
-                    y: area.maxY - size.height - 16,
-                    width: size.width,
-                    height: size.height
-                )
-                window.setFrame(rect, display: true, animate: true)
-            }
+            window.setFrame(compactRect(for: window), display: true, animate: true)
         } else {
             window.level = isPinned ? .floating : .normal
+            if wasCompact {
+                savedCompactOrigin = window.frame.origin
+            }
             if let savedFrame {
                 window.setFrame(savedFrame, display: true, animate: true)
             }
         }
         viewModel.noteInteraction()
+    }
+
+    private func compactRect(for window: NSWindow) -> NSRect {
+        let size = NSSize(width: 420, height: 64)
+        if let origin = savedCompactOrigin {
+            let remembered = NSRect(origin: origin, size: size)
+            if NSScreen.screens.contains(where: { $0.visibleFrame.intersects(remembered) }) {
+                return remembered
+            }
+        }
+        let area = (window.screen ?? NSScreen.main)?.visibleFrame ?? window.frame
+        return NSRect(x: area.maxX - size.width - 16, y: area.maxY - size.height - 16, width: size.width, height: size.height)
     }
 
     private var sessionControls: some View {

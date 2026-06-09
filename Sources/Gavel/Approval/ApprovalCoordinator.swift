@@ -11,8 +11,12 @@ final class ApprovalCoordinator: ObservableObject {
     enum Action {
         case allow(context: String?, updatedCommand: String?, updatedInput: [String: AnyCodable]?)
         case deny(context: String?)
-        case allowPatternForSession(pattern: String, context: String?, updatedCommand: String?, updatedInput: [String: AnyCodable]?)
-        case suppressRuleForSession(ruleId: UUID, context: String?, updatedCommand: String?, updatedInput: [String: AnyCodable]?)
+        case allowPatternForSession(
+            pattern: String, context: String?, updatedCommand: String?,
+            updatedInput: [String: AnyCodable]?)
+        case suppressRuleForSession(
+            ruleId: UUID, context: String?, updatedCommand: String?,
+            updatedInput: [String: AnyCodable]?)
         case denyPatternForSession(pattern: String, explanation: String?)
         case alwaysDenyPattern(pattern: String, isRegex: Bool, explanation: String?)
         case alwaysAllowPattern(pattern: String, isRegex: Bool)
@@ -48,8 +52,8 @@ final class ApprovalCoordinator: ObservableObject {
         @Published var queueCount: Int = 0
         var pendingQueue: [PendingApproval] = []
         var panel: NSPanel?
-        /// Full-size frame captured when the panel is minimized, restored on expand.
         var savedFrame: NSRect?
+        var savedCollapsedOrigin: NSPoint?
 
         init(pid: Int) { self.pid = pid }
     }
@@ -124,11 +128,10 @@ final class ApprovalCoordinator: ObservableObject {
 
     /// Handle the user's decision from the approval panel.
     func handleAction(_ action: Action, on sessionPanel: SessionPanel) {
-        // Diagnostic breadcrumb. Critical signal: if `currentApprovalPresent`
-        // is ever `false` when a click arrives, we've found the wedge vector
-        // (click drops silently, semaphore never signals, hook waits forever).
         let presentMarker = sessionPanel.currentApproval == nil ? "MISSING" : "ok"
-        gavelLog("[approval] action pid=\(sessionPanel.pid) currentApproval=\(presentMarker) action=\(actionLogTag(action))")
+        gavelLog(
+            "[approval] action pid=\(sessionPanel.pid) currentApproval=\(presentMarker) action=\(actionLogTag(action))"
+        )
         guard let current = sessionPanel.currentApproval else { return }
 
         // Build updatedInput if user modified the command
@@ -146,7 +149,10 @@ final class ApprovalCoordinator: ObservableObject {
         case .allow(let context, let updatedCommand, let fieldUpdates):
             ctx = context
             updated = fieldUpdates ?? buildUpdatedInput(updatedCommand)
-            current.respond(Decision(verdict: .allow, reason: "User approved", additionalContext: ctx, updatedInput: updated))
+            current.respond(
+                Decision(
+                    verdict: .allow, reason: "User approved", additionalContext: ctx,
+                    updatedInput: updated))
         case .deny(let context):
             let reason: String
             if let note = context, !note.isEmpty {
@@ -155,53 +161,80 @@ final class ApprovalCoordinator: ObservableObject {
                 reason = "User denied"
             }
             current.respond(Decision(verdict: .block, reason: reason))
-            ctx = nil; updated = nil
+            ctx = nil
+            updated = nil
         case .allowPatternForSession(let pattern, let context, let updatedCommand, let fieldUpdates):
             ctx = context
             updated = fieldUpdates ?? buildUpdatedInput(updatedCommand)
             let rule = SessionRule(toolName: current.payload.toolName, pattern: pattern)
             current.session.sessionRules.append(rule)
-            current.respond(Decision(verdict: .allow, reason: "User approved (\(current.payload.toolName): \(pattern))", additionalContext: ctx, updatedInput: updated))
+            current.respond(
+                Decision(
+                    verdict: .allow,
+                    reason: "User approved (\(current.payload.toolName): \(pattern))",
+                    additionalContext: ctx, updatedInput: updated))
 
         case .suppressRuleForSession(let ruleId, let context, let updatedCommand, let fieldUpdates):
             ctx = context
             updated = fieldUpdates ?? buildUpdatedInput(updatedCommand)
             current.session.suppressedRuleIds.insert(ruleId)
             let patternTag = current.triggeringRulePattern.map { " (\($0))" } ?? ""
-            current.respond(Decision(verdict: .allow, reason: "User approved — rule suppressed for session\(patternTag)", additionalContext: ctx, updatedInput: updated))
+            current.respond(
+                Decision(
+                    verdict: .allow,
+                    reason: "User approved — rule suppressed for session\(patternTag)",
+                    additionalContext: ctx, updatedInput: updated))
 
         case .denyPatternForSession(let pattern, let explanation):
-            ctx = nil; updated = nil
+            ctx = nil
+            updated = nil
             let explText = (explanation?.isEmpty == false) ? explanation : nil
-            let rule = SessionRule(toolName: current.payload.toolName, pattern: pattern, verdict: .block, explanation: explText)
+            let rule = SessionRule(
+                toolName: current.payload.toolName, pattern: pattern, verdict: .block,
+                explanation: explText)
             current.session.sessionRules.append(rule)
             var reason = "Session deny: \(current.payload.toolName): \(pattern)"
             if let e = explText { reason += " — \(e)" }
             current.respond(Decision(verdict: .block, reason: reason, additionalContext: explText))
 
         case .alwaysDenyPattern(let pattern, let isRegex, let explanation):
-            ctx = nil; updated = nil
+            ctx = nil
+            updated = nil
             let sanitized = Self.sanitizeDashes(pattern)
             let explText = (explanation?.isEmpty == false) ? explanation : nil
-            let rule = PersistentRule(toolName: current.payload.toolName, pattern: sanitized, isRegex: isRegex, verdict: .block, explanation: explText)
+            let rule = PersistentRule(
+                toolName: current.payload.toolName, pattern: sanitized, isRegex: isRegex,
+                verdict: .block, explanation: explText)
             ruleStore?.addRule(rule)
             var reason = "Always deny: \(current.payload.toolName): \(pattern)"
             if let e = explText { reason += " — \(e)" }
             current.respond(Decision(verdict: .block, reason: reason))
 
         case .alwaysAllowPattern(let pattern, let isRegex):
-            ctx = nil; updated = nil
+            ctx = nil
+            updated = nil
             let sanitized = Self.sanitizeDashes(pattern)
-            let rule = PersistentRule(toolName: current.payload.toolName, pattern: sanitized, isRegex: isRegex, verdict: .allow)
+            let rule = PersistentRule(
+                toolName: current.payload.toolName, pattern: sanitized, isRegex: isRegex,
+                verdict: .allow)
             ruleStore?.addRule(rule)
-            current.respond(Decision(verdict: .allow, reason: "Always allow: \(current.payload.toolName): \(pattern)"))
+            current.respond(
+                Decision(
+                    verdict: .allow, reason: "Always allow: \(current.payload.toolName): \(pattern)"
+                ))
 
         case .alwaysPromptPattern(let pattern, let isRegex):
-            ctx = nil; updated = nil
+            ctx = nil
+            updated = nil
             let sanitized = Self.sanitizeDashes(pattern)
-            let rule = PersistentRule(toolName: current.payload.toolName, pattern: sanitized, isRegex: isRegex, verdict: .prompt)
+            let rule = PersistentRule(
+                toolName: current.payload.toolName, pattern: sanitized, isRegex: isRegex,
+                verdict: .prompt)
             ruleStore?.addRule(rule)
-            current.respond(Decision(verdict: .allow, reason: "Always prompt rule saved: \(current.payload.toolName): \(pattern)"))
+            current.respond(
+                Decision(
+                    verdict: .allow,
+                    reason: "Always prompt rule saved: \(current.payload.toolName): \(pattern)"))
         }
 
         advanceQueue(on: sessionPanel)
@@ -252,7 +285,9 @@ final class ApprovalCoordinator: ObservableObject {
     // MARK: - Per-Session Panel Management
 
     private func showApproval(_ approval: PendingApproval, on sp: SessionPanel) {
-        gavelLog("[approval] show pid=\(sp.pid) tool=\(approval.payload.toolName) queueDepth=\(sp.pendingQueue.count) trigger=\(approval.triggerReason ?? "-")")
+        gavelLog(
+            "[approval] show pid=\(sp.pid) tool=\(approval.payload.toolName) queueDepth=\(sp.pendingQueue.count) trigger=\(approval.triggerReason ?? "-")"
+        )
         sp.currentApproval = approval
         activeSessionPanel = sp
 
@@ -261,10 +296,11 @@ final class ApprovalCoordinator: ObservableObject {
         }
 
         // Update title with project context
-        let cwdSuffix = approval.session.cwd.map { cwd in
-            let parts = cwd.split(separator: "/").suffix(2).joined(separator: "/")
-            return " — \(parts)"
-        } ?? ""
+        let cwdSuffix =
+            approval.session.cwd.map { cwd in
+                let parts = cwd.split(separator: "/").suffix(2).joined(separator: "/")
+                return " — \(parts)"
+            } ?? ""
         sp.panel?.title = "Gavel — PID \(sp.pid)\(cwdSuffix)"
 
         sp.panel?.makeKeyAndOrderFront(nil)
@@ -321,14 +357,14 @@ final class ApprovalCoordinator: ObservableObject {
         // because it's handled at the SwiftUI level before reaching the
         // window's cancelOperation.
         let p = NoEscapeNSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: GavelConstants.panelWidth, height: GavelConstants.panelHeight),
+            contentRect: NSRect(
+                x: 0, y: 0, width: GavelConstants.panelWidth, height: GavelConstants.panelHeight),
             styleMask: [.titled, .closable, .resizable, .utilityWindow],
             backing: .buffered,
             defer: false
         )
         p.title = "Gavel — PID \(sp.pid)"
         p.contentView = hostingView
-        p.center()
         p.isFloatingPanel = true
         p.level = .floating
         p.isReleasedWhenClosed = false
@@ -337,21 +373,29 @@ final class ApprovalCoordinator: ObservableObject {
 
         // Offset each session's panel so they don't stack on top of each other
         let offset = CGFloat(sessionPanels.count - 1) * 30
-        if let frame = p.screen?.visibleFrame {
-            p.setFrameOrigin(NSPoint(
+        let frame = Self.activeScreen().visibleFrame
+        p.setFrameOrigin(
+            NSPoint(
                 x: frame.midX - GavelConstants.panelWidth / 2 + offset,
                 y: frame.midY - GavelConstants.panelHeight / 2 - offset
             ))
-        }
 
         sp.panel = p
+    }
+
+    /// The screen under the mouse cursor, so a panel opens where the user is working rather than on the main display.
+    static func activeScreen() -> NSScreen {
+        let mouse = NSEvent.mouseLocation
+        return NSScreen.screens.first { $0.frame.contains(mouse) }
+            ?? NSScreen.main
+            ?? NSScreen.screens[0]
     }
 
     /// Replace typographic dashes (macOS smart dashes) with ASCII hyphens.
     static func sanitizeDashes(_ input: String) -> String {
         input.replacingOccurrences(of: "\u{2013}", with: "-")  // en-dash
-             .replacingOccurrences(of: "\u{2014}", with: "--") // em-dash
-             .replacingOccurrences(of: "\u{2012}", with: "-")  // figure dash
+            .replacingOccurrences(of: "\u{2014}", with: "--")  // em-dash
+            .replacingOccurrences(of: "\u{2012}", with: "-")  // figure dash
     }
 
     private func closePanel(on sp: SessionPanel) {
@@ -361,13 +405,14 @@ final class ApprovalCoordinator: ObservableObject {
 
 // MARK: - Array helper
 
-private extension Array {
-    func partitioned(by predicate: (Element) -> Bool) -> (matching: [Element], rest: [Element]) {
+extension Array {
+    fileprivate func partitioned(by predicate: (Element) -> Bool) -> (
+        matching: [Element], rest: [Element]
+    ) {
         var matching: [Element] = []
         var rest: [Element] = []
         for element in self {
-            if predicate(element) { matching.append(element) }
-            else { rest.append(element) }
+            if predicate(element) { matching.append(element) } else { rest.append(element) }
         }
         return (matching, rest)
     }
