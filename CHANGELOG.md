@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.24.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.23.0...v1.24.0) (2026-06-09)
+
+
+### Features
+
+* **approval:** place panels on the active display, remember minimized position ([#130](https://github.com/JaysonRawlins/claude-gavel/issues/130)) ([2da80bf](https://github.com/JaysonRawlins/claude-gavel/commit/2da80bf1f770cb5c732b8f920040a04045e310f0))
+
 ## [1.23.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.22.3...v1.23.0) (2026-06-07)
 
 
