@@ -110,7 +110,7 @@ struct PatternMatcher {
             // crontab anchored to command position with whitespace/EOL after the
             // name so a `CRONTAB=/etc/crontab` env-var assignment (which has `=`
             // after the name, a `\b` boundary but not `\s`) doesn't false-match.
-            ("(^|[|&;(])\\s*crontab(\\s+|$)", "Crontab modification"),
+            ("(^|[|&;(])\\s*crontab(?!\\s+(-u\\s+\\S+\\s+)?-l\\b)(\\s+|$)", "Crontab modification"),
             ("\\blaunchctl\\b\\s+(load|unload|submit|bootstrap|bootout|enable|disable|kickstart)", "LaunchAgent/Daemon modification"),
             // `at` command: require a segment boundary AND a recognizable timespec.
             // The previous `\bat\b\s+` matched any prose "at " — e.g. heredoc bodies
