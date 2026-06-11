@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.24.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.24.0...v1.24.1) (2026-06-11)
+
+
+### Bug Fixes
+
+* **matcher:** exclude crontab -l from persistence deny rule ([#132](https://github.com/JaysonRawlins/claude-gavel/issues/132)) ([52414fa](https://github.com/JaysonRawlins/claude-gavel/commit/52414fa99c5a8d1647fd784e6c005649943f9834))
+
 ## [1.24.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.23.0...v1.24.0) (2026-06-09)
 
 
