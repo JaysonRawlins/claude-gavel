@@ -519,6 +519,28 @@ private struct SessionRow: View {
             }
             .frame(width: 76, alignment: .leading)
 
+            HStack(spacing: 4) {
+                Text("Phone")
+                    .font(.caption)
+                    .lineLimit(1)
+                Toggle("", isOn: Binding(
+                    get: { session.isRemoteApprovalEnabledUI },
+                    set: { newVal in
+                        let until = newVal ? Date().addingTimeInterval(Double(GavelConstants.remoteApprovalDefaultHours) * 3600) : nil
+                        session.setRemoteApprovalEnabled(newVal, until: until)
+                        viewModel.sessionManager.saveActiveSessions()
+                        viewModel.noteInteraction()
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(.purple)
+                .controlSize(.small)
+            }
+            .frame(width: 86, alignment: .leading)
+            .disabled(viewModel.sessionManager.telegramChatId == nil)
+            .help("Send this session's approvals to Telegram; either device can answer. Configure Telegram first.")
+
             planControl
 
             Button("Prompt") {

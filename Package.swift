@@ -17,6 +17,7 @@ let package = Package(
             path: "Sources/Gavel",
             linkerSettings: [
                 .linkedFramework("AppKit"),
+                .linkedFramework("Security"),
             ]
         ),
         .executableTarget(

@@ -34,6 +34,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
     )
     var socketServer: SocketServer?
     var configWatcher: ConfigWatcher?
+    var remoteBridge: RemoteApprovalBridge?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Disable macOS smart dashes/quotes — gavel needs exact ASCII for patterns
@@ -45,6 +46,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         setupMenuBar()
         setupSocketServer()
         setupHookRouter()
+        startRemoteBridge()
         ConfigIntegrity.shared.protect()
         setupConfigWatcher()
         reportLoadIntegrity()
@@ -74,7 +76,64 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         configWatcher?.stop()
         ConfigIntegrity.shared.unprotect()
+        remoteBridge?.stop()
         socketServer?.stop()
+    }
+
+    private func startRemoteBridge() {
+        remoteBridge?.stop()
+        guard let token = TelegramCredentials.loadToken() else {
+            remoteBridge = nil
+            approvalCoordinator.remoteBridge = nil
+            return
+        }
+        let transport = URLSessionTelegramTransport(token: token)
+        let bridge = RemoteApprovalBridge(transport: transport, chatId: sessionManager.telegramChatId, redact: transport.redactToken)
+        bridge.onPaired = { [weak self] chatId in
+            DispatchQueue.main.async {
+                self?.sessionManager.telegramChatId = chatId
+                self?.sessionManager.saveDefaults()
+                self?.viewModel.appendFeedEntry(.system("Telegram paired (chat \(chatId))", pid: Int(getpid()), at: Date()))
+            }
+        }
+        bridge.onStatus = { [weak self] message in
+            gavelLog("[telegram] \(message)")
+            DispatchQueue.main.async {
+                self?.viewModel.appendFeedEntry(.system("Telegram: \(message)", pid: Int(getpid()), at: Date()))
+            }
+        }
+        approvalCoordinator.remoteBridge = bridge
+        remoteBridge = bridge
+        bridge.start()
+    }
+
+    @objc private func configureTelegram() {
+        let alert = NSAlert()
+        alert.messageText = "Configure Telegram Remote Approval"
+        alert.informativeText = "Paste your bot token from @BotFather. After saving, open your bot in Telegram and send /start to pair this chat. Remote approval must also be enabled per session in the Sessions tab. Command text is sent to Telegram's servers; payloads containing detected credentials are withheld automatically."
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        field.placeholderString = "123456789:ABCdef..."
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        let hasToken = TelegramCredentials.loadToken() != nil
+        if hasToken { alert.addButton(withTitle: "Remove Token") }
+
+        let response = alert.runModal()
+        switch response {
+        case .alertFirstButtonReturn:
+            let token = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !token.isEmpty else { return }
+            TelegramCredentials.storeToken(token)
+            startRemoteBridge()
+        case .alertThirdButtonReturn where hasToken:
+            TelegramCredentials.clearToken()
+            sessionManager.telegramChatId = nil
+            sessionManager.saveDefaults()
+            startRemoteBridge()
+        default:
+            break
+        }
     }
 
     private func reportLoadIntegrity() {
@@ -150,6 +209,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         let editorItem = NSMenuItem(title: "Editor Preference", action: nil, keyEquivalent: "")
         editorItem.submenu = buildEditorSubmenu()
         menu.addItem(editorItem)
+        menu.addItem(NSMenuItem(title: "Configure Telegram…", action: #selector(configureTelegram), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Pause All Sessions", action: #selector(togglePauseAll), keyEquivalent: ""))
         let promptAllItem = NSMenuItem(title: "Prompt All Sessions", action: #selector(promptAll), keyEquivalent: "P")
@@ -350,6 +410,7 @@ let terminationSignalSources: [DispatchSourceSignal] = [SIGTERM, SIGINT].map { s
     let source = DispatchSource.makeSignalSource(signal: sig, queue: signalQueue)
     source.setEventHandler {
         gavelLog("SIGNAL: \(sig) — unprotecting config before exit")
+        RemoteApprovalBridge.shared?.stop()
         ConfigIntegrity.shared.unprotect()
         exit(0)
     }

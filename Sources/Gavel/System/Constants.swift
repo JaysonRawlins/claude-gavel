@@ -47,4 +47,19 @@ enum GavelConstants {
     /// Temp-like directory prefixes where content scanning applies.
     /// Files written outside these paths skip polyglot exfil detection.
     static let tempDirectoryPrefixes = ["/tmp/", "/var/tmp/", "/private/tmp/", "/var/folders/"]
+
+    /// Telegram long-poll hold time in seconds (server-side `getUpdates` timeout).
+    static let telegramPollTimeoutSeconds = 30
+
+    /// Max characters of redacted command/path summary sent to Telegram. Caps
+    /// exposure — full detail stays on the Mac.
+    static let telegramSummaryMaxChars = 200
+
+    /// Default lifetime of a per-session remote-approval grant, in hours.
+    /// Mirrors timed auto-approve: a walk-away with remote left on is the worst case.
+    static let remoteApprovalDefaultHours = 8
+
+    /// Minimum length of an alphanumeric run treated as credential-shaped by the
+    /// credential gate's entropy heuristic.
+    static let credentialEntropyRunLength = 20
 }
