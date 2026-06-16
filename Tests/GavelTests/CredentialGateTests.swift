@@ -39,4 +39,16 @@ final class CredentialGateTests: XCTestCase {
     func testFilesystemPathIsNotCredentialShaped() {
         XCTAssertFalse(CredentialGate.blocksRemote(payload(["file_path": "/Users/jay/code/Sources/Gavel/main.swift"])))
     }
+
+    func testKebabBranchNameIsNotCredentialShaped() {
+        XCTAssertFalse(CredentialGate.blocksRemote(payload(["command": "git push origin feat/telegram-remote-approval"])))
+    }
+
+    func testSnakeIdentifierIsNotCredentialShaped() {
+        XCTAssertFalse(CredentialGate.blocksRemote(payload(["command": "call some_very_long_function_name_here"])))
+    }
+
+    func testMixedCaseHighEntropyStillBlocksAfterIdentifierWhitelist() {
+        XCTAssertTrue(CredentialGate.blocksRemote(payload(["command": "echo Xa9Kd2Lp8Qw3Zr7Tv1Bn6Mc"])))
+    }
 }

@@ -59,6 +59,7 @@ enum CredentialGate {
         let range = NSRange(token.startIndex..., in: token)
         if uuidRegex.firstMatch(in: token, range: range) != nil { return true }
         if iso8601Regex.firstMatch(in: token, range: range) != nil { return true }
+        if identifierRegex.firstMatch(in: token, range: range) != nil { return true }
         return false
     }
 
@@ -72,5 +73,9 @@ enum CredentialGate {
 
     private static let iso8601Regex = try! NSRegularExpression(
         pattern: "^\\d{4}-\\d{2}-\\d{2}([T ]\\d{2}:\\d{2}(:\\d{2})?)?"
+    )
+
+    private static let identifierRegex = try! NSRegularExpression(
+        pattern: "^[a-z0-9]+([_-][a-z0-9]+)+$"
     )
 }
