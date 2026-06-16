@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.25.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.24.1...v1.25.0) (2026-06-16)
+
+
+### Features
+
+* **approval:** telegram remote approval with credential gate ([#134](https://github.com/JaysonRawlins/claude-gavel/issues/134)) ([28de3dd](https://github.com/JaysonRawlins/claude-gavel/commit/28de3dd4b7527049c4d4f0b3b4ebdbfc89942054))
+
+
+### Bug Fixes
+
+* **approval:** exclude kebab/snake identifiers from credential gate heuristic ([#136](https://github.com/JaysonRawlins/claude-gavel/issues/136)) ([dabd828](https://github.com/JaysonRawlins/claude-gavel/commit/dabd8280817a45e2ea8c5db17e8517de88b2025a))
+
 ## [1.24.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.24.0...v1.24.1) (2026-06-11)
 
 
