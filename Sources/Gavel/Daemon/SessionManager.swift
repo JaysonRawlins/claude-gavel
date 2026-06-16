@@ -19,6 +19,10 @@ final class SessionManager: ObservableObject {
     /// is revoked across all sessions (walk-away defense).
     @Published var inactivityTimeoutMinutes: Int = 15
 
+    /// Pinned Telegram chat id for remote approval. Not secret; the bot token
+    /// lives in Keychain. Nil until paired via `/start`.
+    @Published var telegramChatId: Int64?
+
     /// User-typed labels keyed by Claude Code session UUID. Survives daemon restarts.
     @Published private var sessionLabels: [String: String] = [:]
 
@@ -86,13 +90,14 @@ final class SessionManager: ObservableObject {
 
     /// Save current defaults to disk (called when user toggles).
     func saveDefaults() {
-        let data: [String: Any] = [
+        var data: [String: Any] = [
             "autoApprove": defaultAutoApprove,
             "subAgentInherit": defaultSubAgentInherit,
             "paused": defaultPaused,
             "inactivityTimeoutMinutes": inactivityTimeoutMinutes,
             "sessionLabels": sessionLabels
         ]
+        if let chatId = telegramChatId { data["telegramChatId"] = chatId }
         if let json = try? JSONSerialization.data(withJSONObject: data, options: .prettyPrinted) {
             FileManager.default.createFile(atPath: defaultsPath, contents: json)
         }
@@ -106,6 +111,7 @@ final class SessionManager: ObservableObject {
         defaultPaused = (json["paused"] as? Bool) ?? false
         inactivityTimeoutMinutes = (json["inactivityTimeoutMinutes"] as? Int) ?? 15
         sessionLabels = (json["sessionLabels"] as? [String: String]) ?? [:]
+        telegramChatId = (json["telegramChatId"] as? Int64) ?? (json["telegramChatId"] as? Int).map(Int64.init)
     }
 
     /// Worker-thread caller; @Published mutations dispatched to main.
@@ -270,6 +276,8 @@ final class SessionManager: ObservableObject {
         let engagedPlanPath: String?
         let engagedPlanHash: String?
         let planPolicyDroppedReason: String?
+        let isRemoteApprovalEnabled: Bool?
+        let remoteApprovalUntil: Date?
     }
 
     private struct PersistedState: Codable {
@@ -314,7 +322,9 @@ final class SessionManager: ObservableObject {
             planEngagedAt: session.planEngagedAt,
             engagedPlanPath: session.engagedPlanPath,
             engagedPlanHash: session.engagedPlanHash,
-            planPolicyDroppedReason: session.planPolicyDroppedReason
+            planPolicyDroppedReason: session.planPolicyDroppedReason,
+            isRemoteApprovalEnabled: session.remoteApprovalSnapshot.enabled ? true : nil,
+            remoteApprovalUntil: session.remoteApprovalSnapshot.until
         )
     }
 
@@ -358,6 +368,10 @@ final class SessionManager: ObservableObject {
             session.labelIsDerived = snap.labelIsDerived ?? false
         }
         session.lastPlanPath = snap.lastPlanPath
+        if snap.isRemoteApprovalEnabled == true,
+           snap.remoteApprovalUntil == nil || (snap.remoteApprovalUntil.map { $0 > Date() } ?? true) {
+            session.setRemoteApprovalEnabled(true, until: snap.remoteApprovalUntil)
+        }
         rehydratePlanPolicy(snap, into: session)
         sessions[snap.pid] = session
         tryJsonlSeed(session: session)
@@ -508,6 +522,7 @@ final class SessionManager: ObservableObject {
             guard let self = self else { return }
             for session in self.sessions.values {
                 session.revokeAutoApprove()
+                session.disableRemoteApproval()
             }
             self.defaultAutoApprove = false
             self.defaultSubAgentInherit = false

@@ -58,6 +58,42 @@ final class Session: ObservableObject, Identifiable {
     @Published var engagedPlanHash: String?
     @Published var planPolicyDroppedReason: String?
 
+    @Published var isRemoteApprovalEnabledUI: Bool = false
+    @Published var remoteApprovalUntil: Date?
+
+    private var _remoteEnabled = false
+    private var _remoteUntil: Date?
+    private let remoteLock = NSLock()
+
+    var isRemoteApprovalActive: Bool {
+        remoteLock.lock()
+        defer { remoteLock.unlock() }
+        guard _remoteEnabled else { return false }
+        if let until = _remoteUntil { return until > Date() }
+        return true
+    }
+
+    func setRemoteApprovalEnabled(_ enabled: Bool, until: Date?) {
+        remoteLock.lock()
+        _remoteEnabled = enabled
+        _remoteUntil = enabled ? until : nil
+        remoteLock.unlock()
+        DispatchQueue.main.async {
+            self.isRemoteApprovalEnabledUI = enabled
+            self.remoteApprovalUntil = enabled ? until : nil
+        }
+    }
+
+    func disableRemoteApproval() {
+        setRemoteApprovalEnabled(false, until: nil)
+    }
+
+    var remoteApprovalSnapshot: (enabled: Bool, until: Date?) {
+        remoteLock.lock()
+        defer { remoteLock.unlock() }
+        return (_remoteEnabled, _remoteUntil)
+    }
+
     private var _planPolicyEngaged: Bool = false
     private let planPolicyLock = NSLock()
 

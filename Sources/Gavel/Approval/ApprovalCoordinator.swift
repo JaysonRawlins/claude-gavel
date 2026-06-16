@@ -29,7 +29,12 @@ final class ApprovalCoordinator: ObservableObject {
     /// SessionManager reference for recording user-interaction signals (inactivity timer).
     weak var sessionManager: SessionManager?
 
+    /// Optional Telegram bridge. When set and a session is remote-enabled, approvals
+    /// also race against inline phone buttons.
+    var remoteBridge: RemoteApprovalBridge?
+
     struct PendingApproval {
+        let id = UUID()
         let payload: PreToolUsePayload
         let session: Session
         let timestamp: Date
@@ -42,6 +47,7 @@ final class ApprovalCoordinator: ObservableObject {
         let triggeringRuleId: UUID?
         let triggeringRulePattern: String?
         let triggeringRuleIsRegex: Bool
+        let resolvable: ResolvableApproval
         let respond: (Decision) -> Void
     }
 
@@ -90,6 +96,11 @@ final class ApprovalCoordinator: ObservableObject {
         let semaphore = DispatchSemaphore(value: 0)
         var result = Decision(verdict: .block, reason: "Approval timed out — fail closed")
 
+        let resolvable = ResolvableApproval { decision in
+            result = decision
+            semaphore.signal()
+        }
+
         let firingRule = triggeringRuleId.flatMap { ruleStore?.rule(for: $0) }
         let pending = PendingApproval(
             payload: payload,
@@ -100,10 +111,10 @@ final class ApprovalCoordinator: ObservableObject {
             overlayContext: overlayContext,
             triggeringRuleId: triggeringRuleId,
             triggeringRulePattern: firingRule?.pattern,
-            triggeringRuleIsRegex: firingRule?.isRegex ?? false
+            triggeringRuleIsRegex: firingRule?.isRegex ?? false,
+            resolvable: resolvable
         ) { decision in
-            result = decision
-            semaphore.signal()
+            resolvable.resolve(decision, from: .mac)
         }
 
         DispatchQueue.main.async {
@@ -116,14 +127,52 @@ final class ApprovalCoordinator: ObservableObject {
             }
         }
 
+        maybeSendRemote(pending: pending, resolvable: resolvable)
+
         let waitResult = semaphore.wait(timeout: .now() + GavelConstants.approvalTimeoutSeconds)
         if waitResult == .timedOut {
+            resolvable.resolve(result, from: .timeout)
             DispatchQueue.main.async {
                 let sp = self.sessionPanel(for: session.pid)
                 self.dismissCurrent(on: sp)
             }
         }
         return result
+    }
+
+    /// Mirror a pending approval to Telegram when its session is remote-enabled.
+    /// The credential gate suppresses the message entirely for sensitive payloads.
+    private func maybeSendRemote(pending: PendingApproval, resolvable: ResolvableApproval) {
+        guard pending.session.isRemoteApprovalActive, let bridge = remoteBridge else { return }
+        if CredentialGate.blocksRemote(pending.payload) {
+            bridge.notifyWithheld()
+            return
+        }
+        let session = pending.session
+        let payload = pending.payload
+        let pendingId = pending.id
+        let allowSession: () -> Void = {
+            let pattern = payload.command ?? payload.filePath ?? "*"
+            let rule = SessionRule(toolName: payload.toolName, pattern: pattern)
+            DispatchQueue.main.async { session.sessionRules.append(rule) }
+        }
+        resolvable.addCleanup { [weak self] source, _ in
+            guard source == .telegram else { return }
+            DispatchQueue.main.async { self?.dismissPending(id: pendingId, pid: session.pid) }
+        }
+        let text = RemoteApprovalBridge.summaryBody(payload: payload, session: session, triggerReason: pending.triggerReason)
+        bridge.notify(resolvable: resolvable, text: text, allowSession: allowSession)
+    }
+
+    /// Remove a pending approval resolved remotely from its session panel.
+    private func dismissPending(id: UUID, pid: Int) {
+        guard let sp = sessionPanels[pid] else { return }
+        if sp.currentApproval?.id == id {
+            advanceQueue(on: sp)
+        } else if let index = sp.pendingQueue.firstIndex(where: { $0.id == id }) {
+            sp.pendingQueue.remove(at: index)
+            sp.queueCount = sp.pendingQueue.count
+        }
     }
 
     /// Handle the user's decision from the approval panel.
