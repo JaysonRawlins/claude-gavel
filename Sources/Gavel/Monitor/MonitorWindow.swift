@@ -16,6 +16,9 @@ struct MonitorWindow: View {
         case feed, rules, sessions, context, tester, reference
     }
 
+    private var isDevBuild: Bool { (Bundle.main.executablePath ?? "").contains("/.build/") }
+    private var buildLabel: String { isDevBuild ? "Dev" : "v\(GAVEL_VERSION)" }
+
     var body: some View {
         Group {
             if isCompact {
@@ -52,6 +55,9 @@ struct MonitorWindow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 4)
+            Text(buildLabel)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundColor(isDevBuild ? .orange : .secondary)
             Button(action: { expandFromCompact() }) {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
             }
@@ -70,6 +76,10 @@ struct MonitorWindow: View {
             HStack {
                 StatusView(viewModel: viewModel)
                 Spacer()
+                Text(buildLabel)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(isDevBuild ? .orange : .secondary)
+                    .help(isDevBuild ? "Local dev build (.build/release) — not a released version" : "Released version \(GAVEL_VERSION)")
                 Button(action: { setCompact(true) }) {
                     Image(systemName: "rectangle.compress.vertical")
                         .foregroundColor(.secondary)
