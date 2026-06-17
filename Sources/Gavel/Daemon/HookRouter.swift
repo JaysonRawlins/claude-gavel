@@ -61,6 +61,9 @@ final class HookRouter {
             DispatchQueue.main.async { session.model = model }
             let source = payload.source ?? "startup"
             emitFeed(.system("Session \(source)", pid: session.pid, at: ts))
+            if payload.requestRemoteApproval == true {
+                requestRemoteApprovalToggle(session: session, timestamp: ts)
+            }
 
         case .stop:
             emitFeed(.stop(pid: session.pid, at: ts))
@@ -369,6 +372,33 @@ final class HookRouter {
         if let respond = respond,
            let responseData = #"{"verdict":"allow"}"#.data(using: .utf8) {
             respond(responseData)
+        }
+    }
+
+    /// Raise a non-overridable, fail-closed, phone-mirrored approval that enables per-session remote approval only if allowed.
+    private func requestRemoteApprovalToggle(session: Session, timestamp: Date) {
+        let hours = GavelConstants.remoteApprovalDefaultHours
+        let location = session.cwd.map { " — \($0)" } ?? ""
+        let reason = "Session pid \(session.pid)\(location) requests PHONE (remote) approval. Allow enables it for \(hours)h; deny or ignore leaves it OFF."
+        let payload = PreToolUsePayload(toolName: "__EnableRemoteApproval", toolInput: [:])
+        DispatchQueue.global().async { [weak self] in
+            guard let self else { return }
+            let decision = self.approvalCoordinator.requestApproval(
+                payload: payload,
+                session: session,
+                timestamp: timestamp,
+                forceDialog: true,
+                forceRemoteMirror: true,
+                triggerReason: reason
+            )
+            if decision.verdict == .allow {
+                let until = Date().addingTimeInterval(Double(hours) * 3600)
+                session.setRemoteApprovalEnabled(true, until: until)
+                self.sessionManager.saveActiveSessions()
+                self.emitFeed(.system("Remote (phone) approval ENABLED for \(hours)h", pid: session.pid, at: timestamp))
+            } else {
+                self.emitFeed(.system("Remote (phone) approval request denied", pid: session.pid, at: timestamp))
+            }
         }
     }
 

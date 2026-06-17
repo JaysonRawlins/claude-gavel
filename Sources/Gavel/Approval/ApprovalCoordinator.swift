@@ -39,6 +39,8 @@ final class ApprovalCoordinator: ObservableObject {
         let session: Session
         let timestamp: Date
         let forceDialog: Bool
+        /// Mirror to Telegram even when the session itself isn't phone-enabled — used by the remote-approval enable request so the bootstrap prompt can reach the phone.
+        let forceRemoteMirror: Bool
         /// Reason from the engine when dialog was forced. Nil for default-tier prompts.
         let triggerReason: String?
         /// Why an engaged plan's overlay did not authorize this command. Nil when no plan is engaged.
@@ -85,6 +87,7 @@ final class ApprovalCoordinator: ObservableObject {
         session: Session,
         timestamp: Date,
         forceDialog: Bool = false,
+        forceRemoteMirror: Bool = false,
         triggerReason: String? = nil,
         overlayContext: String? = nil,
         triggeringRuleId: UUID? = nil
@@ -107,6 +110,7 @@ final class ApprovalCoordinator: ObservableObject {
             session: session,
             timestamp: timestamp,
             forceDialog: forceDialog,
+            forceRemoteMirror: forceRemoteMirror,
             triggerReason: triggerReason,
             overlayContext: overlayContext,
             triggeringRuleId: triggeringRuleId,
@@ -140,10 +144,16 @@ final class ApprovalCoordinator: ObservableObject {
         return result
     }
 
+    /// Whether a pending approval should be mirrored to Telegram: either the session is phone-enabled, or this is a bootstrap request that forces the mirror.
+    static func shouldMirrorRemote(forceRemoteMirror: Bool, sessionActive: Bool) -> Bool {
+        forceRemoteMirror || sessionActive
+    }
+
     /// Mirror a pending approval to Telegram when its session is remote-enabled.
     /// The credential gate suppresses the message entirely for sensitive payloads.
     private func maybeSendRemote(pending: PendingApproval, resolvable: ResolvableApproval) {
-        guard pending.session.isRemoteApprovalActive, let bridge = remoteBridge else { return }
+        guard Self.shouldMirrorRemote(forceRemoteMirror: pending.forceRemoteMirror, sessionActive: pending.session.isRemoteApprovalActive),
+              let bridge = remoteBridge else { return }
         if CredentialGate.blocksRemote(pending.payload) {
             bridge.notifyWithheld()
             return
