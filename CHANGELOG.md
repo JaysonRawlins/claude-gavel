@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.25.0...v1.26.0) (2026-06-17)
+
+
+### Features
+
+* **approval:** richer telegram approvals + token source + config self-protect ([#137](https://github.com/JaysonRawlins/claude-gavel/issues/137)) ([bafe5ce](https://github.com/JaysonRawlins/claude-gavel/commit/bafe5ce9988050e5bea0e7cdb328ef23ecb23dec))
+
 ## [1.25.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.24.1...v1.25.0) (2026-06-16)
 
 
