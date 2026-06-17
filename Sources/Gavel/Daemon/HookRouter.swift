@@ -121,6 +121,12 @@ final class HookRouter {
             at: timestamp
         ))
 
+        if payload.toolName == "Skill", let skill = payload.skill, !skill.isEmpty {
+            if session.tags.addObserved("skill:\(skill)", at: timestamp) {
+                sessionManager.saveActiveSessions()
+            }
+        }
+
         // Stage 0: Taint tracking — detect multi-step exfiltration
         if ["Write", "Edit", "MultiEdit"].contains(payload.toolName), let path = payload.filePath {
             session.taintedPaths.insert(path)
