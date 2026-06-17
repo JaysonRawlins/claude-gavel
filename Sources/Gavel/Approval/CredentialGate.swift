@@ -76,6 +76,6 @@ enum CredentialGate {
     )
 
     private static let identifierRegex = try! NSRegularExpression(
-        pattern: "^[a-z0-9]+([_-][a-z0-9]+)+$"
+        pattern: "^[A-Za-z0-9]+([_-][A-Za-z0-9]+)+$"
     )
 }

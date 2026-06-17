@@ -51,4 +51,9 @@ final class CredentialGateTests: XCTestCase {
     func testMixedCaseHighEntropyStillBlocksAfterIdentifierWhitelist() {
         XCTAssertTrue(CredentialGate.blocksRemote(payload(["command": "echo Xa9Kd2Lp8Qw3Zr7Tv1Bn6Mc"])))
     }
+
+    func testMixedCaseKebabProfileNameIsNotCredentialShaped() {
+        let cmd = "AWS_PROFILE=AcmeCorp-Root-123456789012-AWSAdministratorAccess aws sts get-caller-identity"
+        XCTAssertFalse(CredentialGate.blocksRemote(payload(["command": cmd])))
+    }
 }
