@@ -81,11 +81,112 @@ final class RemoteApprovalBridgeTests: XCTestCase {
         var pairedWith: Int64?
         bridge.onPaired = { pairedWith = $0 }
 
-        let start = TelegramUpdate(updateId: 1, callback: nil, message: TelegramIncomingMessage(fromId: owner, chatId: owner, text: "/start"))
+        let start = TelegramUpdate(updateId: 1, callback: nil, message: TelegramIncomingMessage(fromId: owner, chatId: owner, text: "/start", replyToMessageId: nil))
         bridge.handle(start)
 
         XCTAssertEqual(pairedWith, owner)
         XCTAssertTrue(bridge.isPaired)
+    }
+
+    func testTypedReplyDeniesWithInstruction() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var resolved: Decision?
+        let approval = ResolvableApproval { resolved = $0 }
+
+        bridge.notify(resolvable: approval, text: "approve?", allowSession: nil)
+        let reply = TelegramUpdate(updateId: 2, callback: nil, message: TelegramIncomingMessage(fromId: owner, chatId: owner, text: "clean it up first", replyToMessageId: nil))
+        bridge.handle(reply)
+
+        XCTAssertEqual(resolved?.verdict, .block)
+        XCTAssertEqual(resolved?.reason, "Denied from phone — clean it up first")
+    }
+
+    func testTypedReplyFromWrongChatIgnored() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var resolved: Decision?
+        let approval = ResolvableApproval { resolved = $0 }
+
+        bridge.notify(resolvable: approval, text: "approve?", allowSession: nil)
+        let reply = TelegramUpdate(updateId: 2, callback: nil, message: TelegramIncomingMessage(fromId: 999, chatId: 999, text: "do it", replyToMessageId: nil))
+        bridge.handle(reply)
+
+        XCTAssertNil(resolved)
+    }
+
+    func testCleanButtonDeniesWithCommentInstruction() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var resolved: Decision?
+        let approval = ResolvableApproval { resolved = $0 }
+
+        bridge.notify(resolvable: approval, text: "commit?", allowSession: nil, offerCommentClean: true)
+        XCTAssertTrue(fake.lastCallbackData.contains { $0.hasPrefix("c:") })
+        let n = nonce(from: fake.lastCallbackData)
+        bridge.handle(callbackUpdate(action: "c", nonce: n, fromId: owner, chatId: owner, messageId: fake.lastSentMessageId))
+
+        XCTAssertEqual(resolved?.verdict, .block)
+        XCTAssertEqual(resolved?.reason?.contains("comment"), true)
+    }
+
+    func testCleanButtonAbsentByDefault() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        bridge.notify(resolvable: ResolvableApproval { _ in }, text: "x", allowSession: nil)
+        XCTAssertFalse(fake.lastCallbackData.contains { $0.hasPrefix("c:") })
+    }
+
+    private func typedReply(_ text: String, replyTo: Int? = nil) -> TelegramUpdate {
+        TelegramUpdate(updateId: 9, callback: nil, message: TelegramIncomingMessage(fromId: owner, chatId: owner, text: text, replyToMessageId: replyTo))
+    }
+
+    func testBareTypedReplyResolvesWhenOnePending() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var resolved: Decision?
+        bridge.notify(resolvable: ResolvableApproval { resolved = $0 }, text: "a", allowSession: nil)
+        bridge.handle(typedReply("clean it"))
+        XCTAssertEqual(resolved?.verdict, .block)
+        XCTAssertEqual(resolved?.reason, "Denied from phone — clean it")
+    }
+
+    func testBareTypedReplyIsAmbiguousWithMultiplePending() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var r1: Decision?
+        var r2: Decision?
+        bridge.notify(resolvable: ResolvableApproval { r1 = $0 }, text: "a1", allowSession: nil)
+        bridge.notify(resolvable: ResolvableApproval { r2 = $0 }, text: "a2", allowSession: nil)
+        bridge.handle(typedReply("do it"))
+        XCTAssertNil(r1)
+        XCTAssertNil(r2)
+        XCTAssertEqual(fake.sentMessages.last?.text.contains("pending") == true, true)
+    }
+
+    func testReplyToTargetsSpecificApprovalWhenMultiplePending() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var r1: Decision?
+        var r2: Decision?
+        bridge.notify(resolvable: ResolvableApproval { r1 = $0 }, text: "a1", allowSession: nil)
+        let firstMessageId = fake.lastSentMessageId
+        bridge.notify(resolvable: ResolvableApproval { r2 = $0 }, text: "a2", allowSession: nil)
+        bridge.handle(typedReply("no", replyTo: firstMessageId))
+        XCTAssertEqual(r1?.verdict, .block)
+        XCTAssertNil(r2)
+    }
+
+    func testBurstCoalescesAfterTokenBucketDrains() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        for i in 0..<8 {
+            bridge.notify(resolvable: ResolvableApproval { _ in }, text: "a\(i)", allowSession: nil)
+        }
+        let buttonMessages = fake.sentMessages.filter { $0.keyboard != nil }.count
+        let coalesceNotices = fake.sentMessages.filter { $0.keyboard == nil && $0.text.contains("too fast") }.count
+        XCTAssertEqual(buttonMessages, 5)
+        XCTAssertGreaterThanOrEqual(coalesceNotices, 1)
     }
 
     func testAllowForSessionInvokesCallback() {

@@ -112,6 +112,9 @@ final class URLSessionTelegramTransport: TelegramTransport {
             }
             if (json["ok"] as? Bool) == true {
                 completion(.success(json))
+            } else if (json["error_code"] as? Int) == 429 {
+                let retry = (json["parameters"] as? [String: Any])?["retry_after"] as? Double ?? 1
+                completion(.failure(TelegramError.rateLimited(retryAfter: retry)))
             } else {
                 completion(.failure(TelegramError.api(json["description"] as? String ?? "unknown")))
             }
@@ -146,6 +149,7 @@ final class URLSessionTelegramTransport: TelegramTransport {
               let fromId = (from["id"] as? Int64) ?? (from["id"] as? Int).map(Int64.init),
               let chat = dict["chat"] as? [String: Any],
               let chatId = (chat["id"] as? Int64) ?? (chat["id"] as? Int).map(Int64.init) else { return nil }
-        return TelegramIncomingMessage(fromId: fromId, chatId: chatId, text: dict["text"] as? String)
+        let replyTo = (dict["reply_to_message"] as? [String: Any])?["message_id"] as? Int
+        return TelegramIncomingMessage(fromId: fromId, chatId: chatId, text: dict["text"] as? String, replyToMessageId: replyTo)
     }
 }

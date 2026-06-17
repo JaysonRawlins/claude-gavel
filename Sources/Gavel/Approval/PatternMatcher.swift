@@ -203,7 +203,7 @@ struct PatternMatcher {
         // Ask user — config and tools that may legitimately need editing
         let rawAskUserPaths: [(pattern: String, reason: String)] = [
             // Gavel's own config
-            ("\\.claude/gavel/(rules\\.json|session-defaults\\.json|hooks/|bin/)", "Sensitive: Gavel config"),
+            ("\\.claude/gavel/", "Sensitive: Gavel config"),
             // Claude Code hooks and settings
             ("\\.claude/(settings\\.json|settings\\.local\\.json|hooks/)", "Sensitive: Claude Code settings/hooks"),
             // Project MCP server config (auto-enable / server-definition vector)

@@ -161,7 +161,8 @@ final class ApprovalCoordinator: ObservableObject {
             DispatchQueue.main.async { self?.dismissPending(id: pendingId, pid: session.pid) }
         }
         let text = RemoteApprovalBridge.summaryBody(payload: payload, session: session, triggerReason: pending.triggerReason)
-        bridge.notify(resolvable: resolvable, text: text, allowSession: allowSession)
+        let isCommit = payload.toolName == "Bash" && (payload.command?.contains("commit") ?? false)
+        bridge.notify(resolvable: resolvable, text: text, allowSession: allowSession, offerCommentClean: isCommit)
     }
 
     /// Remove a pending approval resolved remotely from its session panel.

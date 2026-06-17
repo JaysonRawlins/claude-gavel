@@ -82,7 +82,15 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
 
     private func startRemoteBridge() {
         remoteBridge?.stop()
-        guard let token = TelegramCredentials.loadToken() else {
+        let source = TelegramTokenResolver.resolve()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let token = source.load()
+            DispatchQueue.main.async { self?.installBridge(token: token) }
+        }
+    }
+
+    private func installBridge(token: String?) {
+        guard let token else {
             remoteBridge = nil
             approvalCoordinator.remoteBridge = nil
             return

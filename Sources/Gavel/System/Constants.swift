@@ -51,9 +51,8 @@ enum GavelConstants {
     /// Telegram long-poll hold time in seconds (server-side `getUpdates` timeout).
     static let telegramPollTimeoutSeconds = 30
 
-    /// Max characters of redacted command/path summary sent to Telegram. Caps
-    /// exposure — full detail stays on the Mac.
-    static let telegramSummaryMaxChars = 200
+    /// Max characters of the redacted command shown in a Telegram approval (under Telegram's 4096 limit).
+    static let telegramBodyMaxChars = 3500
 
     /// Default lifetime of a per-session remote-approval grant, in hours.
     /// Mirrors timed auto-approve: a walk-away with remote left on is the worst case.

@@ -17,6 +17,7 @@ struct TelegramIncomingMessage {
     let fromId: Int64
     let chatId: Int64
     let text: String?
+    let replyToMessageId: Int?
 }
 
 struct TelegramUpdate {
@@ -30,6 +31,7 @@ enum TelegramError: Error {
     case api(String)
     case malformedResponse
     case unauthorizedToken
+    case rateLimited(retryAfter: Double)
 }
 
 /// Abstracts the Telegram Bot API so the bridge can be unit-tested against a fake.
