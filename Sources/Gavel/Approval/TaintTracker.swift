@@ -111,7 +111,7 @@ struct TaintTracker {
     }
 
     private static func extractRedirectTarget(from command: String, into paths: inout Set<String>) {
-        guard let regex = try? NSRegularExpression(pattern: #">>?\s*(\S+)"#),
+        guard let regex = try? NSRegularExpression(pattern: #">>?\s*(?!&)(\S+)"#),
               let match = regex.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)),
               let pathRange = Range(match.range(at: 1), in: command) else { return }
         paths.insert(String(command[pathRange]))

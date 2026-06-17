@@ -71,6 +71,19 @@ final class TaintTrackerTests: XCTestCase {
         XCTAssertTrue(taints.isEmpty)
     }
 
+    func testFdDuplicationIsNotTaintedAsRedirectTarget() {
+        var taints = Set<String>()
+        TaintTracker.recordTaints(command: "gh pr create --body 'see .ssh/ and .aws/ creds' 2>&1 | tail", into: &taints)
+        XCTAssertFalse(taints.contains("&1"))
+        XCTAssertTrue(taints.isEmpty)
+    }
+
+    func testRealRedirectStillTaintedAlongsideFdDuplication() {
+        var taints = Set<String>()
+        TaintTracker.recordTaints(command: "cat ~/.ssh/id_rsa > /tmp/exfil 2>&1", into: &taints)
+        XCTAssertEqual(taints, ["/tmp/exfil"])
+    }
+
     func testCopyFromSensitiveSourceTaintsDestination() {
         var taints = Set<String>()
         TaintTracker.recordTaints(command: "cp ~/.aws/credentials /tmp/creds", into: &taints)
