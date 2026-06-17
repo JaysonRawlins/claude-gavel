@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.27.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.26.0...v1.27.0) (2026-06-17)
+
+
+### Features
+
+* **monitor:** show build version, or "Dev" for local builds ([#144](https://github.com/JaysonRawlins/claude-gavel/issues/144)) ([b99dfe2](https://github.com/JaysonRawlins/claude-gavel/commit/b99dfe243680f90711be64505a6e5191e3512e51))
+* **session:** observed skill tags with tag filter and row badges ([#140](https://github.com/JaysonRawlins/claude-gavel/issues/140)) ([bd6e154](https://github.com/JaysonRawlins/claude-gavel/commit/bd6e154062d91a0da23959f4d472d413fb37b5e7))
+
+
+### Bug Fixes
+
+* **approval:** exclude 2&gt;&1 fd-dup from taint redirect-target capture ([#142](https://github.com/JaysonRawlins/claude-gavel/issues/142)) ([02b8960](https://github.com/JaysonRawlins/claude-gavel/commit/02b8960c94f71d7e50b9fa3e83e528f7b60e57b0))
+* **approval:** strip string-literal content before taint extraction ([#145](https://github.com/JaysonRawlins/claude-gavel/issues/145)) ([6144829](https://github.com/JaysonRawlins/claude-gavel/commit/614482995a33727bd6babcf9a13b9e08bdf43014))
+* **approval:** whitelist mixed-case kebab/snake identifiers in credential gate ([#143](https://github.com/JaysonRawlins/claude-gavel/issues/143)) ([dd645dc](https://github.com/JaysonRawlins/claude-gavel/commit/dd645dcc7f86efb91a932ff50071256f132ac5b0))
+* **matcher:** scope curl data-flag hard-block to credential sources ([#139](https://github.com/JaysonRawlins/claude-gavel/issues/139)) ([451e697](https://github.com/JaysonRawlins/claude-gavel/commit/451e69707fd6fce5f93f56f6f02231c838e251b9))
+
 ## [1.26.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.25.0...v1.26.0) (2026-06-17)
 
 
