@@ -314,16 +314,28 @@ final class PatternMatcherTests: XCTestCase {
         XCTAssertNotNil(matcher.matchSensitivePath(payload: bashPayload(command: "bash -c \"crontab -e\"")))
     }
 
-    func testLaunchctlBootstrapBlocked() {
-        XCTAssertNotNil(matcher.matchDangerous(payload: bashPayload(command: "launchctl bootstrap gui/501 ~/Library/LaunchAgents/evil.plist")))
+    func testLaunchctlBootstrapNotHardBlocked() {
+        XCTAssertNil(matcher.matchDangerous(payload: bashPayload(command: "launchctl bootstrap gui/501 ~/Library/LaunchAgents/evil.plist")))
     }
 
-    func testLaunchctlLoadBlocked() {
-        XCTAssertNotNil(matcher.matchDangerous(payload: bashPayload(command: "launchctl load ~/Library/LaunchAgents/evil.plist")))
+    func testLaunchctlBootstrapAsksUser() {
+        XCTAssertNotNil(matcher.matchSensitivePath(payload: bashPayload(command: "launchctl bootstrap gui/501 ~/Library/LaunchAgents/evil.plist")))
     }
 
-    func testLaunchctlEnableBlocked() {
-        XCTAssertNotNil(matcher.matchDangerous(payload: bashPayload(command: "launchctl enable gui/501/com.evil")))
+    func testLaunchctlLoadNotHardBlocked() {
+        XCTAssertNil(matcher.matchDangerous(payload: bashPayload(command: "launchctl load ~/Library/LaunchAgents/evil.plist")))
+    }
+
+    func testLaunchctlLoadAsksUser() {
+        XCTAssertNotNil(matcher.matchSensitivePath(payload: bashPayload(command: "launchctl load ~/Library/LaunchAgents/evil.plist")))
+    }
+
+    func testLaunchctlEnableNotHardBlocked() {
+        XCTAssertNil(matcher.matchDangerous(payload: bashPayload(command: "launchctl enable gui/501/com.evil")))
+    }
+
+    func testLaunchctlEnableAsksUser() {
+        XCTAssertNotNil(matcher.matchSensitivePath(payload: bashPayload(command: "launchctl enable gui/501/com.evil")))
     }
 
     // MARK: - `at` job scheduling (issue #18 — tightened regex)
@@ -477,8 +489,12 @@ final class PatternMatcherTests: XCTestCase {
         XCTAssertNotNil(matcher.matchSensitivePath(payload: writePayload(filePath: "/Users/x/.zshrc")))
     }
 
-    func testWriteLaunchAgentBlocked() {
-        XCTAssertNotNil(matcher.matchDangerous(payload: writePayload(filePath: "/Users/x/Library/LaunchAgents/com.evil.plist")))
+    func testWriteLaunchAgentNotHardBlocked() {
+        XCTAssertNil(matcher.matchDangerous(payload: writePayload(filePath: "/Users/x/Library/LaunchAgents/com.evil.plist")))
+    }
+
+    func testWriteLaunchAgentAsksUser() {
+        XCTAssertNotNil(matcher.matchSensitivePath(payload: writePayload(filePath: "/Users/x/Library/LaunchAgents/com.evil.plist")))
     }
 
     func testWriteAwsCredentialsBlocked() {
@@ -519,6 +535,7 @@ final class PatternMatcherTests: XCTestCase {
 
     func testCommitWithLaunchctlMentionAllowed() {
         XCTAssertNil(matcher.matchDangerous(payload: bashPayload(command: "git commit -m 'added launchctl bootstrap detection'")))
+        XCTAssertNil(matcher.matchSensitivePath(payload: bashPayload(command: "git commit -m 'added launchctl bootstrap detection'")))
     }
 
     func testHeredocWithDangerousContentAllowed() {
