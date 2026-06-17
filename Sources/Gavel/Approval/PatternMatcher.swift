@@ -104,7 +104,6 @@ struct PatternMatcher {
             // name so a `CRONTAB=/etc/crontab` env-var assignment (which has `=`
             // after the name, a `\b` boundary but not `\s`) doesn't false-match.
             ("(^|[|&;(])\\s*crontab(?!\\s+(-u\\s+\\S+\\s+)?-l\\b)(\\s+|$)", "Crontab modification"),
-            ("\\blaunchctl\\b\\s+(load|unload|submit|bootstrap|bootout|enable|disable|kickstart)", "LaunchAgent/Daemon modification"),
             // `at` command: require a segment boundary AND a recognizable timespec.
             // The previous `\bat\b\s+` matched any prose "at " — e.g. heredoc bodies
             // inside `gh pr create`, or commit messages like "fix bug at line 42".
@@ -176,6 +175,7 @@ struct PatternMatcher {
             ("\\bcurl\\b.*\\$\\(", "curl with command substitution (broad — review)"),
             ("\\bcurl\\b.*(?-i:-d|--data|--data-raw|--data-binary|--data-urlencode|-F|--form|--upload-file|-T)\\b", "curl sending data — review for exfiltration"),
             ("\\bcrontab\\b", "crontab reference (broad — review)"),
+            ("\\blaunchctl\\b\\s+(load|unload|submit|bootstrap|bootout|enable|disable|kickstart)", "LaunchAgent/Daemon modification"),
         ]
 
         // Hard block — credentials and persistence vectors that should never be written
@@ -184,9 +184,6 @@ struct PatternMatcher {
             ("\\.ssh/(id_|authorized_keys|config)", "Protected: SSH keys/config"),
             // GPG keys
             ("\\.gnupg/", "Protected: GPG keys"),
-            // LaunchAgents (persistence vector)
-            ("LaunchAgents/", "Protected: LaunchAgent (persistence risk)"),
-            ("LaunchDaemons/", "Protected: LaunchDaemon (persistence risk)"),
             // AWS/cloud credentials
             ("\\.aws/(credentials|config)", "Protected: AWS credentials"),
             ("\\.kube/config", "Protected: Kubernetes config"),
@@ -204,6 +201,8 @@ struct PatternMatcher {
             ("\\.mcp\\.json$", "Sensitive: MCP server config"),
             // Shell config
             ("\\.(bash_profile|bashrc|zshrc|zprofile|profile|zshenv)$", "Sensitive: Shell config"),
+            ("LaunchAgents/", "Sensitive: LaunchAgent (persistence vector)"),
+            ("LaunchDaemons/", "Sensitive: LaunchDaemon (persistence vector)"),
         ]
 
         bashPatterns = rawBash.compactMap { entry in

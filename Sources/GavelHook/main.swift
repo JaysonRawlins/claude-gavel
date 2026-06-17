@@ -56,9 +56,17 @@ var envelope: [String: Any] = [
     "timestamp": timestamp,
 ]
 
+// Opt-in remote-approval request: the spawner sets GAVEL_REQUEST_PHONE on the
+// launched session; the daemon only honors it on SessionStart.
+let requestsRemoteApproval = ["1", "true", "yes"].contains(
+    (ProcessInfo.processInfo.environment["GAVEL_REQUEST_PHONE"] ?? "").lowercased())
+
 // Merge stdin JSON as payload (add "type" discriminator for daemon decoding)
 if var payload = stdinJson {
     payload["type"] = hookType
+    if hookType == "SessionStart", requestsRemoteApproval {
+        payload["request_remote_approval"] = true
+    }
     envelope["payload"] = payload
 }
 
