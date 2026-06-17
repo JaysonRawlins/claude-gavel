@@ -347,6 +347,14 @@ struct MonitorWindow: View {
     private func filterSessions(_ sessions: [Session], query: String) -> [Session] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return sessions }
+        if q.hasPrefix("-tag:") {
+            let token = String(q.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+            return token.isEmpty ? sessions : sessions.filter { !$0.tags.matches(token: token) }
+        }
+        if q.hasPrefix("tag:") {
+            let token = String(q.dropFirst(4)).trimmingCharacters(in: .whitespaces)
+            return token.isEmpty ? sessions : sessions.filter { $0.tags.matches(token: token) }
+        }
         return sessions.filter { session in
             if String(session.pid).contains(q) { return true }
             if let sid = session.sessionId, sid.lowercased().contains(q) { return true }
@@ -452,6 +460,8 @@ private struct SessionRow: View {
                 }
                 viewModel.noteInteraction()
             }
+
+            SessionTagBadges(tags: session.tags.snapshot)
 
             Spacer()
 
@@ -765,6 +775,35 @@ private struct SessionRow: View {
 
     private var rowBackground: Color {
         alternate ? Color.secondary.opacity(0.06) : Color.clear
+    }
+}
+
+private struct SessionTagBadges: View {
+    let tags: [SessionTag]
+
+    var body: some View {
+        if !tags.isEmpty {
+            HStack(spacing: 3) {
+                ForEach(tags.prefix(3), id: \.name) { tag in
+                    Text(displayName(tag.name))
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
+                }
+                if tags.count > 3 {
+                    Text(verbatim: "+\(tags.count - 3)")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .help(tags.map(\.name).joined(separator: ", "))
+        }
+    }
+
+    private func displayName(_ name: String) -> String {
+        name.hasPrefix("skill:") ? String(name.dropFirst(6)) : name
     }
 }
 

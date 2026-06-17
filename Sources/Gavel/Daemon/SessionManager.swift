@@ -278,6 +278,7 @@ final class SessionManager: ObservableObject {
         let planPolicyDroppedReason: String?
         let isRemoteApprovalEnabled: Bool?
         let remoteApprovalUntil: Date?
+        let tags: [SessionTag]?
     }
 
     private struct PersistedState: Codable {
@@ -324,7 +325,8 @@ final class SessionManager: ObservableObject {
             engagedPlanHash: session.engagedPlanHash,
             planPolicyDroppedReason: session.planPolicyDroppedReason,
             isRemoteApprovalEnabled: session.remoteApprovalSnapshot.enabled ? true : nil,
-            remoteApprovalUntil: session.remoteApprovalSnapshot.until
+            remoteApprovalUntil: session.remoteApprovalSnapshot.until,
+            tags: session.tags.isEmpty ? nil : session.tags.snapshot
         )
     }
 
@@ -373,6 +375,7 @@ final class SessionManager: ObservableObject {
             session.setRemoteApprovalEnabled(true, until: snap.remoteApprovalUntil)
         }
         rehydratePlanPolicy(snap, into: session)
+        session.tags.load(snap.tags ?? [])
         sessions[snap.pid] = session
         tryJsonlSeed(session: session)
     }
@@ -421,6 +424,7 @@ final class SessionManager: ObservableObject {
             session.label = derived
             session.labelIsDerived = true
         }
+        session.tags.load(snap.tags ?? [])
         deadSessions[sessionId] = session
     }
 

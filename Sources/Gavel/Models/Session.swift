@@ -135,6 +135,8 @@ final class Session: ObservableObject, Identifiable {
     /// `.isEmpty` on it directly via the conveniences on the store type.
     let taintedPaths = TaintedPathStore()
 
+    let tags = SessionTagStore()
+
     // Computed proxies so `session.toolCallCount` style call-sites in views
     // and the stats aggregator still read naturally.
     var toolCallCount: Int { stats.toolCallCount }
