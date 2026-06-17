@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.28.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.27.0...v1.28.0) (2026-06-17)
+
+
+### Features
+
+* **approval:** launchctl/LaunchAgent fail-closed prompt + opt-in remote-approval enable ([#146](https://github.com/JaysonRawlins/claude-gavel/issues/146)) ([2e6b576](https://github.com/JaysonRawlins/claude-gavel/commit/2e6b5760d218ecf69ec3d9515028d727f99380f7))
+
 ## [1.27.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.26.0...v1.27.0) (2026-06-17)
 
 
