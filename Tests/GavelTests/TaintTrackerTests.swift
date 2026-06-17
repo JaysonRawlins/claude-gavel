@@ -84,6 +84,27 @@ final class TaintTrackerTests: XCTestCase {
         XCTAssertEqual(taints, ["/tmp/exfil"])
     }
 
+    func testRedirectInsideCommitMessageDoesNotTaint() {
+        var taints = Set<String>()
+        TaintTracker.recordTaints(command: "git commit -m 'note: copy ~/.ssh/id_rsa >> /tmp/x someday'", into: &taints)
+        XCTAssertTrue(taints.isEmpty)
+    }
+
+    func testRedirectInsideHeredocBodyDoesNotTaint() {
+        let cmd = "git commit -F - <<'EOF'\nmentions ~/.aws/credentials >> /tmp/leak\nEOF"
+        var taints = Set<String>()
+        TaintTracker.recordTaints(command: cmd, into: &taints)
+        XCTAssertTrue(taints.isEmpty)
+    }
+
+    func testNetworkWordInCommitMessageIsNotExfil() {
+        let result = TaintTracker.checkExfiltration(
+            command: "git commit -m 'send /tmp/exfil with curl later'",
+            taintedPaths: ["/tmp/exfil"]
+        )
+        XCTAssertNil(result)
+    }
+
     func testCopyFromSensitiveSourceTaintsDestination() {
         var taints = Set<String>()
         TaintTracker.recordTaints(command: "cp ~/.aws/credentials /tmp/creds", into: &taints)

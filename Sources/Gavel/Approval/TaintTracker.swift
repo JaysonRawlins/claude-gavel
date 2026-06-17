@@ -29,15 +29,16 @@ struct TaintTracker {
     /// Returns a block reason if detected, nil if safe.
     static func checkExfiltration(command: String, taintedPaths: Set<String>) -> String? {
         guard !taintedPaths.isEmpty else { return nil }
-        let range = NSRange(command.startIndex..., in: command)
+        let scanned = PatternMatcher.stripQuotedContent(command)
+        let range = NSRange(scanned.startIndex..., in: scanned)
 
         for taintedPath in taintedPaths {
-            guard command.contains(taintedPath) else { continue }
+            guard scanned.contains(taintedPath) else { continue }
 
-            if let reason = checkNetworkExfil(command: command, taintedPath: taintedPath, range: range) {
+            if let reason = checkNetworkExfil(command: scanned, taintedPath: taintedPath, range: range) {
                 return reason
             }
-            if let reason = checkDirectExecution(command: command, taintedPath: taintedPath, range: range) {
+            if let reason = checkDirectExecution(command: scanned, taintedPath: taintedPath, range: range) {
                 return reason
             }
         }
@@ -50,7 +51,8 @@ struct TaintTracker {
     /// buffer so the private extractors below keep their existing
     /// `inout Set<String>` signatures and we batch a single `formUnion` at
     /// the end (one lock acquisition instead of one per insert).
-    static func recordTaints(command: String, into store: TaintedPathStore) {
+    static func recordTaints(command rawCommand: String, into store: TaintedPathStore) {
+        let command = PatternMatcher.stripQuotedContent(rawCommand)
         guard referencesSensitiveSource(command) else { return }
         var buffer = Set<String>()
         extractRedirectTarget(from: command, into: &buffer)
@@ -63,7 +65,8 @@ struct TaintTracker {
 
     /// Set-style overload kept for unit tests that hand-craft a Set rather
     /// than going through the store.
-    static func recordTaints(command: String, into taintedPaths: inout Set<String>) {
+    static func recordTaints(command rawCommand: String, into taintedPaths: inout Set<String>) {
+        let command = PatternMatcher.stripQuotedContent(rawCommand)
         guard referencesSensitiveSource(command) else { return }
         extractRedirectTarget(from: command, into: &taintedPaths)
         extractCompileOutput(from: command, into: &taintedPaths)
