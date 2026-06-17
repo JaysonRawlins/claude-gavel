@@ -806,6 +806,7 @@ private struct SessionTagBadges: View {
                     Text(verbatim: "+\(tags.count - 3)")
                         .font(.system(size: 9))
                         .foregroundColor(.secondary)
+                        .help(tags.dropFirst(3).map(\.name).joined(separator: ", "))
                 }
             }
             .help(tags.map(\.name).joined(separator: ", "))
@@ -1463,6 +1464,16 @@ struct SessionRulesView: View {
                     .foregroundColor(.orange)
             }
             .font(.caption2)
+
+            if !session.tags.isEmpty {
+                HStack(alignment: .top, spacing: 4) {
+                    Text("Tags:").foregroundColor(.secondary)
+                    Text(session.tags.snapshot.map(\.name).joined(separator: "   "))
+                        .foregroundColor(.teal)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.caption2)
+            }
 
             // Session rules
             if session.sessionRules.isEmpty {
