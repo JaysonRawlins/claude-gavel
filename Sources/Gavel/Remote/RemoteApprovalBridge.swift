@@ -8,10 +8,12 @@ final class RemoteApprovalBridge {
     static weak var shared: RemoteApprovalBridge?
 
     private final class Correlation {
+        let nonce: String
         let resolvable: ResolvableApproval
         let allowSession: (() -> Void)?
         var messageId: Int?
-        init(resolvable: ResolvableApproval, allowSession: (() -> Void)?) {
+        init(nonce: String, resolvable: ResolvableApproval, allowSession: (() -> Void)?) {
+            self.nonce = nonce
             self.resolvable = resolvable
             self.allowSession = allowSession
         }
@@ -21,10 +23,16 @@ final class RemoteApprovalBridge {
     private let redact: (String) -> String
     private let lock = NSLock()
     private var byNonce: [String: Correlation] = [:]
+    private var pendingOrder: [String] = []
     private var offset = 0
     private var running = false
     private var backoff: TimeInterval = 1
     private var chatId: Int64?
+
+    private var sendTokens = 5.0
+    private var lastRefill = Date()
+    private var coalescedCount = 0
+    private var lastCoalesceNotice: Date?
 
     /// Fired when pairing captures a chat id, so the daemon can persist it.
     var onPaired: ((Int64) -> Void)?
@@ -60,28 +68,37 @@ final class RemoteApprovalBridge {
     // MARK: - Outbound
 
     /// Send a pending approval to the phone and register it for inbound resolution.
-    func notify(resolvable: ResolvableApproval, text: String, allowSession: (() -> Void)?) {
+    func notify(resolvable: ResolvableApproval, text: String, allowSession: (() -> Void)?, offerCommentClean: Bool = false) {
         lock.lock(); let chat = chatId; lock.unlock()
         guard let chat else { return }
 
-        let nonce = Self.makeNonce()
-        let corr = Correlation(resolvable: resolvable, allowSession: allowSession)
-        lock.lock(); byNonce[nonce] = corr; lock.unlock()
+        guard consumeSendToken() else {
+            coalesce(chat: chat)
+            return
+        }
 
-        resolvable.addCleanup { [weak self] source, decision in
+        let nonce = Self.makeNonce()
+        let corr = Correlation(nonce: nonce, resolvable: resolvable, allowSession: allowSession)
+        lock.lock(); byNonce[nonce] = corr; pendingOrder.append(nonce); lock.unlock()
+
+        resolvable.addCleanup { [weak self] source, _ in
             guard let self else { return }
-            self.lock.lock(); self.byNonce.removeValue(forKey: nonce); let mid = corr.messageId; self.lock.unlock()
+            self.lock.lock(); let mid = corr.messageId; self.lock.unlock()
+            self.forget(nonce)
             guard source != .telegram else { return }
             if let mid {
                 self.transport.editMessageText(chatId: chat, messageId: mid, text: Self.macResolvedText(source), completion: nil)
             }
         }
 
-        let keyboard: [[TelegramButton]] = [
+        var keyboard: [[TelegramButton]] = [
             [TelegramButton(text: "✅ Allow once", callbackData: "a:\(nonce)"),
              TelegramButton(text: "🛑 Deny", callbackData: "d:\(nonce)")],
             [TelegramButton(text: "✅ Allow for session", callbackData: "s:\(nonce)")]
         ]
+        if offerCommentClean {
+            keyboard.append([TelegramButton(text: "🧹 Clean comments & re-propose", callbackData: "c:\(nonce)")])
+        }
         transport.sendMessage(chatId: chat, text: text, keyboard: keyboard) { [weak self] result in
             guard let self else { return }
             switch result {
@@ -89,7 +106,7 @@ final class RemoteApprovalBridge {
                 self.lock.lock(); corr.messageId = mid; self.lock.unlock()
                 if resolvable.isResolved {
                     self.transport.editMessageText(chatId: chat, messageId: mid, text: Self.macResolvedText(.mac), completion: nil)
-                    self.lock.lock(); self.byNonce.removeValue(forKey: nonce); self.lock.unlock()
+                    self.forget(nonce)
                 }
             case .failure(let error):
                 self.onStatus?("Telegram send failed: \(self.redact("\(error)"))")
@@ -130,6 +147,10 @@ final class RemoteApprovalBridge {
                     self.stop()
                     return
                 }
+                if case TelegramError.rateLimited(let retryAfter) = error {
+                    self.rearm(after: retryAfter)
+                    return
+                }
                 let delay = self.bumpBackoff()
                 self.onStatus?("Telegram poll error (retry \(Int(delay))s): \(self.redact("\(error)"))")
                 self.rearm(after: delay)
@@ -151,16 +172,35 @@ final class RemoteApprovalBridge {
     }
 
     private func handleMessage(_ message: TelegramIncomingMessage) {
-        lock.lock(); let paired = chatId != nil; lock.unlock()
-        guard !paired, (message.text ?? "").hasPrefix("/start") else { return }
-        lock.lock(); chatId = message.chatId; lock.unlock()
-        onPaired?(message.chatId)
-        transport.sendMessage(
-            chatId: message.chatId,
-            text: "Gavel paired ✅ — this chat is now the only one that can answer approvals.",
-            keyboard: nil,
-            completion: { _ in }
-        )
+        lock.lock(); let pinned = chatId; lock.unlock()
+
+        if pinned == nil {
+            guard (message.text ?? "").hasPrefix("/start") else { return }
+            lock.lock(); chatId = message.chatId; lock.unlock()
+            onPaired?(message.chatId)
+            transport.sendMessage(
+                chatId: message.chatId,
+                text: "Gavel paired ✅ — this chat is now the only one that can answer approvals.",
+                keyboard: nil,
+                completion: { _ in }
+            )
+            return
+        }
+
+        guard let pinned, message.chatId == pinned, message.fromId == pinned else { return }
+        guard let text = message.text, !text.isEmpty, !text.hasPrefix("/") else { return }
+        switch typedReplyTarget(replyTo: message.replyToMessageId) {
+        case .target(let corr):
+            forget(corr.nonce)
+            let decision = Decision(verdict: .block, reason: "Denied from phone — \(text)")
+            if corr.resolvable.resolve(decision, from: .telegram), let mid = corr.messageId {
+                transport.editMessageText(chatId: pinned, messageId: mid, text: "🛑 Denied from phone — \(text)", completion: nil)
+            }
+        case .ambiguous(let count):
+            transport.sendMessage(chatId: pinned, text: "\(count) approvals pending — swipe-reply the specific one you mean, or tap its buttons.", keyboard: nil, completion: { _ in })
+        case .none:
+            break
+        }
     }
 
     private func handleCallback(_ callback: TelegramCallback) {
@@ -178,17 +218,19 @@ final class RemoteApprovalBridge {
         let action = String(parts[0])
         let nonce = String(parts[1])
 
-        lock.lock(); let corr = byNonce.removeValue(forKey: nonce); lock.unlock()
+        lock.lock(); let corr = byNonce[nonce]; lock.unlock()
         guard let corr else {
             transport.answerCallbackQuery(id: callback.id, text: "Already resolved", completion: nil)
             transport.editMessageText(chatId: pinned, messageId: callback.messageId, text: "↪️ Already resolved", completion: nil)
             return
         }
+        forget(nonce)
 
         if action == "s" { corr.allowSession?() }
-        let won = corr.resolvable.resolve(Self.decision(for: action), from: .telegram)
+        let decision = Self.decision(for: action)
+        let won = corr.resolvable.resolve(decision, from: .telegram)
         if won {
-            transport.answerCallbackQuery(id: callback.id, text: action == "d" ? "Denied" : "Allowed", completion: nil)
+            transport.answerCallbackQuery(id: callback.id, text: decision.verdict == .block ? "Denied" : "Allowed", completion: nil)
             transport.editMessageText(chatId: pinned, messageId: callback.messageId, text: Self.phoneResolvedText(action), completion: nil)
         } else {
             transport.answerCallbackQuery(id: callback.id, text: "Already resolved", completion: nil)
@@ -217,31 +259,90 @@ final class RemoteApprovalBridge {
     static func decision(for action: String) -> Decision {
         switch action {
         case "d": return Decision(verdict: .block, reason: "Denied from phone")
+        case "c": return Decision(verdict: .block, reason: "Denied from phone — clean up the house-rule comment violations in this change, then re-propose the commit.")
         case "s": return Decision(verdict: .allow, reason: "Approved for session from phone")
         default: return Decision(verdict: .allow, reason: "Approved from phone")
         }
     }
 
     private static func phoneResolvedText(_ action: String) -> String {
-        action == "d" ? "🛑 Denied from phone" : "✅ Approved from phone"
+        switch action {
+        case "d": return "🛑 Denied from phone"
+        case "c": return "🧹 Denied — clean comments & re-propose"
+        default: return "✅ Approved from phone"
+        }
+    }
+
+    private func forget(_ nonce: String) {
+        lock.lock()
+        byNonce.removeValue(forKey: nonce)
+        pendingOrder.removeAll { $0 == nonce }
+        lock.unlock()
+    }
+
+    private enum TypedReplyTarget {
+        case target(Correlation)
+        case ambiguous(Int)
+        case none
+    }
+
+    private func typedReplyTarget(replyTo: Int?) -> TypedReplyTarget {
+        lock.lock(); defer { lock.unlock() }
+        if let replyTo {
+            if let match = byNonce.values.first(where: { $0.messageId == replyTo }) { return .target(match) }
+            return .none
+        }
+        switch pendingOrder.count {
+        case 0: return .none
+        case 1: return byNonce[pendingOrder[0]].map { .target($0) } ?? .none
+        default: return .ambiguous(pendingOrder.count)
+        }
+    }
+
+    private func consumeSendToken() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        let now = Date()
+        sendTokens = min(5.0, sendTokens + now.timeIntervalSince(lastRefill))
+        lastRefill = now
+        guard sendTokens >= 1 else { return false }
+        sendTokens -= 1
+        return true
+    }
+
+    private func coalesce(chat: Int64) {
+        lock.lock()
+        coalescedCount += 1
+        let count = coalescedCount
+        let now = Date()
+        let shouldNotice = lastCoalesceNotice.map { now.timeIntervalSince($0) > 5 } ?? true
+        if shouldNotice { lastCoalesceNotice = now }
+        lock.unlock()
+        guard shouldNotice else { return }
+        transport.sendMessage(chatId: chat, text: "⚠️ \(count) approvals queued too fast for Telegram — answer them on your Mac.", keyboard: nil, completion: { _ in })
     }
 
     private static func macResolvedText(_ source: ResolvableApproval.Source) -> String {
         source == .timeout ? "⏱ Timed out — denied (Mac)" : "✅ Answered on Mac"
     }
 
-    /// Build the redacted, truncated, control-stripped message body for an approval.
+    /// Build the redacted, control-stripped message body for an approval — full command, capped near Telegram's limit.
     static func summaryBody(payload: PreToolUsePayload, session: Session, triggerReason: String?) -> String {
         let label = session.label.isEmpty ? "PID \(session.pid)" : session.label
-        let raw = payload.command ?? payload.filePath ?? firstStringInput(payload) ?? ""
-        let summary = sanitizeForDisplay(SecretRedactor.redact(raw))
-        let capped = summary.count > GavelConstants.telegramSummaryMaxChars
-            ? String(summary.prefix(GavelConstants.telegramSummaryMaxChars)) + "…"
-            : summary
         var lines = ["Gavel approval — \(sanitizeForDisplay(label))", "Tool: \(payload.toolName)"]
-        if !capped.isEmpty { lines.append(capped) }
+        if let cwd = session.cwd {
+            let tail = cwd.split(separator: "/").suffix(2).joined(separator: "/")
+            if !tail.isEmpty { lines.append("cwd: …/\(tail)") }
+        }
+        let raw = payload.command ?? payload.filePath ?? firstStringInput(payload) ?? ""
+        if !raw.isEmpty {
+            let cleaned = sanitizeForDisplay(SecretRedactor.redact(raw))
+            if cleaned.count > GavelConstants.telegramBodyMaxChars {
+                lines.append(String(cleaned.prefix(GavelConstants.telegramBodyMaxChars)) + "… (truncated — full on Mac)")
+            } else {
+                lines.append(cleaned)
+            }
+        }
         if let reason = triggerReason, !reason.isEmpty { lines.append("(\(sanitizeForDisplay(reason)))") }
-        lines.append("(full detail on Mac)")
         return lines.joined(separator: "\n")
     }
 

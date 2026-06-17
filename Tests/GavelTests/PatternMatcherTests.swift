@@ -16,6 +16,16 @@ final class PatternMatcherTests: XCTestCase {
         PreToolUsePayload(toolName: "Edit", toolInput: ["file_path": AnyCodable(filePath)])
     }
 
+    // MARK: - Gavel config self-protection
+
+    func testGavelDirWritesPromptIncludingSessionContext() {
+        XCTAssertNotNil(matcher.matchSensitivePath(payload: writePayload(filePath: "/Users/x/.claude/gavel/session-context.md")))
+        XCTAssertNotNil(matcher.matchSensitivePath(payload: editPayload(filePath: "/Users/x/.claude/gavel/session-context.md")))
+        XCTAssertNotNil(matcher.matchSensitivePath(payload: writePayload(filePath: "/Users/x/.claude/gavel/active-sessions.json")))
+        XCTAssertNotNil(matcher.matchSensitivePath(payload: writePayload(filePath: "/Users/x/.claude/gavel/rules.json")))
+        XCTAssertNil(matcher.matchSensitivePath(payload: writePayload(filePath: "/Users/x/code/project/README.md")))
+    }
+
     // MARK: - Safe commands pass
 
     func testSafeCommandsPass() {
