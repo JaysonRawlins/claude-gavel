@@ -53,14 +53,7 @@ struct PatternMatcher {
     init() {
         let rawBash: [(pattern: String, reason: String)] = [
             // ── Credential exfiltration (expanded) ──
-            // curl with any data-sending flag. Short flags must be case-sensitive
-            // (`(?-i:...)`) because curl distinguishes `-d`/`-D`, `-F`/`-f`, `-T`/`-t`:
-            // `-D` is `--dump-header` (receive), `-f` is `--fail`, `-t` is
-            // `--telnet-option` — none of which send data. The surrounding rule set
-            // is compiled `.caseInsensitive`, which previously made `-D`/`-f`/`-t`
-            // false-trigger this exfil rule on benign downloads like
-            // `curl -D - -o file URL`.
-            ("\\bcurl\\b.*(?-i:-d|--data|--data-raw|--data-binary|--data-urlencode|-F|--form|--upload-file|-T)\\b", "Potential data exfiltration via curl"),
+            ("\\bcurl\\b.*(?-i:-d|--data|--data-raw|--data-binary|--data-urlencode|-F|--form|--upload-file|-T)\\b.*(\\.ssh/|\\.aws/|\\.gnupg/|\\.kube/|\\.env\\b|id_rsa|id_ed25519|id_ecdsa|credentials|secring|\\.pem\\b|\\.key\\b|passwd|shadow)", "Credential file exfiltration via curl"),
             // curl with URL containing variable/subshell expansion (exfil via URL).
             // Anchored to command position so `MY_CURL=$(which curl)` (a benign var
             // assignment that captures the curl path) doesn't trip on `\bcurl\b`
@@ -181,6 +174,7 @@ struct PatternMatcher {
             // shape is rare in practice (env-var-prefix idioms like `ENV=prod cmd`
             // are too common to prompt on, so those gaps stay accepted).
             ("\\bcurl\\b.*\\$\\(", "curl with command substitution (broad — review)"),
+            ("\\bcurl\\b.*(?-i:-d|--data|--data-raw|--data-binary|--data-urlencode|-F|--form|--upload-file|-T)\\b", "curl sending data — review for exfiltration"),
             ("\\bcrontab\\b", "crontab reference (broad — review)"),
         ]
 
