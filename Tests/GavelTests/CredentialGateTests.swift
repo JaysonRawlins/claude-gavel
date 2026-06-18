@@ -56,4 +56,39 @@ final class CredentialGateTests: XCTestCase {
         let cmd = "AWS_PROFILE=AcmeCorp-Root-123456789012-AWSAdministratorAccess aws sts get-caller-identity"
         XCTAssertFalse(CredentialGate.blocksRemote(payload(["command": cmd])))
     }
+
+    func testInspectReportsKnownPatternByLabel() {
+        let trigger = CredentialGate.inspect(payload(["command": "aws s3 ls AKIAIOSFODNN7EXAMPLE"]))
+        XCTAssertEqual(trigger, .knownPattern(label: "AWS access key"))
+    }
+
+    func testInspectKnownPatternWinsOverEntropy() {
+        let trigger = CredentialGate.inspect(payload(["command": "echo ghp_0123456789abcdefABCDEF0123456789abcdef"]))
+        XCTAssertEqual(trigger, .knownPattern(label: "GitHub PAT"))
+    }
+
+    func testInspectReportsEntropyRunPrefixAndLength() {
+        let trigger = CredentialGate.inspect(payload(["command": "export TOKEN=Xa9Kd2Lp8Qw3Zr7Tv1Bn6Mc"]))
+        XCTAssertEqual(trigger, .entropyRun(prefix: "Xa9K", length: 23))
+    }
+
+    func testInspectReturnsNilForCleanCommand() {
+        XCTAssertNil(CredentialGate.inspect(payload(["command": "swift build && swift test"])))
+    }
+
+    func testLogDescriptionNeverLeaksFullToken() {
+        let token = "Xa9Kd2Lp8Qw3Zr7Tv1Bn6Mc"
+        guard case let .entropyRun(prefix, length)? = CredentialGate.inspect(payload(["command": "echo \(token)"])) else {
+            return XCTFail("expected entropy-run trigger")
+        }
+        let description = CredentialGate.Trigger.entropyRun(prefix: prefix, length: length).logDescription
+        XCTAssertFalse(description.contains(token))
+        XCTAssertEqual(description, "entropy-run prefix=\"Xa9K…\" len=23")
+    }
+
+    func testKnownPatternLogDescriptionHasNoToken() {
+        let description = CredentialGate.Trigger.knownPattern(label: "AWS access key").logDescription
+        XCTAssertEqual(description, "known-pattern \"AWS access key\"")
+        XCTAssertFalse(description.contains("AKIA"))
+    }
 }

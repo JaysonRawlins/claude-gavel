@@ -1,17 +1,37 @@
 import Foundation
 
-/// Non-disableable safety gate for outbound remote-approval messages.
-/// When any payload field is credential-shaped, the message is suppressed entirely.
+/// Non-disableable safety gate that withholds credential-shaped commands from the remote channel.
 enum CredentialGate {
 
-    /// True when the payload must NOT be sent to a remote channel (Telegram).
-    /// Scans every tool-input value, the command, and file path — biased to over-suppress.
-    static func blocksRemote(_ payload: PreToolUsePayload) -> Bool {
-        for text in scannableStrings(payload) {
-            if SecretRedactor.containsKnownSecret(text) { return true }
-            if containsHighEntropyRun(text) { return true }
+    /// What tripped the gate — carries only log-safe fragments, never the full token.
+    enum Trigger: Equatable {
+        case knownPattern(label: String)
+        case entropyRun(prefix: String, length: Int)
+
+        var logDescription: String {
+            switch self {
+            case .knownPattern(let label): return "known-pattern \"\(label)\""
+            case .entropyRun(let prefix, let length): return "entropy-run prefix=\"\(prefix)…\" len=\(length)"
+            }
         }
-        return false
+    }
+
+    /// The first credential-shaped trigger in the payload, or nil when clean.
+    static func inspect(_ payload: PreToolUsePayload) -> Trigger? {
+        for text in scannableStrings(payload) {
+            if let label = SecretRedactor.firstMatchLabel(in: text) {
+                return .knownPattern(label: label)
+            }
+            if let run = firstHighEntropyRun(in: text) {
+                return .entropyRun(prefix: String(run.prefix(4)), length: run.count)
+            }
+        }
+        return nil
+    }
+
+    /// True when the payload's command must be withheld from the remote channel.
+    static func blocksRemote(_ payload: PreToolUsePayload) -> Bool {
+        inspect(payload) != nil
     }
 
     private static func scannableStrings(_ payload: PreToolUsePayload) -> [String] {
@@ -41,18 +61,21 @@ enum CredentialGate {
         }
     }
 
-    /// A 20+ char key-like run that is not a UUID or ISO-8601 timestamp is
-    /// credential-shaped. `/` is excluded so paths split into short segments.
+    /// True when the text contains a non-whitelisted 20+ char key-like run.
     static func containsHighEntropyRun(_ text: String) -> Bool {
+        firstHighEntropyRun(in: text) != nil
+    }
+
+    /// The first non-whitelisted 20+ char key-like run, or nil — `/` is excluded so paths split into short segments.
+    static func firstHighEntropyRun(in text: String) -> String? {
         let range = NSRange(text.startIndex..., in: text)
-        let matches = entropyRegex.matches(in: text, range: range)
-        for match in matches {
+        for match in entropyRegex.matches(in: text, range: range) {
             guard let r = Range(match.range, in: text) else { continue }
             let token = String(text[r])
             if isWhitelisted(token) { continue }
-            return true
+            return token
         }
-        return false
+        return nil
     }
 
     private static func isWhitelisted(_ token: String) -> Bool {

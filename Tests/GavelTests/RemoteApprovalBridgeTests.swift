@@ -218,4 +218,35 @@ final class RemoteApprovalBridgeTests: XCTestCase {
         XCTAssertFalse(body.contains("super secret body"))
         XCTAssertFalse(body.contains("AKIAIOSFODNN7EXAMPLE"))
     }
+
+    func testWithheldBodyCarriesMetadataButNoCommand() {
+        let session = Session(pid: 123, cwd: "/Users/jay/code/claude-gavel")
+        session.label = "demo"
+        let payload = PreToolUsePayload(
+            toolName: "Bash",
+            toolInput: ["command": AnyCodable("aws configure set aws_secret_access_key AKIAIOSFODNN7EXAMPLE")]
+        )
+        let body = RemoteApprovalBridge.withheldBody(payload: payload, session: session)
+
+        XCTAssertTrue(body.contains("demo"))
+        XCTAssertTrue(body.contains("Bash"))
+        XCTAssertTrue(body.contains("claude-gavel"))
+        XCTAssertFalse(body.contains("AKIAIOSFODNN7EXAMPLE"))
+        XCTAssertFalse(body.contains("aws configure"))
+    }
+
+    func testWithheldApprovalIsResolvableFromPhoneWithButtons() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var resolved: Decision?
+        let approval = ResolvableApproval { resolved = $0 }
+
+        bridge.notify(resolvable: approval, text: "🔒 Gavel — command withheld", allowSession: nil)
+        XCTAssertFalse(fake.lastCallbackData.isEmpty)
+
+        let n = nonce(from: fake.lastCallbackData)
+        bridge.handle(callbackUpdate(action: "d", nonce: n, fromId: owner, chatId: owner, messageId: fake.lastSentMessageId))
+
+        XCTAssertEqual(resolved?.verdict, .block)
+    }
 }

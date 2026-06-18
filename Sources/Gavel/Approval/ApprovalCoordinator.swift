@@ -149,18 +149,17 @@ final class ApprovalCoordinator: ObservableObject {
         forceRemoteMirror || sessionActive
     }
 
-    /// Mirror a pending approval to Telegram when its session is remote-enabled.
-    /// The credential gate suppresses the message entirely for sensitive payloads.
+    /// Mirror a pending approval to Telegram; credential-gated payloads send metadata + buttons but withhold the command.
     private func maybeSendRemote(pending: PendingApproval, resolvable: ResolvableApproval) {
         guard Self.shouldMirrorRemote(forceRemoteMirror: pending.forceRemoteMirror, sessionActive: pending.session.isRemoteApprovalActive),
               let bridge = remoteBridge else { return }
-        if CredentialGate.blocksRemote(pending.payload) {
-            bridge.notifyWithheld()
-            return
-        }
         let session = pending.session
         let payload = pending.payload
         let pendingId = pending.id
+        let withheld = CredentialGate.inspect(payload)
+        if let withheld {
+            gavelLog("[remote-gate] withheld command — trigger=\(withheld.logDescription)")
+        }
         let allowSession: () -> Void = {
             let pattern = payload.command ?? payload.filePath ?? "*"
             let rule = SessionRule(toolName: payload.toolName, pattern: pattern)
@@ -170,8 +169,10 @@ final class ApprovalCoordinator: ObservableObject {
             guard source == .telegram else { return }
             DispatchQueue.main.async { self?.dismissPending(id: pendingId, pid: session.pid) }
         }
-        let text = RemoteApprovalBridge.summaryBody(payload: payload, session: session, triggerReason: pending.triggerReason)
-        let isCommit = payload.toolName == "Bash" && (payload.command?.contains("commit") ?? false)
+        let text = withheld != nil
+            ? RemoteApprovalBridge.withheldBody(payload: payload, session: session)
+            : RemoteApprovalBridge.summaryBody(payload: payload, session: session, triggerReason: pending.triggerReason)
+        let isCommit = withheld == nil && payload.toolName == "Bash" && (payload.command?.contains("commit") ?? false)
         bridge.notify(resolvable: resolvable, text: text, allowSession: allowSession, offerCommentClean: isCommit)
     }
 
