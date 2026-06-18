@@ -7,6 +7,7 @@ final class JsonlWatcher {
 
     private var fileHandle: FileHandle?
     private var source: DispatchSourceFileSystemObject?
+    private var pollTimer: DispatchSourceTimer?
     private var lastOffset: UInt64 = 0
     private var lineBuffer = Data()
 
@@ -20,11 +21,39 @@ final class JsonlWatcher {
     }
 
     func start() {
-        queue.async { [weak self] in self?.openAndSubscribe() }
+        queue.async { [weak self] in
+            self?.openAndSubscribe()
+            self?.startPoll()
+        }
     }
 
     func stop() {
-        queue.async { [weak self] in self?.tearDown() }
+        queue.async { [weak self] in
+            self?.pollTimer?.cancel()
+            self?.pollTimer = nil
+            self?.tearDown()
+        }
+    }
+
+    private func startPoll() {
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 2, repeating: 2)
+        timer.setEventHandler { [weak self] in self?.pollOnce() }
+        timer.resume()
+        pollTimer = timer
+    }
+
+    private func pollOnce() {
+        guard fileHandle != nil else {
+            openAndSubscribe()
+            return
+        }
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+           let size = (attrs[.size] as? NSNumber)?.uint64Value, size < lastOffset {
+            reopenAfterRotation()
+            return
+        }
+        readNewBytes()
     }
 
     private func openAndSubscribe() {
