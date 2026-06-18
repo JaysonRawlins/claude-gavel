@@ -5,8 +5,12 @@ final class SkillTagHandler: JsonlEventHandler {
 
     private let knownSkills: Set<String>
 
-    private static let pattern = try! NSRegularExpression(
+    private static let commandNamePattern = try! NSRegularExpression(
         pattern: #"<command-name>\s*/?([A-Za-z0-9][\w-]*)\s*</command-name>"#
+    )
+
+    private static let markerPattern = try! NSRegularExpression(
+        pattern: #"\[\[/([A-Za-z0-9][\w-]*)\]\]"#
     )
 
     init(knownSkills: Set<String> = SkillTagHandler.liveSkills) {
@@ -15,17 +19,24 @@ final class SkillTagHandler: JsonlEventHandler {
 
     func handle(_ event: JsonlEvent, manager: SessionManager, session: Session) {
         guard !knownSkills.isEmpty else { return }
+        guard (event.json?["type"] as? String) == "user" else { return }
         let line = event.rawLine
-        let range = NSRange(line.startIndex..., in: line)
         let at = Self.timestamp(from: event.json) ?? Date()
+        let observed = tag(line: line, pattern: Self.commandNamePattern, source: .observed, at: at, session: session)
+        let manual = tag(line: line, pattern: Self.markerPattern, source: .manual, at: at, session: session)
+        if observed || manual { manager.saveActiveSessions() }
+    }
+
+    private func tag(line: String, pattern: NSRegularExpression, source: TagSource, at: Date, session: Session) -> Bool {
+        let range = NSRange(line.startIndex..., in: line)
         var added = false
-        for match in Self.pattern.matches(in: line, range: range) {
+        for match in pattern.matches(in: line, range: range) {
             guard match.numberOfRanges >= 2, let r = Range(match.range(at: 1), in: line) else { continue }
             let skill = String(line[r])
             guard knownSkills.contains(skill) else { continue }
-            if session.tags.addObserved("skill:\(skill)", at: at) { added = true }
+            if session.tags.add("skill:\(skill)", at: at, source: source) { added = true }
         }
-        if added { manager.saveActiveSessions() }
+        return added
     }
 
     private static func timestamp(from json: [String: Any]?) -> Date? {

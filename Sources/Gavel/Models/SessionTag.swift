@@ -23,11 +23,16 @@ final class SessionTagStore {
     }
 
     @discardableResult
-    func addObserved(_ name: String, at time: Date) -> Bool {
+    func add(_ name: String, at time: Date, source: TagSource) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard _tags[name] == nil else { return false }
-        _tags[name] = SessionTag(name: name, appliedAt: time, source: .observed)
+        _tags[name] = SessionTag(name: name, appliedAt: time, source: source)
         return true
+    }
+
+    @discardableResult
+    func addObserved(_ name: String, at time: Date) -> Bool {
+        add(name, at: time, source: .observed)
     }
 
     func load(_ tags: [SessionTag]) {

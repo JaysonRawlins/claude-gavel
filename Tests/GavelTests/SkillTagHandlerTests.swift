@@ -9,9 +9,9 @@ final class SkillTagHandlerTests: XCTestCase {
         return SessionManager(homeDir: tmp, autoStartTimers: false, autoDiscover: false)
     }
 
-    private func event(_ line: String, ts: String? = nil) -> JsonlEvent {
-        var json: [String: Any]? = nil
-        if let ts = ts { json = ["timestamp": ts] }
+    private func event(_ line: String, ts: String? = nil, type: String = "user") -> JsonlEvent {
+        var json: [String: Any] = ["type": type]
+        if let ts = ts { json["timestamp"] = ts }
         return JsonlEvent(rawLine: line, json: json, sessionId: "s", cwd: "/tmp")
     }
 
@@ -63,6 +63,42 @@ final class SkillTagHandlerTests: XCTestCase {
         handler.handle(event(line, ts: "2026-06-18T19:00:00.000Z"), manager: manager, session: session)
         XCTAssertEqual(session.tags.count, 1)
         XCTAssertEqual(session.tags.snapshot.first?.appliedAt, date("2026-06-18T18:00:00.000Z"))
+    }
+
+    func testManualMarkerTagsKnownSkill() {
+        let handler = SkillTagHandler(knownSkills: ["jira"])
+        let manager = isolatedManager()
+        let session = manager.session(for: 81010)
+        handler.handle(event("please add the tag [[/jira]] retroactively"), manager: manager, session: session)
+        XCTAssertTrue(session.tags.matches(token: "skill:jira"))
+        XCTAssertEqual(session.tags.snapshot.first?.source, .manual)
+    }
+
+    func testManualMarkerIgnoresUnknownSkill() {
+        let handler = SkillTagHandler(knownSkills: ["jira"])
+        let manager = isolatedManager()
+        let session = manager.session(for: 81011)
+        handler.handle(event("[[/not-a-skill]]"), manager: manager, session: session)
+        XCTAssertTrue(session.tags.isEmpty)
+    }
+
+    func testManualMarkerDoesNotOverrideObservedSource() {
+        let handler = SkillTagHandler(knownSkills: ["jira"])
+        let manager = isolatedManager()
+        let session = manager.session(for: 81012)
+        handler.handle(event("<command-name>/jira</command-name>"), manager: manager, session: session)
+        handler.handle(event("[[/jira]]"), manager: manager, session: session)
+        XCTAssertEqual(session.tags.count, 1)
+        XCTAssertEqual(session.tags.snapshot.first?.source, .observed)
+    }
+
+    func testIgnoresNonUserEntry() {
+        let handler = SkillTagHandler(knownSkills: ["daybook"])
+        let manager = isolatedManager()
+        let session = manager.session(for: 81013)
+        handler.handle(event("<command-name>/daybook</command-name> and [[/daybook]]", type: "assistant"),
+                       manager: manager, session: session)
+        XCTAssertTrue(session.tags.isEmpty)
     }
 
     func testEmptyKnownSkillsIsNoOp() {
