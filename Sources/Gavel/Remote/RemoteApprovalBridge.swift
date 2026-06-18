@@ -114,18 +114,6 @@ final class RemoteApprovalBridge {
         }
     }
 
-    /// Send a contentless notice that an approval was withheld by the credential gate.
-    func notifyWithheld() {
-        lock.lock(); let chat = chatId; lock.unlock()
-        guard let chat else { return }
-        transport.sendMessage(
-            chatId: chat,
-            text: "🔒 Gavel: an approval was withheld from Telegram (sensitive content detected). Answer it on your Mac.",
-            keyboard: nil,
-            completion: { _ in }
-        )
-    }
-
     // MARK: - Inbound poll loop
 
     private func pollOnce() {
@@ -343,6 +331,18 @@ final class RemoteApprovalBridge {
             }
         }
         if let reason = triggerReason, !reason.isEmpty { lines.append("(\(sanitizeForDisplay(reason)))") }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Metadata-only body for a credential-gated approval — names the session so it can be verified in Claude, never the command.
+    static func withheldBody(payload: PreToolUsePayload, session: Session) -> String {
+        let label = session.label.isEmpty ? "PID \(session.pid)" : session.label
+        var lines = ["🔒 Gavel — command withheld", "Session: \(sanitizeForDisplay(label))", "Tool: \(payload.toolName)"]
+        if let cwd = session.cwd {
+            let tail = cwd.split(separator: "/").suffix(2).joined(separator: "/")
+            if !tail.isEmpty { lines.append("cwd: …/\(tail)") }
+        }
+        lines.append("Sensitive content detected — command not shown. Verify it in the Claude session, then Allow or Deny below.")
         return lines.joined(separator: "\n")
     }
 

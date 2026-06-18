@@ -118,7 +118,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
     @objc private func configureTelegram() {
         let alert = NSAlert()
         alert.messageText = "Configure Telegram Remote Approval"
-        alert.informativeText = "Paste your bot token from @BotFather. After saving, open your bot in Telegram and send /start to pair this chat. Remote approval must also be enabled per session in the Sessions tab. Command text is sent to Telegram's servers; payloads containing detected credentials are withheld automatically."
+        alert.informativeText = "Paste your bot token from @BotFather. After saving, open your bot in Telegram and send /start to pair this chat. Remote approval must also be enabled per session in the Sessions tab. Command text is sent to Telegram's servers; for payloads with detected credentials the command is withheld and only metadata plus the approval buttons are sent."
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
         field.placeholderString = "123456789:ABCdef..."
         alert.accessoryView = field
