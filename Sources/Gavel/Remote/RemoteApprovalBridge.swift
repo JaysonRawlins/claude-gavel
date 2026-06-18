@@ -9,11 +9,15 @@ final class RemoteApprovalBridge {
 
     private final class Correlation {
         let nonce: String
+        let pid: Int
+        let toolName: String
         let resolvable: ResolvableApproval
         let allowSession: (() -> Void)?
         var messageId: Int?
-        init(nonce: String, resolvable: ResolvableApproval, allowSession: (() -> Void)?) {
+        init(nonce: String, pid: Int, toolName: String, resolvable: ResolvableApproval, allowSession: (() -> Void)?) {
             self.nonce = nonce
+            self.pid = pid
+            self.toolName = toolName
             self.resolvable = resolvable
             self.allowSession = allowSession
         }
@@ -38,6 +42,8 @@ final class RemoteApprovalBridge {
     var onPaired: ((Int64) -> Void)?
     /// Emits a token-redacted status line for the feed/log.
     var onStatus: ((String) -> Void)?
+    /// Emits a gavel.log-only trail of remote sends/resolutions (no UI feed, no secrets).
+    var remoteLog: ((String) -> Void)?
 
     init(transport: TelegramTransport, chatId: Int64?, redact: @escaping (String) -> String = { $0 }) {
         self.transport = transport
@@ -68,17 +74,18 @@ final class RemoteApprovalBridge {
     // MARK: - Outbound
 
     /// Send a pending approval to the phone and register it for inbound resolution.
-    func notify(resolvable: ResolvableApproval, text: String, allowSession: (() -> Void)?, offerCommentClean: Bool = false) {
+    func notify(resolvable: ResolvableApproval, text: String, pid: Int = 0, toolName: String = "", withheld: Bool = false, allowSession: (() -> Void)?, offerCommentClean: Bool = false) {
         lock.lock(); let chat = chatId; lock.unlock()
         guard let chat else { return }
 
         guard consumeSendToken() else {
+            remoteLog?("coalesced pid=\(pid) tool=\(toolName) — flood control, Mac-fallback")
             coalesce(chat: chat)
             return
         }
 
         let nonce = Self.makeNonce()
-        let corr = Correlation(nonce: nonce, resolvable: resolvable, allowSession: allowSession)
+        let corr = Correlation(nonce: nonce, pid: pid, toolName: toolName, resolvable: resolvable, allowSession: allowSession)
         lock.lock(); byNonce[nonce] = corr; pendingOrder.append(nonce); lock.unlock()
 
         resolvable.addCleanup { [weak self] source, _ in
@@ -86,6 +93,7 @@ final class RemoteApprovalBridge {
             self.lock.lock(); let mid = corr.messageId; self.lock.unlock()
             self.forget(nonce)
             guard source != .telegram else { return }
+            self.remoteLog?("dropped pid=\(pid) nonce=\(nonce) source=\(source)")
             if let mid {
                 self.transport.editMessageText(chatId: chat, messageId: mid, text: Self.macResolvedText(source), completion: nil)
             }
@@ -104,11 +112,13 @@ final class RemoteApprovalBridge {
             switch result {
             case .success(let mid):
                 self.lock.lock(); corr.messageId = mid; self.lock.unlock()
+                self.remoteLog?("sent pid=\(pid) nonce=\(nonce) tool=\(toolName) withheld=\(withheld) mid=\(mid)")
                 if resolvable.isResolved {
                     self.transport.editMessageText(chatId: chat, messageId: mid, text: Self.macResolvedText(.mac), completion: nil)
                     self.forget(nonce)
                 }
             case .failure(let error):
+                self.remoteLog?("send-failed pid=\(pid) nonce=\(nonce) tool=\(toolName)")
                 self.onStatus?("Telegram send failed: \(self.redact("\(error)"))")
             }
         }
@@ -181,7 +191,9 @@ final class RemoteApprovalBridge {
         case .target(let corr):
             forget(corr.nonce)
             let decision = Decision(verdict: .block, reason: "Denied from phone — \(text)")
-            if corr.resolvable.resolve(decision, from: .telegram), let mid = corr.messageId {
+            let won = corr.resolvable.resolve(decision, from: .telegram)
+            remoteLog?("resolved pid=\(corr.pid) nonce=\(corr.nonce) action=deny-reason won=\(won)")
+            if won, let mid = corr.messageId {
                 transport.editMessageText(chatId: pinned, messageId: mid, text: "🛑 Denied from phone — \(text)", completion: nil)
             }
         case .ambiguous(let count):
@@ -217,6 +229,7 @@ final class RemoteApprovalBridge {
         if action == "s" { corr.allowSession?() }
         let decision = Self.decision(for: action)
         let won = corr.resolvable.resolve(decision, from: .telegram)
+        remoteLog?("resolved pid=\(corr.pid) nonce=\(nonce) action=\(action) won=\(won)")
         if won {
             transport.answerCallbackQuery(id: callback.id, text: decision.verdict == .block ? "Denied" : "Allowed", completion: nil)
             transport.editMessageText(chatId: pinned, messageId: callback.messageId, text: Self.phoneResolvedText(action), completion: nil)

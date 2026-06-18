@@ -110,6 +110,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
                 self?.viewModel.appendFeedEntry(.system("Telegram: \(message)", pid: Int(getpid()), at: Date()))
             }
         }
+        bridge.remoteLog = { gavelLog("[remote] \($0)") }
         approvalCoordinator.remoteBridge = bridge
         remoteBridge = bridge
         bridge.start()
