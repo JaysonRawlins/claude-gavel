@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.29.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.28.0...v1.29.0) (2026-06-18)
+
+
+### Features
+
+* **approval:** instrument the remote-approval path in gavel.log ([#151](https://github.com/JaysonRawlins/claude-gavel/issues/151)) ([f214002](https://github.com/JaysonRawlins/claude-gavel/commit/f214002af3a5d1db4551bced920e0e6f223513c1))
+* **approval:** resolvable withheld remote approvals + gate trigger logging ([#150](https://github.com/JaysonRawlins/claude-gavel/issues/150)) ([c198dcb](https://github.com/JaysonRawlins/claude-gavel/commit/c198dcb963ee39e9f4cdfdbdcab0638d3908ce9e))
+* **monitor:** show full session tags in Sessions tab + overflow tooltip ([#148](https://github.com/JaysonRawlins/claude-gavel/issues/148)) ([f59255a](https://github.com/JaysonRawlins/claude-gavel/commit/f59255a3eb191b83178f4fd9d30b3d76f18463be))
+
 ## [1.28.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.27.0...v1.28.0) (2026-06-17)
 
 
