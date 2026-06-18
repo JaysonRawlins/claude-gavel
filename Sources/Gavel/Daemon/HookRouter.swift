@@ -346,7 +346,7 @@ final class HookRouter {
         // ever lacks a matching `[hook] respond` and `[socket] exit wrote=N`
         // (with N > 0), the worker died/wedged after read but before write.
         let reasonTag = decision.reason ?? "-"
-        gavelLog("[hook] respond verdict=\(decision.verdict.rawValue) reason=\(reasonTag.prefix(80))")
+        gavelLog("[hook] respond pid=\(session?.pid ?? -1) verdict=\(decision.verdict.rawValue) reason=\(reasonTag.prefix(80))")
         if let respond = respond,
            let data = decision.hookResponse.data(using: .utf8) {
             respond(data)

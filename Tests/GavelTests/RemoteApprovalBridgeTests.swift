@@ -235,6 +235,33 @@ final class RemoteApprovalBridgeTests: XCTestCase {
         XCTAssertFalse(body.contains("aws configure"))
     }
 
+    func testRemoteLogTrailCapturesSendAndResolve() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var logs: [String] = []
+        bridge.remoteLog = { logs.append($0) }
+        let approval = ResolvableApproval { _ in }
+
+        bridge.notify(resolvable: approval, text: "approve?", pid: 4242, toolName: "Bash", withheld: true, allowSession: nil)
+        XCTAssertTrue(logs.contains { $0.hasPrefix("sent pid=4242") && $0.contains("tool=Bash") && $0.contains("withheld=true") })
+
+        let n = nonce(from: fake.lastCallbackData)
+        bridge.handle(callbackUpdate(action: "d", nonce: n, fromId: owner, chatId: owner, messageId: fake.lastSentMessageId))
+        XCTAssertTrue(logs.contains { $0.hasPrefix("resolved pid=4242") && $0.contains("action=d") && $0.contains("won=true") })
+    }
+
+    func testRemoteLogRecordsFloodCoalesce() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var logs: [String] = []
+        bridge.remoteLog = { logs.append($0) }
+
+        for i in 0..<7 {
+            bridge.notify(resolvable: ResolvableApproval { _ in }, text: "x", pid: i, toolName: "Bash", allowSession: nil)
+        }
+        XCTAssertTrue(logs.contains { $0.hasPrefix("coalesced") })
+    }
+
     func testWithheldApprovalIsResolvableFromPhoneWithButtons() {
         let fake = FakeTelegramTransport()
         let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)

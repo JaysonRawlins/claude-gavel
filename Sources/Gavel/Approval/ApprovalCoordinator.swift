@@ -158,7 +158,7 @@ final class ApprovalCoordinator: ObservableObject {
         let pendingId = pending.id
         let withheld = CredentialGate.inspect(payload)
         if let withheld {
-            gavelLog("[remote-gate] withheld command — trigger=\(withheld.logDescription)")
+            gavelLog("[remote-gate] withheld command — pid=\(session.pid) trigger=\(withheld.logDescription)")
         }
         let allowSession: () -> Void = {
             let pattern = payload.command ?? payload.filePath ?? "*"
@@ -173,7 +173,7 @@ final class ApprovalCoordinator: ObservableObject {
             ? RemoteApprovalBridge.withheldBody(payload: payload, session: session)
             : RemoteApprovalBridge.summaryBody(payload: payload, session: session, triggerReason: pending.triggerReason)
         let isCommit = withheld == nil && payload.toolName == "Bash" && (payload.command?.contains("commit") ?? false)
-        bridge.notify(resolvable: resolvable, text: text, allowSession: allowSession, offerCommentClean: isCommit)
+        bridge.notify(resolvable: resolvable, text: text, pid: session.pid, toolName: payload.toolName, withheld: withheld != nil, allowSession: allowSession, offerCommentClean: isCommit)
     }
 
     /// Remove a pending approval resolved remotely from its session panel.
