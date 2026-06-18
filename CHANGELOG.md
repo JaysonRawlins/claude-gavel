@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.30.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.29.0...v1.30.0) (2026-06-18)
+
+
+### Features
+
+* **session:** [[-/skill]] marker to remove a session tag ([#155](https://github.com/JaysonRawlins/claude-gavel/issues/155)) ([8d027d7](https://github.com/JaysonRawlins/claude-gavel/commit/8d027d7f6225601a61257a85cf8370bd9a86f7ee))
+* **session:** [[/skill]] manual tag marker, gated to user transcript entries ([#154](https://github.com/JaysonRawlins/claude-gavel/issues/154)) ([a7e84b6](https://github.com/JaysonRawlins/claude-gavel/commit/a7e84b649f837bc52a8142f6bb4922539a6d8734))
+* **session:** tag sessions from user-typed skill slash commands ([#152](https://github.com/JaysonRawlins/claude-gavel/issues/152)) ([c16d6a0](https://github.com/JaysonRawlins/claude-gavel/commit/c16d6a00fff4036a578c72555b1b0fb7dc840cd1))
+
 ## [1.29.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.28.0...v1.29.0) (2026-06-18)
 
 
