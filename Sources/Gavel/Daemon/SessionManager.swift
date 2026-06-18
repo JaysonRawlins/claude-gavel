@@ -197,7 +197,7 @@ final class SessionManager: ObservableObject {
         let path = (NSHomeDirectory() as NSString)
             .appendingPathComponent(".claude/projects")
             .appending("/\(encoded)/\(sid).jsonl")
-        let handlers: [JsonlEventHandler] = [RenameHandler(), SecretHandler()]
+        let handlers: [JsonlEventHandler] = [RenameHandler(), SecretHandler(), SkillTagHandler()]
         let dispatcher = JsonlEventDispatcher(handlers: handlers, manager: self, session: session)
         let watcher = JsonlWatcher(path: path, dispatcher: dispatcher)
         watchers[session.pid] = watcher
