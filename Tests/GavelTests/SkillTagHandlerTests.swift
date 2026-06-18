@@ -92,6 +92,42 @@ final class SkillTagHandlerTests: XCTestCase {
         XCTAssertEqual(session.tags.snapshot.first?.source, .observed)
     }
 
+    func testRemoveMarkerRemovesTag() {
+        let handler = SkillTagHandler(knownSkills: ["jira"])
+        let manager = isolatedManager()
+        let session = manager.session(for: 81020)
+        handler.handle(event("[[/jira]]"), manager: manager, session: session)
+        XCTAssertTrue(session.tags.matches(token: "skill:jira"))
+        handler.handle(event("oops remove it [[-/jira]]"), manager: manager, session: session)
+        XCTAssertTrue(session.tags.isEmpty)
+    }
+
+    func testRemoveMarkerForAbsentTagIsNoOp() {
+        let handler = SkillTagHandler(knownSkills: ["jira"])
+        let manager = isolatedManager()
+        let session = manager.session(for: 81021)
+        handler.handle(event("[[-/jira]]"), manager: manager, session: session)
+        XCTAssertTrue(session.tags.isEmpty)
+    }
+
+    func testRemoveMarkerDoesNotRequireKnownSkill() {
+        let handler = SkillTagHandler(knownSkills: ["jira"])
+        let manager = isolatedManager()
+        let session = manager.session(for: 81022)
+        session.tags.add("skill:retired", at: Date(timeIntervalSince1970: 1), source: .observed)
+        handler.handle(event("[[-/retired]]"), manager: manager, session: session)
+        XCTAssertFalse(session.tags.matches(token: "skill:retired"))
+    }
+
+    func testRemoveMarkerIgnoredInNonUserEntry() {
+        let handler = SkillTagHandler(knownSkills: ["jira"])
+        let manager = isolatedManager()
+        let session = manager.session(for: 81023)
+        handler.handle(event("[[/jira]]"), manager: manager, session: session)
+        handler.handle(event("[[-/jira]]", type: "assistant"), manager: manager, session: session)
+        XCTAssertTrue(session.tags.matches(token: "skill:jira"))
+    }
+
     func testIgnoresNonUserEntry() {
         let handler = SkillTagHandler(knownSkills: ["daybook"])
         let manager = isolatedManager()

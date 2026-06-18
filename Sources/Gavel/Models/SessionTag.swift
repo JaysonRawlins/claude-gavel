@@ -35,6 +35,12 @@ final class SessionTagStore {
         add(name, at: time, source: .observed)
     }
 
+    @discardableResult
+    func remove(_ name: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _tags.removeValue(forKey: name) != nil
+    }
+
     func load(_ tags: [SessionTag]) {
         lock.lock(); defer { lock.unlock() }
         for tag in tags where _tags[tag.name] == nil {

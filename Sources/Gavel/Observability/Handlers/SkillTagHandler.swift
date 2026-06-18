@@ -13,6 +13,10 @@ final class SkillTagHandler: JsonlEventHandler {
         pattern: #"\[\[/([A-Za-z0-9][\w-]*)\]\]"#
     )
 
+    private static let removeMarkerPattern = try! NSRegularExpression(
+        pattern: #"\[\[-/([A-Za-z0-9][\w-]*)\]\]"#
+    )
+
     init(knownSkills: Set<String> = SkillTagHandler.liveSkills) {
         self.knownSkills = knownSkills
     }
@@ -24,7 +28,18 @@ final class SkillTagHandler: JsonlEventHandler {
         let at = Self.timestamp(from: event.json) ?? Date()
         let observed = tag(line: line, pattern: Self.commandNamePattern, source: .observed, at: at, session: session)
         let manual = tag(line: line, pattern: Self.markerPattern, source: .manual, at: at, session: session)
-        if observed || manual { manager.saveActiveSessions() }
+        let removed = untag(line: line, pattern: Self.removeMarkerPattern, session: session)
+        if observed || manual || removed { manager.saveActiveSessions() }
+    }
+
+    private func untag(line: String, pattern: NSRegularExpression, session: Session) -> Bool {
+        let range = NSRange(line.startIndex..., in: line)
+        var removed = false
+        for match in pattern.matches(in: line, range: range) {
+            guard match.numberOfRanges >= 2, let r = Range(match.range(at: 1), in: line) else { continue }
+            if session.tags.remove("skill:\(String(line[r]))") { removed = true }
+        }
+        return removed
     }
 
     private func tag(line: String, pattern: NSRegularExpression, source: TagSource, at: Date, session: Session) -> Bool {
