@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.32.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.31.0...v1.32.0) (2026-06-19)
+
+
+### Features
+
+* **session:** name spawned/remote sessions via GAVEL_SESSION_NAME ([#159](https://github.com/JaysonRawlins/claude-gavel/issues/159)) ([7ffaa4f](https://github.com/JaysonRawlins/claude-gavel/commit/7ffaa4ff919102478b383651bbada4ef5004661b))
+
+
+### Bug Fixes
+
+* **monitor:** serialize gavelLog writes to stop concurrent-write log drops ([#158](https://github.com/JaysonRawlins/claude-gavel/issues/158)) ([78d2038](https://github.com/JaysonRawlins/claude-gavel/commit/78d20382ef1c5185da79cb713b9f53949f273310))
+
 ## [1.31.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.30.0...v1.31.0) (2026-06-19)
 
 
