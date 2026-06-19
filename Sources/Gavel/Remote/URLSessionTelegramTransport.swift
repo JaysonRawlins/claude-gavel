@@ -42,6 +42,27 @@ final class URLSessionTelegramTransport: TelegramTransport {
         }
     }
 
+    func sendForceReply(chatId: Int64, text: String, completion: @escaping (Result<Int, Error>) -> Void) {
+        let params: [String: Any] = [
+            "chat_id": chatId,
+            "text": text,
+            "disable_web_page_preview": true,
+            "reply_markup": ["force_reply": true, "selective": true]
+        ]
+        call("sendMessage", params: params) { result in
+            switch result {
+            case .success(let json):
+                if let r = json["result"] as? [String: Any], let mid = r["message_id"] as? Int {
+                    completion(.success(mid))
+                } else {
+                    completion(.failure(TelegramError.malformedResponse))
+                }
+            case .failure(let error):
+                completion(.failure(error))
+            }
+        }
+    }
+
     func editMessageText(chatId: Int64, messageId: Int, text: String, completion: ((Result<Void, Error>) -> Void)?) {
         let params: [String: Any] = [
             "chat_id": chatId,
