@@ -262,6 +262,66 @@ final class RemoteApprovalBridgeTests: XCTestCase {
         XCTAssertTrue(logs.contains { $0.hasPrefix("coalesced") })
     }
 
+    func testDenyWithReasonButtonOffered() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        bridge.notify(resolvable: ResolvableApproval { _ in }, text: "approve?", allowSession: nil)
+        XCTAssertTrue(fake.lastCallbackData.contains { $0.hasPrefix("dr:") })
+    }
+
+    func testDenyWithReasonButtonIssuesForceReplyWithoutResolving() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var resolved: Decision?
+        let approval = ResolvableApproval { resolved = $0 }
+
+        bridge.notify(resolvable: approval, text: "approve?", toolName: "Bash", allowSession: nil)
+        let n = nonce(from: fake.lastCallbackData)
+        bridge.handle(callbackUpdate(action: "dr", nonce: n, fromId: owner, chatId: owner, messageId: fake.lastSentMessageId))
+
+        XCTAssertNil(resolved)
+        XCTAssertEqual(fake.forceReplies.count, 1)
+        XCTAssertTrue(fake.forceReplies.last?.text.contains("Bash") == true)
+        XCTAssertEqual(fake.answers.last?.text, "Reply with a reason")
+    }
+
+    func testReplyToForceReplyPromptDeniesCorrectApproval() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var r1: Decision?
+        var r2: Decision?
+        bridge.notify(resolvable: ResolvableApproval { r1 = $0 }, text: "a1", allowSession: nil)
+        let firstNonce = nonce(from: fake.lastCallbackData)
+        bridge.notify(resolvable: ResolvableApproval { r2 = $0 }, text: "a2", allowSession: nil)
+
+        bridge.handle(callbackUpdate(action: "dr", nonce: firstNonce, fromId: owner, chatId: owner, messageId: 100))
+        let promptMid = fake.forceReplies.last!.messageId
+        bridge.handle(typedReply("looks unsafe", replyTo: promptMid))
+
+        XCTAssertEqual(r1?.verdict, .block)
+        XCTAssertEqual(r1?.reason, "Denied from phone — looks unsafe")
+        XCTAssertNil(r2)
+    }
+
+    func testReplyToForceReplyPromptAfterResolutionIsNoOp() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var resolveCount = 0
+        var resolved: Decision?
+        let approval = ResolvableApproval { resolved = $0; resolveCount += 1 }
+
+        bridge.notify(resolvable: approval, text: "approve?", allowSession: nil)
+        let n = nonce(from: fake.lastCallbackData)
+        bridge.handle(callbackUpdate(action: "dr", nonce: n, fromId: owner, chatId: owner, messageId: fake.lastSentMessageId))
+        let promptMid = fake.forceReplies.last!.messageId
+
+        approval.resolve(Decision(verdict: .block, reason: "denied on mac"), from: .mac)
+        bridge.handle(typedReply("too late", replyTo: promptMid))
+
+        XCTAssertEqual(resolveCount, 1)
+        XCTAssertEqual(resolved?.reason, "denied on mac")
+    }
+
     func testWithheldApprovalIsResolvableFromPhoneWithButtons() {
         let fake = FakeTelegramTransport()
         let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)

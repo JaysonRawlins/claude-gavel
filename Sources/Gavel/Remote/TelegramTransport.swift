@@ -37,6 +37,7 @@ enum TelegramError: Error {
 /// Abstracts the Telegram Bot API so the bridge can be unit-tested against a fake.
 protocol TelegramTransport: AnyObject {
     func sendMessage(chatId: Int64, text: String, keyboard: [[TelegramButton]]?, completion: @escaping (Result<Int, Error>) -> Void)
+    func sendForceReply(chatId: Int64, text: String, completion: @escaping (Result<Int, Error>) -> Void)
     func editMessageText(chatId: Int64, messageId: Int, text: String, completion: ((Result<Void, Error>) -> Void)?)
     func answerCallbackQuery(id: String, text: String?, completion: ((Result<Void, Error>) -> Void)?)
     func getUpdates(offset: Int, timeoutSeconds: Int, completion: @escaping (Result<[TelegramUpdate], Error>) -> Void)

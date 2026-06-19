@@ -27,6 +27,7 @@ final class RemoteApprovalBridge {
     private let redact: (String) -> String
     private let lock = NSLock()
     private var byNonce: [String: Correlation] = [:]
+    private var promptToNonce: [Int: String] = [:]
     private var pendingOrder: [String] = []
     private var offset = 0
     private var running = false
@@ -102,7 +103,8 @@ final class RemoteApprovalBridge {
         var keyboard: [[TelegramButton]] = [
             [TelegramButton(text: "✅ Allow once", callbackData: "a:\(nonce)"),
              TelegramButton(text: "🛑 Deny", callbackData: "d:\(nonce)")],
-            [TelegramButton(text: "✅ Allow for session", callbackData: "s:\(nonce)")]
+            [TelegramButton(text: "✅ Allow for session", callbackData: "s:\(nonce)")],
+            [TelegramButton(text: "🛑 Deny w/ reason", callbackData: "dr:\(nonce)")]
         ]
         if offerCommentClean {
             keyboard.append([TelegramButton(text: "🧹 Clean comments & re-propose", callbackData: "c:\(nonce)")])
@@ -224,6 +226,11 @@ final class RemoteApprovalBridge {
             transport.editMessageText(chatId: pinned, messageId: callback.messageId, text: "↪️ Already resolved", completion: nil)
             return
         }
+
+        if action == "dr" {
+            promptForDenyReason(corr: corr, callbackId: callback.id, chat: pinned)
+            return
+        }
         forget(nonce)
 
         if action == "s" { corr.allowSession?() }
@@ -236,6 +243,16 @@ final class RemoteApprovalBridge {
         } else {
             transport.answerCallbackQuery(id: callback.id, text: "Already resolved", completion: nil)
             transport.editMessageText(chatId: pinned, messageId: callback.messageId, text: Self.macResolvedText(.mac), completion: nil)
+        }
+    }
+
+    private func promptForDenyReason(corr: Correlation, callbackId: String, chat: Int64) {
+        transport.answerCallbackQuery(id: callbackId, text: "Reply with a reason", completion: nil)
+        let target = corr.toolName.isEmpty ? "this approval" : corr.toolName
+        transport.sendForceReply(chatId: chat, text: "Reply with a reason to deny \(target)…") { [weak self] result in
+            guard let self, case .success(let mid) = result else { return }
+            self.lock.lock(); self.promptToNonce[mid] = corr.nonce; self.lock.unlock()
+            self.remoteLog?("deny-reason prompt pid=\(corr.pid) nonce=\(corr.nonce) promptMid=\(mid)")
         }
     }
 
@@ -278,6 +295,7 @@ final class RemoteApprovalBridge {
         lock.lock()
         byNonce.removeValue(forKey: nonce)
         pendingOrder.removeAll { $0 == nonce }
+        promptToNonce = promptToNonce.filter { $0.value != nonce }
         lock.unlock()
     }
 
@@ -290,6 +308,7 @@ final class RemoteApprovalBridge {
     private func typedReplyTarget(replyTo: Int?) -> TypedReplyTarget {
         lock.lock(); defer { lock.unlock() }
         if let replyTo {
+            if let promptNonce = promptToNonce[replyTo], let corr = byNonce[promptNonce] { return .target(corr) }
             if let match = byNonce.values.first(where: { $0.messageId == replyTo }) { return .target(match) }
             return .none
         }

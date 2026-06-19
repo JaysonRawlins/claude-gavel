@@ -3,6 +3,7 @@ import Foundation
 
 final class FakeTelegramTransport: TelegramTransport {
     var sentMessages: [(chatId: Int64, text: String, keyboard: [[TelegramButton]]?)] = []
+    var forceReplies: [(chatId: Int64, text: String, messageId: Int)] = []
     var edits: [(messageId: Int, text: String)] = []
     var answers: [(id: String, text: String?)] = []
     private var nextMessageId = 100
@@ -11,6 +12,13 @@ final class FakeTelegramTransport: TelegramTransport {
         sentMessages.append((chatId, text, keyboard))
         let mid = nextMessageId
         nextMessageId += 1
+        completion(.success(mid))
+    }
+
+    func sendForceReply(chatId: Int64, text: String, completion: @escaping (Result<Int, Error>) -> Void) {
+        let mid = nextMessageId
+        nextMessageId += 1
+        forceReplies.append((chatId, text, mid))
         completion(.success(mid))
     }
 
