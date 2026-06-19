@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.31.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.30.0...v1.31.0) (2026-06-19)
+
+
+### Features
+
+* **approval:** inline deny-with-reason button via ForceReply ([#156](https://github.com/JaysonRawlins/claude-gavel/issues/156)) ([c8cba1a](https://github.com/JaysonRawlins/claude-gavel/commit/c8cba1ac7658b5096a06a9e769f77feb2982ae79))
+
 ## [1.30.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.29.0...v1.30.0) (2026-06-18)
 
 
