@@ -56,6 +56,9 @@ final class HookRouter {
         case .sessionStart(let payload):
             if let sid = payload.sessionId { sessionManager.recordSessionId(sid, on: session) }
             if let cwd = payload.cwd { sessionManager.recordCwd(cwd, on: session) }
+            if let name = payload.sessionName {
+                sessionManager.updateLabel(name, on: session, sessionId: payload.sessionId)
+            }
             // Worker thread → main for the @Published write.
             let model = payload.model
             DispatchQueue.main.async { session.model = model }
