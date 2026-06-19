@@ -172,6 +172,7 @@ struct SessionStartPayload: Codable {
     let source: String?  // startup, resume, clear, compact
     let model: String?
     let requestRemoteApproval: Bool?
+    let sessionName: String?
 
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
@@ -179,6 +180,7 @@ struct SessionStartPayload: Codable {
         case source
         case model
         case requestRemoteApproval = "request_remote_approval"
+        case sessionName = "session_name"
     }
 }
 

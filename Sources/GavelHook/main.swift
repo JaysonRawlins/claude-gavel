@@ -61,11 +61,17 @@ var envelope: [String: Any] = [
 let requestsRemoteApproval = ["1", "true", "yes"].contains(
     (ProcessInfo.processInfo.environment["GAVEL_REQUEST_PHONE"] ?? "").lowercased())
 
+let spawnedSessionName = (ProcessInfo.processInfo.environment["GAVEL_SESSION_NAME"] ?? "")
+    .trimmingCharacters(in: .whitespacesAndNewlines)
+
 // Merge stdin JSON as payload (add "type" discriminator for daemon decoding)
 if var payload = stdinJson {
     payload["type"] = hookType
     if hookType == "SessionStart", requestsRemoteApproval {
         payload["request_remote_approval"] = true
+    }
+    if hookType == "SessionStart", !spawnedSessionName.isEmpty {
+        payload["session_name"] = spawnedSessionName
     }
     envelope["payload"] = payload
 }
