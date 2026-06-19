@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.32.0...v1.33.0) (2026-06-19)
+
+
+### Features
+
+* **session:** default phone toggle + [[/stop-phone]] emergency hatch ([#161](https://github.com/JaysonRawlins/claude-gavel/issues/161)) ([a308186](https://github.com/JaysonRawlins/claude-gavel/commit/a3081864d4adde13ea30c4a86744d4d0c1b03ed9))
+
 ## [1.32.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.31.0...v1.32.0) (2026-06-19)
 
 
