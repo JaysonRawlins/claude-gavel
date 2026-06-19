@@ -43,8 +43,6 @@ final class ApprovalCoordinator: ObservableObject {
         let forceRemoteMirror: Bool
         /// Reason from the engine when dialog was forced. Nil for default-tier prompts.
         let triggerReason: String?
-        /// Why an engaged plan's overlay did not authorize this command. Nil when no plan is engaged.
-        let overlayContext: String?
         /// ID of the rule that fired, if any. Drives the "Allow rule for session" affordance.
         let triggeringRuleId: UUID?
         let triggeringRulePattern: String?
@@ -89,7 +87,6 @@ final class ApprovalCoordinator: ObservableObject {
         forceDialog: Bool = false,
         forceRemoteMirror: Bool = false,
         triggerReason: String? = nil,
-        overlayContext: String? = nil,
         triggeringRuleId: UUID? = nil
     ) -> Decision {
         if !forceDialog && session.isAutoApproveEnabled {
@@ -112,7 +109,6 @@ final class ApprovalCoordinator: ObservableObject {
             forceDialog: forceDialog,
             forceRemoteMirror: forceRemoteMirror,
             triggerReason: triggerReason,
-            overlayContext: overlayContext,
             triggeringRuleId: triggeringRuleId,
             triggeringRulePattern: firingRule?.pattern,
             triggeringRuleIsRegex: firingRule?.isRegex ?? false,

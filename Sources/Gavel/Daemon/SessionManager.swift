@@ -238,17 +238,32 @@ final class SessionManager: ObservableObject {
         lock.unlock()
     }
 
-    /// Forget only the tombstones that still have no name (derived or explicit).
-    func clearUnnamedDeadSessions() {
+    /// Re-derive a name for every still-blank session (live or asleep) by re-reading its transcript; catches sessions that were empty when first seen but have since produced a first prompt, which the one-shot seed guard never retries.
+    @discardableResult
+    func nameUnnamedSessions() -> Int {
         lock.lock()
-        let unnamed = deadSessions.filter { $0.value.label.isEmpty }.map(\.key)
-        for sid in unnamed {
-            deadSessions.removeValue(forKey: sid)
-        }
-        if !unnamed.isEmpty {
-            saveActiveSessionsLocked()
-        }
+        let candidates = (Array(sessions.values) + Array(deadSessions.values)).filter { $0.label.isEmpty }
         lock.unlock()
+
+        var named = 0
+        var explicitLabelsChanged = false
+        for session in candidates {
+            guard let sid = session.sessionId, let cwd = session.cwd else { continue }
+            if let renamed = JsonlRenameReader.latestRename(cwd: cwd, sessionId: sid) {
+                session.labelIsDerived = false
+                session.label = renamed
+                sessionLabels[sid] = renamed
+                explicitLabelsChanged = true
+                named += 1
+            } else if let derived = JsonlRenameReader.firstPromptTitle(cwd: cwd, sessionId: sid) {
+                session.labelIsDerived = true
+                session.label = derived
+                named += 1
+            }
+        }
+        if named > 0 { saveActiveSessions() }
+        if explicitLabelsChanged { saveDefaults() }
+        return named
     }
 
     func clearDeadSessions() {
@@ -281,11 +296,6 @@ final class SessionManager: ObservableObject {
         let labelIsDerived: Bool?
         let endedAt: Date?
         let agent: AgentKind?
-        let lastPlanPath: String?
-        let planEngagedAt: Date?
-        let engagedPlanPath: String?
-        let engagedPlanHash: String?
-        let planPolicyDroppedReason: String?
         let isRemoteApprovalEnabled: Bool?
         let remoteApprovalUntil: Date?
         let tags: [SessionTag]?
@@ -329,11 +339,6 @@ final class SessionManager: ObservableObject {
             labelIsDerived: session.labelIsDerived ? true : nil,
             endedAt: session.endedAt,
             agent: session.agent,
-            lastPlanPath: session.lastPlanPath,
-            planEngagedAt: session.planEngagedAt,
-            engagedPlanPath: session.engagedPlanPath,
-            engagedPlanHash: session.engagedPlanHash,
-            planPolicyDroppedReason: session.planPolicyDroppedReason,
             isRemoteApprovalEnabled: session.remoteApprovalSnapshot.enabled ? true : nil,
             remoteApprovalUntil: session.remoteApprovalSnapshot.until,
             tags: session.tags.isEmpty ? nil : session.tags.snapshot
@@ -379,44 +384,13 @@ final class SessionManager: ObservableObject {
             session.label = label
             session.labelIsDerived = snap.labelIsDerived ?? false
         }
-        session.lastPlanPath = snap.lastPlanPath
         if snap.isRemoteApprovalEnabled == true,
            snap.remoteApprovalUntil == nil || (snap.remoteApprovalUntil.map { $0 > Date() } ?? true) {
             session.setRemoteApprovalEnabled(true, until: snap.remoteApprovalUntil)
         }
-        rehydratePlanPolicy(snap, into: session)
         session.tags.load(snap.tags ?? [])
         sessions[snap.pid] = session
         tryJsonlSeed(session: session)
-    }
-
-    /// Restore plan-policy state across daemon restarts. If the plan's content drifted
-    /// while we were down, drop it on load with a clear reason — preserves the
-    /// invariant that an engaged session always reflects the original plan.
-    private func rehydratePlanPolicy(_ snap: PersistedSession, into session: Session) {
-        guard let engagedAt = snap.planEngagedAt,
-              let path = snap.engagedPlanPath,
-              let originalHash = snap.engagedPlanHash else {
-            session.planPolicyDroppedReason = snap.planPolicyDroppedReason
-            return
-        }
-        let currentHash = PlanPolicy.sha256(ofFileAt: path)
-        if currentHash == nil {
-            session.planPolicyDroppedReason = "plan deleted during daemon restart"
-            return
-        }
-        if currentHash != originalHash {
-            session.planPolicyDroppedReason = "plan changed during daemon restart"
-            return
-        }
-        session.planEngagedAt = engagedAt
-        session.engagedPlanPath = path
-        session.engagedPlanHash = originalHash
-        session.planPolicyDroppedReason = snap.planPolicyDroppedReason
-        if let text = try? String(contentsOfFile: path, encoding: .utf8) {
-            session.overlayRules = PlanPolicyParser.parse(text)
-        }
-        session.setPlanPolicyEngaged(true)
     }
 
     private func rehydrateTombstone(_ snap: PersistedSession, sessionId: String) {

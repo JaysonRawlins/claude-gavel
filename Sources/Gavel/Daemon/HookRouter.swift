@@ -161,33 +161,6 @@ final class HookRouter {
             return
         }
 
-        // Stage 0.7: Plan invalidation — agent touched the tracked plan or the plan changed.
-        // The drop flips isPlanPolicyEngaged sync, so the engine call below sees the normal chain.
-        // This call itself is routed to interactive dialog so the user sees the drop context.
-        if session.isPlanPolicyEngaged, let haltReason = PlanPolicy.shouldHalt(session: session, payload: payload) {
-            PlanPolicy.disengage(session: session, reason: haltReason)
-            sessionManager.saveActiveSessions()
-            emitFeed(.system("Plan dropped: \(haltReason)", pid: session.pid, at: timestamp))
-            emitFeed(.decision(badge: .block, reason: "Plan dropped: \(haltReason)", pid: session.pid, at: timestamp))
-            let decision = approvalCoordinator.requestApproval(
-                payload: payload, session: session, timestamp: timestamp,
-                forceDialog: true,
-                triggerReason: "Plan dropped: \(haltReason)",
-                triggeringRuleId: nil
-            )
-            switch decision.verdict {
-            case .allow, .prompt:
-                session.stats.incrementAllow()
-                emitFeed(.decision(badge: .allow, reason: decision.reason, pid: session.pid, at: timestamp))
-            case .block:
-                session.stats.incrementBlock()
-                emitFeed(.decision(badge: .block, reason: decision.reason, pid: session.pid, at: timestamp))
-            }
-            sendResponse(decision, payload: payload, session: session, respond: respond)
-            return
-        }
-
-        // Stage 1: Check engine (dangerous patterns, deny/allow, pause, plan overlay)
         let engineDecision = approvalEngine.evaluate(payload: payload, session: session)
         if engineDecision.verdict == .block {
             if engineDecision.askUser {
@@ -220,7 +193,6 @@ final class HookRouter {
                     payload: payload, session: session, timestamp: timestamp,
                     forceDialog: true,
                     triggerReason: engineDecision.reason,
-                    overlayContext: engineDecision.overlayContext,
                     triggeringRuleId: engineDecision.triggeringRuleId
                 )
                 switch decision.verdict {
@@ -242,12 +214,9 @@ final class HookRouter {
                 return
             }
         }
-        // Persistent allow rules and plan overlay-allow both return allow with a reason.
-        // Plan-authorized allows get the PLAN badge so the feed distinguishes them from a plain user-rule allow.
         if engineDecision.reason != nil {
             session.stats.incrementAllow()
-            let badge: DecisionBadge = session.isPlanPolicyEngaged ? .planPolicy : .allow
-            emitFeed(.decision(badge: badge, reason: engineDecision.reason, pid: session.pid, at: timestamp))
+            emitFeed(.decision(badge: .allow, reason: engineDecision.reason, pid: session.pid, at: timestamp))
             sendResponse(engineDecision, payload: payload, session: session, respond: respond)
             return
         }
@@ -330,20 +299,6 @@ final class HookRouter {
         session: Session? = nil,
         respond: ((Data) -> Void)?
     ) {
-        // Capture-on-write: stamp lastPlanPath whenever an approved Write/Edit/MultiEdit
-        // lands on ~/.claude/plans/**/*.md. Decouples plan discovery from session
-        // labels and folder conventions — propose can write the plan anywhere.
-        if decision.verdict == .allow,
-           let payload = payload, let session = session,
-           ["Write", "Edit", "MultiEdit"].contains(payload.toolName),
-           let path = payload.filePath,
-           PlanPolicy.isPlanPath(path) {
-            DispatchQueue.main.async {
-                session.lastPlanPath = path
-            }
-            sessionManager.saveActiveSessions()
-        }
-
         // Diagnostic breadcrumb: every hook response that reaches the worker
         // should produce a `[hook] respond ...` line. If a `[socket] enter`
         // ever lacks a matching `[hook] respond` and `[socket] exit wrote=N`

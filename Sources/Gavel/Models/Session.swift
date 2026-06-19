@@ -43,21 +43,6 @@ final class Session: ObservableObject, Identifiable {
     /// Prompt-rule IDs silenced for this session. Transient; cleared on revoke.
     @Published var suppressedRuleIds: Set<UUID> = []
 
-    /// Absolute path of the most recent approved Write/Edit/MultiEdit that landed
-    /// under ~/.claude/plans/**/*.md. Captured by HookRouter post-decision so plan
-    /// engage can find the plan without depending on session-label/folder conventions.
-    @Published var lastPlanPath: String?
-
-    // Plan policy — overlay + auto-approve while a plan is engaged. See PlanPolicy.swift.
-    // Worker threads read `isPlanPolicyEngaged`, backed by a lock-protected non-@Published
-    // flag for synchronous visibility. The matching @Published fields below carry
-    // UI-display state and are updated on main.
-    @Published var planEngagedAt: Date?
-    /// Frozen at engage time. New plan writes update lastPlanPath but NOT this.
-    @Published var engagedPlanPath: String?
-    @Published var engagedPlanHash: String?
-    @Published var planPolicyDroppedReason: String?
-
     @Published var isRemoteApprovalEnabledUI: Bool = false
     @Published var remoteApprovalUntil: Date?
 
@@ -92,31 +77,6 @@ final class Session: ObservableObject, Identifiable {
         remoteLock.lock()
         defer { remoteLock.unlock() }
         return (_remoteEnabled, _remoteUntil)
-    }
-
-    private var _planPolicyEngaged: Bool = false
-    private let planPolicyLock = NSLock()
-
-    var isPlanPolicyEngaged: Bool {
-        planPolicyLock.lock()
-        defer { planPolicyLock.unlock() }
-        return _planPolicyEngaged
-    }
-
-    func setPlanPolicyEngaged(_ value: Bool) {
-        planPolicyLock.lock()
-        _planPolicyEngaged = value
-        planPolicyLock.unlock()
-    }
-
-    private var _overlayRules: [PlanPolicyRule] = []
-
-    /// Plan-declared allow/deny rules, layered while a plan is engaged. Guarded by
-    /// `planPolicyLock` because it's set on engage (main) and read by the socket worker
-    /// on every PreToolUse. Empty when no plan is engaged.
-    var overlayRules: [PlanPolicyRule] {
-        get { planPolicyLock.lock(); defer { planPolicyLock.unlock() }; return _overlayRules }
-        set { planPolicyLock.lock(); _overlayRules = newValue; planPolicyLock.unlock() }
     }
 
     // Worker-mutable state. NOT @Published on purpose — both are touched on
@@ -174,12 +134,6 @@ final class Session: ObservableObject, Identifiable {
         autoApproveUntil = nil
         sessionRules.removeAll()
         suppressedRuleIds.removeAll()
-        setPlanPolicyEngaged(false)
-        overlayRules = []
-        planEngagedAt = nil
-        engagedPlanPath = nil
-        engagedPlanHash = nil
-        planPolicyDroppedReason = nil
     }
 
     /// Check if a tool call matches any session allow rule.

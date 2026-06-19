@@ -80,8 +80,7 @@ final class RuleStore: ObservableObject {
         return nil
     }
 
-    /// Overridable built-in prompt rules (MCP exfil defaults, infra-apply, scheduler) —
-    /// lower priority, checked AFTER allow rules so a user allow rule or plan overlay can override.
+    /// Overridable built-in prompt rules (MCP exfil defaults, infra-apply, scheduler), checked after allow rules so a user allow rule can override.
     func evaluateBuiltInPrompt(payload: PreToolUsePayload) -> Decision? {
         for i in rules.indices where rules[i].verdict == .prompt && rules[i].builtIn && rules[i].overridable && !rules[i].isDisabled {
             if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
@@ -327,7 +326,6 @@ final class RuleStore: ObservableObject {
             overridable: false
         ),
 
-        // ── Infrastructure apply/destroy: prompt by default, plan overlay can pre-authorize ──
         PersistentRule(
             toolName: "Bash",
             pattern: "\\b(cdk\\s+(deploy|destroy)|terraform\\s+(apply|destroy)|sam\\s+deploy|pulumi\\s+up|kubectl\\s+(apply|delete)|aws\\s+cloudformation\\s+deploy)\\b",
@@ -521,9 +519,7 @@ struct PersistentRule: Codable, Identifiable {
     let explanation: String?
     /// True for seeded default rules (MCP exfil patterns). User rules are always false.
     let builtIn: Bool
-    /// When true (default), a user allow rule or plan-policy overlay can override this
-    /// built-in prompt. False marks a hard checkpoint that allow rules can't silence
-    /// (e.g. git commit). Only consulted for builtIn prompt rules.
+    /// When true (default), a user allow rule can override this built-in prompt; false marks a hard checkpoint (e.g. git commit) that allow rules can't silence.
     let overridable: Bool
     /// Skip this rule during evaluation when true. Persisted so the disable
     /// survives daemon restarts (so a forgotten "temporarily off" rule still
