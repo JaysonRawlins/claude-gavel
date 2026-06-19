@@ -336,4 +336,35 @@ final class RemoteApprovalBridgeTests: XCTestCase {
 
         XCTAssertEqual(resolved?.verdict, .block)
     }
+
+    func testStopPhoneMessageFiresCallback() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var stopped = false
+        bridge.onStopPhone = { stopped = true }
+
+        bridge.handle(typedReply("[[/stop-phone]]"))
+
+        XCTAssertTrue(stopped)
+    }
+
+    func testStopPhoneFromWrongChatIgnored() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var stopped = false
+        bridge.onStopPhone = { stopped = true }
+
+        let foreign = TelegramUpdate(updateId: 9, callback: nil, message: TelegramIncomingMessage(fromId: 999, chatId: 999, text: "[[/stop-phone]]", replyToMessageId: nil))
+        bridge.handle(foreign)
+
+        XCTAssertFalse(stopped)
+    }
+
+    func testSendNoticePostsToPinnedChat() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        bridge.sendNotice("Phone off")
+        XCTAssertEqual(fake.sentMessages.last?.chatId, owner)
+        XCTAssertEqual(fake.sentMessages.last?.text, "Phone off")
+    }
 }

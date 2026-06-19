@@ -111,6 +111,12 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         bridge.remoteLog = { gavelLog("[remote] \($0)") }
+        bridge.onStopPhone = { [weak self] in
+            self?.sessionManager.stopAllPhone(reason: "[[/stop-phone]] from Telegram")
+        }
+        sessionManager.onPhoneStopped = { [weak bridge] affected in
+            bridge?.sendNotice("🛑 Phone approval OFF — \(affected) session(s) disabled, Default Phone off.")
+        }
         approvalCoordinator.remoteBridge = bridge
         remoteBridge = bridge
         bridge.start()

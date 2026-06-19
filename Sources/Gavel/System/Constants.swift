@@ -54,10 +54,6 @@ enum GavelConstants {
     /// Max characters of the redacted command shown in a Telegram approval (under Telegram's 4096 limit).
     static let telegramBodyMaxChars = 3500
 
-    /// Default lifetime of a per-session remote-approval grant, in hours.
-    /// Mirrors timed auto-approve: a walk-away with remote left on is the worst case.
-    static let remoteApprovalDefaultHours = 8
-
     /// Minimum length of an alphanumeric run treated as credential-shaped by the
     /// credential gate's entropy heuristic.
     static let credentialEntropyRunLength = 20

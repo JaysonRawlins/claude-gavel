@@ -380,9 +380,8 @@ final class HookRouter {
 
     /// Raise a non-overridable, fail-closed, phone-mirrored approval that enables per-session remote approval only if allowed.
     private func requestRemoteApprovalToggle(session: Session, timestamp: Date) {
-        let hours = GavelConstants.remoteApprovalDefaultHours
         let location = session.cwd.map { " — \($0)" } ?? ""
-        let reason = "Session pid \(session.pid)\(location) requests PHONE (remote) approval. Allow enables it for \(hours)h; deny or ignore leaves it OFF."
+        let reason = "Session pid \(session.pid)\(location) requests PHONE (remote) approval. Allow enables it until you go idle or send [[/stop-phone]]; deny or ignore leaves it OFF."
         let payload = PreToolUsePayload(toolName: "__EnableRemoteApproval", toolInput: [:])
         DispatchQueue.global().async { [weak self] in
             guard let self else { return }
@@ -395,10 +394,9 @@ final class HookRouter {
                 triggerReason: reason
             )
             if decision.verdict == .allow {
-                let until = Date().addingTimeInterval(Double(hours) * 3600)
-                session.setRemoteApprovalEnabled(true, until: until)
+                session.setRemoteApprovalEnabled(true, until: nil)
                 self.sessionManager.saveActiveSessions()
-                self.emitFeed(.system("Remote (phone) approval ENABLED for \(hours)h", pid: session.pid, at: timestamp))
+                self.emitFeed(.system("Remote (phone) approval ENABLED", pid: session.pid, at: timestamp))
             } else {
                 self.emitFeed(.system("Remote (phone) approval request denied", pid: session.pid, at: timestamp))
             }

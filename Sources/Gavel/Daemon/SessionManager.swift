@@ -14,6 +14,11 @@ final class SessionManager: ObservableObject {
     @Published var defaultSubAgentInherit: Bool = false
     @Published var defaultPaused: Bool = false
 
+    @Published var defaultRemoteApprove: Bool = false
+
+    /// Fired after an emergency phone-stop with the count of sessions that had phone on.
+    var onPhoneStopped: ((_ affected: Int) -> Void)?
+
     /// Inactivity threshold in minutes. 0 disables the timer.
     /// When the user hasn't interacted with gavel for this long, auto-approval
     /// is revoked across all sessions (walk-away defense).
@@ -75,6 +80,9 @@ final class SessionManager: ObservableObject {
         session.isAutoApproveEnabled = defaultAutoApprove
         session.isSubAgentInheritEnabled = defaultSubAgentInherit
         session.isPaused = defaultPaused
+        if defaultRemoteApprove && telegramChatId != nil {
+            session.setRemoteApprovalEnabled(true, until: nil)
+        }
         sessions[pid] = session
         saveActiveSessionsLocked()
         lock.unlock()
@@ -94,6 +102,7 @@ final class SessionManager: ObservableObject {
             "autoApprove": defaultAutoApprove,
             "subAgentInherit": defaultSubAgentInherit,
             "paused": defaultPaused,
+            "remoteApprove": defaultRemoteApprove,
             "inactivityTimeoutMinutes": inactivityTimeoutMinutes,
             "sessionLabels": sessionLabels
         ]
@@ -109,6 +118,7 @@ final class SessionManager: ObservableObject {
         defaultAutoApprove = (json["autoApprove"] as? Bool) ?? false
         defaultSubAgentInherit = (json["subAgentInherit"] as? Bool) ?? false
         defaultPaused = (json["paused"] as? Bool) ?? false
+        defaultRemoteApprove = (json["remoteApprove"] as? Bool) ?? false
         inactivityTimeoutMinutes = (json["inactivityTimeoutMinutes"] as? Int) ?? 15
         sessionLabels = (json["sessionLabels"] as? [String: String]) ?? [:]
         telegramChatId = (json["telegramChatId"] as? Int64) ?? (json["telegramChatId"] as? Int).map(Int64.init)
@@ -197,7 +207,7 @@ final class SessionManager: ObservableObject {
         let path = (NSHomeDirectory() as NSString)
             .appendingPathComponent(".claude/projects")
             .appending("/\(encoded)/\(sid).jsonl")
-        let handlers: [JsonlEventHandler] = [RenameHandler(), SecretHandler(), SkillTagHandler()]
+        let handlers: [JsonlEventHandler] = [RenameHandler(), SecretHandler(), SkillTagHandler(), StopPhoneHandler()]
         let dispatcher = JsonlEventDispatcher(handlers: handlers, manager: self, session: session)
         let watcher = JsonlWatcher(path: path, dispatcher: dispatcher)
         watchers[session.pid] = watcher
@@ -445,6 +455,9 @@ final class SessionManager: ObservableObject {
             session.isAutoApproveEnabled = defaultAutoApprove
             session.isSubAgentInheritEnabled = defaultSubAgentInherit
             session.isPaused = defaultPaused
+            if defaultRemoteApprove && telegramChatId != nil {
+                session.setRemoteApprovalEnabled(true, until: nil)
+            }
             sessions[pidInt] = session
             addedPids.append(pidInt)
         }
@@ -537,6 +550,22 @@ final class SessionManager: ObservableObject {
             self.saveActiveSessions()
             GavelNotifications.notify(title: "Gavel — Prompt Mode", body: reason)
             self.noteInteraction()
+        }
+    }
+
+    /// Emergency hatch: disables phone approval on every live session and clears Default Phone.
+    func stopAllPhone(reason: String = "stop-phone") {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let affected = self.sessions.values.filter { $0.remoteApprovalSnapshot.enabled }.count
+            for session in self.sessions.values { session.disableRemoteApproval() }
+            self.defaultRemoteApprove = false
+            self.saveDefaults()
+            self.saveActiveSessions()
+            gavelLog("[stop-phone] \(reason) — disabled phone on \(affected) session(s), default off")
+            GavelNotifications.notify(title: "Gavel — Phone OFF", body: reason)
+            self.noteInteraction()
+            self.onPhoneStopped?(affected)
         }
     }
 

@@ -41,6 +41,8 @@ final class RemoteApprovalBridge {
 
     /// Fired when pairing captures a chat id, so the daemon can persist it.
     var onPaired: ((Int64) -> Void)?
+    /// Fired when the pinned chat sends `[[/stop-phone]]`, so the daemon can kill phone approval.
+    var onStopPhone: (() -> Void)?
     /// Emits a token-redacted status line for the feed/log.
     var onStatus: ((String) -> Void)?
     /// Emits a gavel.log-only trail of remote sends/resolutions (no UI feed, no secrets).
@@ -126,6 +128,13 @@ final class RemoteApprovalBridge {
         }
     }
 
+    /// Send an unsolicited, keyboard-less notice to the pinned chat (e.g. a stop-phone confirmation).
+    func sendNotice(_ text: String) {
+        lock.lock(); let chat = chatId; lock.unlock()
+        guard let chat else { return }
+        transport.sendMessage(chatId: chat, text: text, keyboard: nil, completion: { _ in })
+    }
+
     // MARK: - Inbound poll loop
 
     private func pollOnce() {
@@ -189,6 +198,11 @@ final class RemoteApprovalBridge {
 
         guard let pinned, message.chatId == pinned, message.fromId == pinned else { return }
         guard let text = message.text, !text.isEmpty, !text.hasPrefix("/") else { return }
+        if StopPhoneHandler.matches(text) {
+            remoteLog?("stop-phone command received")
+            onStopPhone?()
+            return
+        }
         switch typedReplyTarget(replyTo: message.replyToMessageId) {
         case .target(let corr):
             forget(corr.nonce)

@@ -306,6 +306,23 @@ struct MonitorWindow: View {
                 .tint(.green)
                 .controlSize(.small)
                 .help("New sessions start with auto-approve enabled. Deny rules, prompt rules, and sensitive paths still force dialogs.")
+
+                Toggle(isOn: Binding(
+                    get: { viewModel.sessionManager.defaultRemoteApprove },
+                    set: { newVal in
+                        viewModel.sessionManager.defaultRemoteApprove = newVal
+                        viewModel.sessionManager.saveDefaults()
+                        viewModel.noteInteraction()
+                    }
+                )) {
+                    Text("Default Phone")
+                        .font(.caption)
+                }
+                .toggleStyle(.switch)
+                .tint(.purple)
+                .controlSize(.small)
+                .disabled(viewModel.sessionManager.telegramChatId == nil)
+                .help("New sessions start with phone (Telegram) approval enabled, no expiry — until you go idle (inactivity timeout) or send [[/stop-phone]]. Configure Telegram first.")
             }
         }
     }
@@ -546,8 +563,7 @@ private struct SessionRow: View {
                 Toggle("", isOn: Binding(
                     get: { session.isRemoteApprovalEnabledUI },
                     set: { newVal in
-                        let until = newVal ? Date().addingTimeInterval(Double(GavelConstants.remoteApprovalDefaultHours) * 3600) : nil
-                        session.setRemoteApprovalEnabled(newVal, until: until)
+                        session.setRemoteApprovalEnabled(newVal, until: nil)
                         viewModel.sessionManager.saveActiveSessions()
                         viewModel.noteInteraction()
                     }
