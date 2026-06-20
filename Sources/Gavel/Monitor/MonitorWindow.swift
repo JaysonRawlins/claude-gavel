@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// The main monitor window showing the live feed, rules editor, regex tester, and cheat sheet.
 struct MonitorWindow: View {
@@ -249,13 +248,13 @@ struct MonitorWindow: View {
                 .tint(.gray)
                 .help("Remove every sleeping (tombstoned) session from the monitor.")
 
-                Button("Forget Unnamed") {
-                    viewModel.sessionManager.clearUnnamedDeadSessions()
+                Button("Name Unnamed") {
+                    viewModel.sessionManager.nameUnnamedSessions()
                     viewModel.noteInteraction()
                 }
                 .buttonStyle(.bordered)
                 .tint(.gray)
-                .help("Remove only the sleeping sessions that still have no name.")
+                .help("Re-read transcripts to derive a name for any session still showing blank — catches ones that were empty when first seen.")
 
                 Button("Discover") {
                     viewModel.sessionManager.discoverRunningSessions()
@@ -264,15 +263,6 @@ struct MonitorWindow: View {
                 .buttonStyle(.bordered)
                 .tint(.blue)
                 .help("Scan for Claude Code CLI processes that haven't fired a hook yet (e.g. started while gavel was down).")
-
-                Button("Plans") {
-                    EditorPreference.open(URL(fileURLWithPath:
-                        (NSHomeDirectory() as NSString).appendingPathComponent(".claude/plans")))
-                    viewModel.noteInteraction()
-                }
-                .buttonStyle(.bordered)
-                .tint(.indigo)
-                .help("Open ~/.claude/plans/ in your preferred editor.")
 
                 Button("Skills") {
                     EditorPreference.open(URL(fileURLWithPath:
@@ -577,8 +567,6 @@ private struct SessionRow: View {
             .disabled(viewModel.sessionManager.telegramChatId == nil)
             .help("Send this session's approvals to Telegram; either device can answer. Configure Telegram first.")
 
-            planControl
-
             Button("Prompt") {
                 viewModel.promptSession(session)
             }
@@ -615,125 +603,6 @@ private struct SessionRow: View {
             .frame(width: 60)
             .help("SIGINT this Claude Code process so it saves to disk; resume later from the asleep row.")
         }
-    }
-
-    @ViewBuilder
-    private var planControl: some View {
-        Group {
-            if session.isPlanPolicyEngaged {
-                disengageButton
-            } else {
-                HStack(spacing: 4) {
-                    planPickerMenu
-                    engageButton
-                }
-            }
-        }
-        .frame(width: 110, alignment: .trailing)
-    }
-
-    private var engageButton: some View {
-        Button("Plan") {
-            if PlanPolicy.engage(session: session) {
-                viewModel.sessionManager.saveActiveSessions()
-                viewModel.noteInteraction()
-            }
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .tint(planPolicyDroppedReasonTint)
-        .frame(width: 76)
-        .disabled(session.lastPlanPath == nil)
-        .help(planIdleHelp)
-    }
-
-    private var disengageButton: some View {
-        Button(action: {
-            PlanPolicy.disengage(session: session, reason: "manual")
-            viewModel.sessionManager.saveActiveSessions()
-            viewModel.noteInteraction()
-        }) {
-            HStack(spacing: 3) {
-                Text("Plan")
-                    .font(.caption.bold())
-                Image(systemName: "xmark.circle.fill")
-                    .font(.caption2)
-            }
-        }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.small)
-        .tint(.red)
-        .frame(width: 76)
-        .help(planActiveHelp)
-    }
-
-    private var planPickerMenu: some View {
-        let plans = PlanPolicy.recentPlans()
-        return Menu {
-            if plans.isEmpty {
-                Text("No plans found")
-            } else {
-                ForEach(plans) { plan in
-                    Button {
-                        armPlan(plan.path)
-                    } label: {
-                        if plan.path == session.lastPlanPath {
-                            Label("\(plan.folder) · \(plan.filename)", systemImage: "checkmark")
-                        } else {
-                            Text("\(plan.folder) · \(plan.filename)")
-                        }
-                    }
-                }
-            }
-            Divider()
-            Button("Browse…") { browseForPlan() }
-        } label: {
-            Image(systemName: "doc.text.magnifyingglass")
-        }
-        .menuStyle(.button)
-        .menuIndicator(.hidden)
-        .controlSize(.small)
-        .frame(width: 30)
-        .help("Pick the plan to engage for this session (overrides auto-detect).")
-    }
-
-    private func armPlan(_ path: String) {
-        session.lastPlanPath = path
-        viewModel.sessionManager.saveActiveSessions()
-        viewModel.noteInteraction()
-    }
-
-    private func browseForPlan() {
-        let panel = NSOpenPanel()
-        if let markdown = UTType(filenameExtension: "md") {
-            panel.allowedContentTypes = [markdown]
-        }
-        panel.allowsMultipleSelection = false
-        panel.title = "Select Plan to Engage"
-        panel.message = "Pick a plan markdown file to engage for this session."
-        panel.directoryURL = PlanPolicy.plansDirectory()
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        armPlan(url.path)
-    }
-
-    private var planActiveHelp: String {
-        let planName = (session.engagedPlanPath as NSString?)?.lastPathComponent ?? "unknown plan"
-        return "Plan engaged — \(planName). Auto-approve is on for routine work; commit/infra still prompt and the plan's allow/deny apply. Click to drop."
-    }
-
-    private var planIdleHelp: String {
-        if let reason = session.planPolicyDroppedReason {
-            return "Plan dropped: \(reason). Click to re-engage with the current plan."
-        }
-        if let plan = session.lastPlanPath {
-            let name = (plan as NSString).lastPathComponent
-            return "Engage plan \(name) — turns on auto-approve, applies the plan's allow/deny overlay, keeps commit/infra prompting. Drops if the plan changes on disk."
-        }
-        return "No plan armed — pick one from the menu, or run /propose."
-    }
-
-    private var planPolicyDroppedReasonTint: Color {
-        session.planPolicyDroppedReason != nil ? .orange : .red
     }
 
     /// Width must match actionCluster so live and dead rows align.
