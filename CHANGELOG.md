@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.33.0...v1.33.1) (2026-06-21)
+
+
+### Miscellaneous Chores
+
+* release 1.33.1 ([cbaebce](https://github.com/JaysonRawlins/claude-gavel/commit/cbaebcebe0026281111de239455594202ab07bc3))
+
 ## [1.33.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.32.0...v1.33.0) (2026-06-19)
 
 
