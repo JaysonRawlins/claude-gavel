@@ -119,6 +119,8 @@ struct PatternMatcher {
             // ── SSH/GPG key access (expanded) ──
             ("\\b(cat|head|tail|less|more|cp|mv|base64|xxd|openssl)\\b.*\\.ssh/(id_|authorized|known_hosts)", "SSH key/config access"),
             ("\\b(cat|head|tail|less|more|cp|mv|base64)\\b.*\\.gnupg/", "GPG key access"),
+            ("\\b(cat|head|tail|less|more|cp|mv|base64|xxd|openssl)\\b.*(\\.aws/credentials|\\.kube/config|\\.npmrc|\\.netrc|\\.docker/config|Keychains/)", "Credential file access"),
+            ("\\b(cat|head|tail|less|more|cp|mv|base64|xxd|openssl)\\b.*\\.env(\\.local)?(?![\\w.])", "Environment file access"),
 
             // ── Gavel self-protection ──
             ("\\b(pkill|killall)\\b.*\\bgav", "Attempt to kill Gavel daemon"),
