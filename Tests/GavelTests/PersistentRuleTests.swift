@@ -185,11 +185,7 @@ final class PersistentRuleTests: XCTestCase {
         let store = RuleStore(configPath: "/dev/null")
         let builtInRules = store.rules.filter { $0.builtIn }
         XCTAssertEqual(builtInRules.count, RuleStore.seededDefaults.count)
-        // v11: 5 MCP exfil + 1 Bash self-protection + 1 ANTHROPIC_BASE_URL
-        //      + 1 apply_patch self-protection + 2 container bind-mount self-protection
-        //      + 1 scripting + 3 sandbox escape + 2 git safety + 1 commit checkpoint
-        //      + 1 infra apply + 3 scheduler = 21
-        XCTAssertEqual(builtInRules.count, 21)
+        XCTAssertEqual(builtInRules.count, 23)
     }
 
     func testSeededRulesArePromptVerdict() {
@@ -227,6 +223,95 @@ final class PersistentRuleTests: XCTestCase {
             "command": AnyCodable("python3 test_script.py")
         ])
         XCTAssertNil(store.evaluateBuiltInPrompt(payload: payload))
+    }
+
+    // MARK: - Mutating kubectl built-in
+
+    private func kubectlPrompts(_ command: String, file: StaticString = #filePath, line: UInt = #line) {
+        let store = RuleStore(configPath: "/dev/null")
+        let payload = PreToolUsePayload(toolName: "Bash", toolInput: ["command": AnyCodable(command)])
+        let decision = store.evaluateBuiltInPrompt(payload: payload)
+        XCTAssertNotNil(decision, "Expected prompt for: \(command)", file: file, line: line)
+        XCTAssertTrue(decision?.askUser ?? false, file: file, line: line)
+    }
+
+    private func kubectlUngated(_ command: String, file: StaticString = #filePath, line: UInt = #line) {
+        let store = RuleStore(configPath: "/dev/null")
+        let payload = PreToolUsePayload(toolName: "Bash", toolInput: ["command": AnyCodable(command)])
+        XCTAssertNil(store.evaluateBuiltInPrompt(payload: payload), "Expected ungated for: \(command)", file: file, line: line)
+        XCTAssertNil(store.evaluateBuiltInPromptNonOverridable(payload: payload), "Expected ungated for: \(command)", file: file, line: line)
+    }
+
+    func testKubectlRolloutRestartPrompts() {
+        kubectlPrompts("kubectl rollout restart ds/fluent-bit -n monitoring")
+    }
+
+    func testKubectlDeletePrompts() {
+        kubectlPrompts("kubectl delete pod nginx -n default")
+    }
+
+    func testKubectlScaleWithLeadingFlagsPrompts() {
+        kubectlPrompts("kubectl --context balcony-dev -n monitoring scale deploy/web --replicas=0")
+    }
+
+    func testKubectlAliasPrompts() {
+        kubectlPrompts("k drain node-1 --ignore-daemonsets")
+    }
+
+    func testKubectlChainedSegmentPrompts() {
+        kubectlPrompts("kubectl get pods && kubectl delete pod nginx")
+    }
+
+    func testKubectlGetIsUngated() {
+        kubectlUngated("kubectl get pods -n monitoring")
+    }
+
+    func testKubectlLogsIsUngated() {
+        kubectlUngated("kubectl logs deploy/web -n monitoring --tail 100")
+    }
+
+    func testKubectlDescribeOfVerbNamedResourceIsUngated() {
+        kubectlUngated("kubectl describe deployment apply-server -n default")
+    }
+
+    func testKubectlReadPipedToVerbWordIsUngated() {
+        kubectlUngated("kubectl get pods -o yaml | grep apply")
+    }
+
+    func testKubectlProdMutationIsNonOverridable() {
+        let store = RuleStore(configPath: "/dev/null")
+        let payload = PreToolUsePayload(toolName: "Bash", toolInput: [
+            "command": AnyCodable("kubectl --context balcony-prod delete pod nginx")
+        ])
+        let decision = store.evaluateBuiltInPromptNonOverridable(payload: payload)
+        XCTAssertNotNil(decision, "Prod kubectl mutation must hit the non-overridable checkpoint")
+        XCTAssertTrue(decision?.askUser ?? false)
+    }
+
+    func testKubectlProdReadStaysUngated() {
+        let store = RuleStore(configPath: "/dev/null")
+        let payload = PreToolUsePayload(toolName: "Bash", toolInput: [
+            "command": AnyCodable("kubectl --context balcony-prod get pods")
+        ])
+        XCTAssertNil(store.evaluateBuiltInPromptNonOverridable(payload: payload))
+        XCTAssertNil(store.evaluateBuiltInPrompt(payload: payload))
+    }
+
+    func testKubectlProdClusterNameMutationIsNonOverridable() {
+        let store = RuleStore(configPath: "/dev/null")
+        let payload = PreToolUsePayload(toolName: "Bash", toolInput: [
+            "command": AnyCodable("kubectl --cluster prod-east scale deploy/web --replicas=3")
+        ])
+        XCTAssertNotNil(store.evaluateBuiltInPromptNonOverridable(payload: payload))
+    }
+
+    func testKubectlNonProductWordDoesNotTriggerProdTier() {
+        let store = RuleStore(configPath: "/dev/null")
+        let payload = PreToolUsePayload(toolName: "Bash", toolInput: [
+            "command": AnyCodable("kubectl delete pod my-product-cache -n default")
+        ])
+        XCTAssertNil(store.evaluateBuiltInPromptNonOverridable(payload: payload), "\"product\" must not be read as a prod marker")
+        XCTAssertNotNil(store.evaluateBuiltInPrompt(payload: payload), "but it is still a mutating verb → overridable prompt")
     }
 
     // MARK: - Codex apply_patch self-protection built-in
