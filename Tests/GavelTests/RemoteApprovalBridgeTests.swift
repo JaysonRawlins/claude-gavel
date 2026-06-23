@@ -322,6 +322,61 @@ final class RemoteApprovalBridgeTests: XCTestCase {
         XCTAssertEqual(resolved?.reason, "denied on mac")
     }
 
+    func testAllowWithNoteButtonOffered() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        bridge.notify(resolvable: ResolvableApproval { _ in }, text: "approve?", allowSession: nil)
+        XCTAssertTrue(fake.lastCallbackData.contains { $0.hasPrefix("ar:") })
+    }
+
+    func testAllowWithNoteButtonIssuesForceReplyWithoutResolving() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var resolved: Decision?
+        let approval = ResolvableApproval { resolved = $0 }
+
+        bridge.notify(resolvable: approval, text: "approve?", toolName: "Bash", allowSession: nil)
+        let n = nonce(from: fake.lastCallbackData)
+        bridge.handle(callbackUpdate(action: "ar", nonce: n, fromId: owner, chatId: owner, messageId: fake.lastSentMessageId))
+
+        XCTAssertNil(resolved)
+        XCTAssertEqual(fake.forceReplies.count, 1)
+        XCTAssertTrue(fake.forceReplies.last?.text.contains("Bash") == true)
+        XCTAssertEqual(fake.answers.last?.text, "Reply with a note")
+    }
+
+    func testReplyToAllowNotePromptApprovesWithContext() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var resolved: Decision?
+        bridge.notify(resolvable: ResolvableApproval { resolved = $0 }, text: "approve?", toolName: "Bash", allowSession: nil)
+        let n = nonce(from: fake.lastCallbackData)
+
+        bridge.handle(callbackUpdate(action: "ar", nonce: n, fromId: owner, chatId: owner, messageId: 100))
+        let promptMid = fake.forceReplies.last!.messageId
+        bridge.handle(typedReply("ship it, ran the migration", replyTo: promptMid))
+
+        XCTAssertEqual(resolved?.verdict, .allow)
+        XCTAssertEqual(resolved?.additionalContext, "Approver note from phone: ship it, ran the migration")
+    }
+
+    func testReplyToAllowNotePromptTargetsCorrectApprovalWhenMultiplePending() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var r1: Decision?
+        var r2: Decision?
+        bridge.notify(resolvable: ResolvableApproval { r1 = $0 }, text: "a1", allowSession: nil)
+        let firstNonce = nonce(from: fake.lastCallbackData)
+        bridge.notify(resolvable: ResolvableApproval { r2 = $0 }, text: "a2", allowSession: nil)
+
+        bridge.handle(callbackUpdate(action: "ar", nonce: firstNonce, fromId: owner, chatId: owner, messageId: 100))
+        let promptMid = fake.forceReplies.last!.messageId
+        bridge.handle(typedReply("approved", replyTo: promptMid))
+
+        XCTAssertEqual(r1?.verdict, .allow)
+        XCTAssertNil(r2)
+    }
+
     func testWithheldApprovalIsResolvableFromPhoneWithButtons() {
         let fake = FakeTelegramTransport()
         let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
