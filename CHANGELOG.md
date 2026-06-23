@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.34.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.33.1...v1.34.0) (2026-06-23)
+
+
+### Features
+
+* **matcher:** gate mutating kubectl verbs, hard-prompt prod context ([#167](https://github.com/JaysonRawlins/claude-gavel/issues/167)) ([e7dec1b](https://github.com/JaysonRawlins/claude-gavel/commit/e7dec1b2bf213fa155e3f9ceb0fb89d005c6aa34))
+* **notifications:** allow-with-note ForceReply on phone approvals ([#168](https://github.com/JaysonRawlins/claude-gavel/issues/168)) ([72b31d4](https://github.com/JaysonRawlins/claude-gavel/commit/72b31d49fdba9193353523abb56df44c5f6a2cac))
+
+
+### Bug Fixes
+
+* **matcher:** block Bash reads of credential files ([#165](https://github.com/JaysonRawlins/claude-gavel/issues/165)) ([116b9d1](https://github.com/JaysonRawlins/claude-gavel/commit/116b9d105b8b24a7eadb2a06fada8ec8d1326521))
+
 ## [1.33.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.33.0...v1.33.1) (2026-06-21)
 
 
