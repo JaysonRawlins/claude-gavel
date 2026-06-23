@@ -24,7 +24,7 @@ final class RuleStore: ObservableObject {
     )
 
     /// Current seed version — bump when adding new default rules.
-    private static let seedVersion = 11
+    private static let seedVersion = 12
 
     /// Built-in patterns replaced by a corrected/broadened seeded rule. On re-seed
     /// these are dropped from existing rules.json so a pattern fix swaps cleanly
@@ -333,6 +333,25 @@ final class RuleStore: ObservableObject {
             verdict: .prompt,
             explanation: "Infrastructure apply/destroy — review the changeset/plan before mutating real resources",
             builtIn: true
+        ),
+
+        PersistentRule(
+            toolName: "Bash",
+            pattern: "\\b(kubectl|kubectl\\.\\S+|k)\\b(\\s+-{1,2}\\S+(\\s+\\S+)?)*\\s+(rollout|delete|apply|scale|patch|drain|cordon|uncordon|edit|replace|annotate|label|set|create|taint|rollback)\\b",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "Mutating kubectl verb against a live cluster — review the target before changing cluster state",
+            builtIn: true
+        ),
+
+        PersistentRule(
+            toolName: "Bash",
+            pattern: "\\b(kubectl|kubectl\\.\\S+|k)\\b(?=[^&|;]*\\b(rollout|delete|apply|scale|patch|drain|cordon|uncordon|edit|replace|annotate|label|set|create|taint|rollback)\\b)(?=[^&|;]*(--(context|cluster)(=|\\s+)\\S*prod|\\b[a-z0-9]+-prod\\b|\\bprod-[a-z0-9-]+\\b))",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "Mutating kubectl against a PROD context — prod cluster mutations must never auto-pass",
+            builtIn: true,
+            overridable: false
         ),
 
         // ── Persistence-creating scheduler tools ──
