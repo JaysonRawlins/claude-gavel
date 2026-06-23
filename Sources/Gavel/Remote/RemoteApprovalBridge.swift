@@ -27,7 +27,7 @@ final class RemoteApprovalBridge {
     private let redact: (String) -> String
     private let lock = NSLock()
     private var byNonce: [String: Correlation] = [:]
-    private var promptToNonce: [Int: String] = [:]
+    private var promptReplies: [Int: PendingReply] = [:]
     private var pendingOrder: [String] = []
     private var offset = 0
     private var running = false
@@ -106,7 +106,8 @@ final class RemoteApprovalBridge {
             [TelegramButton(text: "✅ Allow once", callbackData: "a:\(nonce)"),
              TelegramButton(text: "🛑 Deny", callbackData: "d:\(nonce)")],
             [TelegramButton(text: "✅ Allow for session", callbackData: "s:\(nonce)")],
-            [TelegramButton(text: "🛑 Deny w/ reason", callbackData: "dr:\(nonce)")]
+            [TelegramButton(text: "✅ Allow w/ note", callbackData: "ar:\(nonce)"),
+             TelegramButton(text: "🛑 Deny w/ reason", callbackData: "dr:\(nonce)")]
         ]
         if offerCommentClean {
             keyboard.append([TelegramButton(text: "🧹 Clean comments & re-propose", callbackData: "c:\(nonce)")])
@@ -204,13 +205,13 @@ final class RemoteApprovalBridge {
             return
         }
         switch typedReplyTarget(replyTo: message.replyToMessageId) {
-        case .target(let corr):
+        case .target(let corr, let kind):
             forget(corr.nonce)
-            let decision = Decision(verdict: .block, reason: "Denied from phone — \(text)")
+            let decision = Self.typedReplyDecision(kind: kind, text: text)
             let won = corr.resolvable.resolve(decision, from: .telegram)
-            remoteLog?("resolved pid=\(corr.pid) nonce=\(corr.nonce) action=deny-reason won=\(won)")
+            remoteLog?("resolved pid=\(corr.pid) nonce=\(corr.nonce) action=\(Self.typedReplyAction(kind)) won=\(won)")
             if won, let mid = corr.messageId {
-                transport.editMessageText(chatId: pinned, messageId: mid, text: "🛑 Denied from phone — \(text)", completion: nil)
+                transport.editMessageText(chatId: pinned, messageId: mid, text: Self.typedReplyResolvedText(kind: kind, text: text), completion: nil)
             }
         case .ambiguous(let count):
             transport.sendMessage(chatId: pinned, text: "\(count) approvals pending — swipe-reply the specific one you mean, or tap its buttons.", keyboard: nil, completion: { _ in })
@@ -242,7 +243,11 @@ final class RemoteApprovalBridge {
         }
 
         if action == "dr" {
-            promptForDenyReason(corr: corr, callbackId: callback.id, chat: pinned)
+            promptForReply(corr: corr, kind: .deny, callbackId: callback.id, chat: pinned)
+            return
+        }
+        if action == "ar" {
+            promptForReply(corr: corr, kind: .allow, callbackId: callback.id, chat: pinned)
             return
         }
         forget(nonce)
@@ -260,13 +265,14 @@ final class RemoteApprovalBridge {
         }
     }
 
-    private func promptForDenyReason(corr: Correlation, callbackId: String, chat: Int64) {
-        transport.answerCallbackQuery(id: callbackId, text: "Reply with a reason", completion: nil)
+    private func promptForReply(corr: Correlation, kind: ReplyKind, callbackId: String, chat: Int64) {
+        transport.answerCallbackQuery(id: callbackId, text: kind == .allow ? "Reply with a note" : "Reply with a reason", completion: nil)
         let target = corr.toolName.isEmpty ? "this approval" : corr.toolName
-        transport.sendForceReply(chatId: chat, text: "Reply with a reason to deny \(target)…") { [weak self] result in
+        let prompt = kind == .allow ? "Reply with a note approving \(target)…" : "Reply with a reason to deny \(target)…"
+        transport.sendForceReply(chatId: chat, text: prompt) { [weak self] result in
             guard let self, case .success(let mid) = result else { return }
-            self.lock.lock(); self.promptToNonce[mid] = corr.nonce; self.lock.unlock()
-            self.remoteLog?("deny-reason prompt pid=\(corr.pid) nonce=\(corr.nonce) promptMid=\(mid)")
+            self.lock.lock(); self.promptReplies[mid] = PendingReply(nonce: corr.nonce, kind: kind); self.lock.unlock()
+            self.remoteLog?("\(Self.typedReplyAction(kind)) prompt pid=\(corr.pid) nonce=\(corr.nonce) promptMid=\(mid)")
         }
     }
 
@@ -297,6 +303,24 @@ final class RemoteApprovalBridge {
         }
     }
 
+    private static func typedReplyDecision(kind: ReplyKind, text: String) -> Decision {
+        switch kind {
+        case .deny: return Decision(verdict: .block, reason: "Denied from phone — \(text)")
+        case .allow: return Decision(verdict: .allow, reason: "Approved from phone", additionalContext: "Approver note from phone: \(text)")
+        }
+    }
+
+    private static func typedReplyResolvedText(kind: ReplyKind, text: String) -> String {
+        switch kind {
+        case .deny: return "🛑 Denied from phone — \(text)"
+        case .allow: return "✅ Approved from phone — \(text)"
+        }
+    }
+
+    private static func typedReplyAction(_ kind: ReplyKind) -> String {
+        kind == .allow ? "allow-note" : "deny-reason"
+    }
+
     private static func phoneResolvedText(_ action: String) -> String {
         switch action {
         case "d": return "🛑 Denied from phone"
@@ -309,12 +333,19 @@ final class RemoteApprovalBridge {
         lock.lock()
         byNonce.removeValue(forKey: nonce)
         pendingOrder.removeAll { $0 == nonce }
-        promptToNonce = promptToNonce.filter { $0.value != nonce }
+        promptReplies = promptReplies.filter { $0.value.nonce != nonce }
         lock.unlock()
     }
 
+    private enum ReplyKind { case allow, deny }
+
+    private struct PendingReply {
+        let nonce: String
+        let kind: ReplyKind
+    }
+
     private enum TypedReplyTarget {
-        case target(Correlation)
+        case target(Correlation, ReplyKind)
         case ambiguous(Int)
         case none
     }
@@ -322,13 +353,13 @@ final class RemoteApprovalBridge {
     private func typedReplyTarget(replyTo: Int?) -> TypedReplyTarget {
         lock.lock(); defer { lock.unlock() }
         if let replyTo {
-            if let promptNonce = promptToNonce[replyTo], let corr = byNonce[promptNonce] { return .target(corr) }
-            if let match = byNonce.values.first(where: { $0.messageId == replyTo }) { return .target(match) }
+            if let pending = promptReplies[replyTo], let corr = byNonce[pending.nonce] { return .target(corr, pending.kind) }
+            if let match = byNonce.values.first(where: { $0.messageId == replyTo }) { return .target(match, .deny) }
             return .none
         }
         switch pendingOrder.count {
         case 0: return .none
-        case 1: return byNonce[pendingOrder[0]].map { .target($0) } ?? .none
+        case 1: return byNonce[pendingOrder[0]].map { .target($0, .deny) } ?? .none
         default: return .ambiguous(pendingOrder.count)
         }
     }
