@@ -1,4 +1,5 @@
 import Foundation
+import GavelHookCore
 
 /// gavel-hook — Thin CLI shim for Claude Code hooks.
 ///
@@ -86,7 +87,7 @@ guard let envelopeData = try? JSONSerialization.data(withJSONObject: envelope) e
 let fd = socket(AF_UNIX, SOCK_STREAM, 0)
 guard fd >= 0 else {
     // No socket — daemon not running. Fail OPEN so Claude works without gavel.
-    if needsResponse { printAllow() }
+    if needsResponse { printAllow(isCodex: isCodexAgent) }
     exit(0)
 }
 
@@ -115,7 +116,7 @@ let connectResult = withUnsafePointer(to: &addr) { ptr in
 guard connectResult == 0 else {
     close(fd)
     // Can't connect — daemon not running. Fail OPEN so Claude works without gavel.
-    if needsResponse { printAllow() }
+    if needsResponse { printAllow(isCodex: isCodexAgent) }
     exit(0)
 }
 
@@ -165,32 +166,16 @@ if needsResponse {
 
         // Build structured allow response — format depends on hook type
         if hookType == "PermissionRequest" {
-            printPermissionAllow()
+            print(HookWireFormat.permissionRequestAllow())
             exit(0)
         }
 
-        // Codex's PreToolUseHookSpecificOutputWire rejects both
-        // permissionDecision:"allow" and updatedInput as unsupported; the allow
-        // path is signaled by emitting hookEventName only (with optional
-        // additionalContext). Claude wants permissionDecision:"allow" and
-        // honors updatedInput. NOTE: this drops user-edited commands on Codex
-        // sessions silently — the edit UI should be gated agent-side.
-        var output: [String: Any] = ["hookEventName": "PreToolUse"]
-        if let ctx = json["additionalContext"] as? String, !ctx.isEmpty {
-            output["additionalContext"] = ctx
-        }
-        if !isCodexAgent {
-            output["permissionDecision"] = "allow"
-            if let updated = json["updatedInput"] as? [String: Any] {
-                output["updatedInput"] = updated
-            }
-        }
-        let wrapper: [String: Any] = ["hookSpecificOutput": output]
-        if let data = try? JSONSerialization.data(withJSONObject: wrapper),
-           let str = String(data: data, encoding: .utf8) {
-            print(str)
-            exit(0)
-        }
+        print(HookWireFormat.preToolUseAllow(
+            isCodex: isCodexAgent,
+            additionalContext: json["additionalContext"] as? String,
+            updatedInput: json["updatedInput"] as? [String: Any]
+        ))
+        exit(0)
     }
 
     // Daemon was reachable but response was empty/unparseable — FAIL CLOSED
@@ -202,12 +187,8 @@ if needsResponse {
 
 // MARK: - Helpers
 
-func printAllow() {
-    print(#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}"#)
-}
-
-func printPermissionAllow() {
-    print(#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#)
+func printAllow(isCodex: Bool) {
+    print(HookWireFormat.preToolUseAllow(isCodex: isCodex))
 }
 
 func printBlock(_ reason: String) {
