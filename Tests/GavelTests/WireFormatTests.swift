@@ -1,7 +1,57 @@
 import XCTest
 @testable import Gavel
+import GavelHookCore
 
 final class WireFormatTests: XCTestCase {
+
+    // MARK: - HookWireFormat allow shape (daemon verdict → agent stdout)
+
+    private func parse(_ str: String) throws -> [String: Any] {
+        try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(str.utf8)) as? [String: Any])
+    }
+
+    func testCodexAllowOmitsPermissionDecision() throws {
+        let out = try parse(HookWireFormat.preToolUseAllow(isCodex: true))
+        let hso = try XCTUnwrap(out["hookSpecificOutput"] as? [String: Any])
+        XCTAssertEqual(hso["hookEventName"] as? String, "PreToolUse")
+        XCTAssertNil(hso["permissionDecision"], "Codex 0.142 runtime-rejects permissionDecision:allow")
+    }
+
+    func testClaudeAllowEmitsPermissionDecision() throws {
+        let out = try parse(HookWireFormat.preToolUseAllow(isCodex: false))
+        let hso = try XCTUnwrap(out["hookSpecificOutput"] as? [String: Any])
+        XCTAssertEqual(hso["permissionDecision"] as? String, "allow")
+    }
+
+    func testCodexAllowDropsUpdatedInput() throws {
+        let out = try parse(HookWireFormat.preToolUseAllow(
+            isCodex: true, updatedInput: ["command": "ls -la"]))
+        let hso = try XCTUnwrap(out["hookSpecificOutput"] as? [String: Any])
+        XCTAssertNil(hso["updatedInput"], "Codex has no allow slot to carry updatedInput")
+        XCTAssertNil(hso["permissionDecision"])
+    }
+
+    func testClaudeAllowKeepsUpdatedInput() throws {
+        let out = try parse(HookWireFormat.preToolUseAllow(
+            isCodex: false, updatedInput: ["command": "ls -la"]))
+        let hso = try XCTUnwrap(out["hookSpecificOutput"] as? [String: Any])
+        let updated = try XCTUnwrap(hso["updatedInput"] as? [String: Any])
+        XCTAssertEqual(updated["command"] as? String, "ls -la")
+    }
+
+    func testCodexAllowKeepsAdditionalContext() throws {
+        let out = try parse(HookWireFormat.preToolUseAllow(
+            isCodex: true, additionalContext: "note from gavel"))
+        let hso = try XCTUnwrap(out["hookSpecificOutput"] as? [String: Any])
+        XCTAssertEqual(hso["additionalContext"] as? String, "note from gavel")
+        XCTAssertNil(hso["permissionDecision"])
+    }
+
+    func testEmptyAdditionalContextOmitted() throws {
+        let out = try parse(HookWireFormat.preToolUseAllow(isCodex: false, additionalContext: ""))
+        let hso = try XCTUnwrap(out["hookSpecificOutput"] as? [String: Any])
+        XCTAssertNil(hso["additionalContext"])
+    }
 
     /// Build an ApprovalEngine that does NOT load the user's real rules.json.
     /// Without this, any prompt rule the user has installed (e.g. "always

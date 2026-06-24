@@ -20,14 +20,19 @@ let package = Package(
                 .linkedFramework("Security"),
             ]
         ),
+        .target(
+            name: "GavelHookCore",
+            dependencies: [],
+            path: "Sources/GavelHookCore"
+        ),
         .executableTarget(
             name: "GavelHook",
-            dependencies: [],
+            dependencies: ["GavelHookCore"],
             path: "Sources/GavelHook"
         ),
         .testTarget(
             name: "GavelTests",
-            dependencies: ["Gavel"],
+            dependencies: ["Gavel", "GavelHookCore"],
             path: "Tests/GavelTests"
         ),
     ]
