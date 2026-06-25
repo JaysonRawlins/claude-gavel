@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.34.0...v1.34.1) (2026-06-24)
+
+
+### Bug Fixes
+
+* **codex:** drop permissionDecision on codex fail-open allow (0.142 wire contract) ([#169](https://github.com/JaysonRawlins/claude-gavel/issues/169)) ([9bf1afa](https://github.com/JaysonRawlins/claude-gavel/commit/9bf1afa01ef99b539f6974a4c42f530e898e8f75))
+
 ## [1.34.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.33.1...v1.34.0) (2026-06-23)
 
 
