@@ -10,6 +10,9 @@ struct MonitorWindow: View {
     @State private var selectedTab: MonitorTab = .feed
     @State private var sessionFilter: String = ""
     @State private var hideTombstones: Bool = false
+    @State private var historySession: Session?
+    @State private var shortCandidates: [String] = []
+    @State private var showForgetShort = false
 
     enum MonitorTab {
         case feed, rules, sessions, context, tester, reference
@@ -30,6 +33,44 @@ struct MonitorWindow: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             collapseOnDeactivate()
         }
+        .sheet(item: $historySession) { session in
+            TranscriptView(session: session, viewModel: viewModel)
+        }
+        .alert("Forget \(shortCandidates.count) short session\(shortCandidates.count == 1 ? "" : "s")?",
+               isPresented: $showForgetShort) {
+            Button("Forget", role: .destructive, action: forgetShort)
+            Button("Cancel", role: .cancel) { shortCandidates = [] }
+        } message: {
+            Text("Sleeping sessions with one message or fewer (aborted/empty). Removes the rows only — transcripts stay on disk.")
+        }
+    }
+
+    /// Background-scan every tombstone's transcript and queue the ≤1-message ones
+    /// for the confirm dialog. Parsing 200 files off the main thread keeps the click
+    /// responsive; an empty result notifies instead of opening an empty dialog.
+    private func scanShortSleeping() {
+        let targets = viewModel.sessionManager.deadSessions.map { (sid: $0.key, cwd: $0.value.cwd ?? "") }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let short = targets
+                .filter { TranscriptReader.messages(cwd: $0.cwd, sessionId: $0.sid).count <= 1 }
+                .map(\.sid)
+            DispatchQueue.main.async {
+                shortCandidates = short
+                if short.isEmpty {
+                    GavelNotifications.notify(title: "Gavel — Forget Short", body: "No sleeping sessions with ≤1 message")
+                } else {
+                    showForgetShort = true
+                }
+            }
+        }
+    }
+
+    private func forgetShort() {
+        for sid in shortCandidates {
+            viewModel.sessionManager.forgetTombstone(sessionId: sid)
+        }
+        viewModel.noteInteraction()
+        shortCandidates = []
     }
 
     private func collapseOnDeactivate() {
@@ -213,7 +254,8 @@ struct MonitorWindow: View {
                             SessionRow(
                                 session: session,
                                 viewModel: viewModel,
-                                alternate: index.isMultiple(of: 2)
+                                alternate: index.isMultiple(of: 2),
+                                onHistory: { historySession = $0 }
                             )
                         }
                     }
@@ -247,6 +289,14 @@ struct MonitorWindow: View {
                 .buttonStyle(.bordered)
                 .tint(.gray)
                 .help("Remove every sleeping (tombstoned) session from the monitor.")
+
+                Button("Forget Short") {
+                    scanShortSleeping()
+                    viewModel.noteInteraction()
+                }
+                .buttonStyle(.bordered)
+                .tint(.gray)
+                .help("Forget sleeping sessions with ≤1 message (aborted/empty). Shows a count first; transcripts stay on disk.")
 
                 Button("Name Unnamed") {
                     viewModel.sessionManager.nameUnnamedSessions()
@@ -415,6 +465,7 @@ private struct SessionRow: View {
     @ObservedObject var session: Session
     let viewModel: MonitorViewModel
     let alternate: Bool
+    let onHistory: (Session) -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -589,6 +640,16 @@ private struct SessionRow: View {
             .tint(session.isPaused ? .green : .orange)
             .frame(width: 76)
 
+            Button("History") {
+                onHistory(session)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(.teal)
+            .frame(width: 70)
+            .disabled(session.sessionId == nil)
+            .help("Read this session's transcript in a scrollable window.")
+
             Button("Sleep") {
                 if viewModel.sessionManager.isProcessAlive(pid: session.pid, cwd: session.cwd) {
                     kill(Int32(session.pid), SIGINT)
@@ -613,10 +674,20 @@ private struct SessionRow: View {
                 Text("asleep \(Self.relativeTime(ended))")
                     .font(.caption2)
                     .foregroundColor(.secondary)
-                    .frame(width: 222, alignment: .trailing)
+                    .frame(width: 146, alignment: .trailing)
             } else {
-                Spacer().frame(width: 222)
+                Spacer().frame(width: 146)
             }
+
+            Button("History") {
+                onHistory(session)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(.teal)
+            .frame(width: 70)
+            .disabled(session.sessionId == nil)
+            .help("Read this session's transcript to decide whether to name or forget it.")
 
             Button("Resume") {
                 copyResumeCommand()
