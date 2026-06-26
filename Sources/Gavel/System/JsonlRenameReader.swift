@@ -7,7 +7,7 @@ import Foundation
 /// return nil.
 enum JsonlRenameReader {
     static func latestRename(cwd: String, sessionId: String) -> String? {
-        guard let text = transcript(cwd: cwd, sessionId: sessionId) else { return nil }
+        guard let text = transcriptText(cwd: cwd, sessionId: sessionId) else { return nil }
 
         let patterns = [
             #"<command-message>rename</command-message>[\s\S]*?<command-args>(.+?)</command-args>"#,
@@ -36,7 +36,7 @@ enum JsonlRenameReader {
 
     /// Derive a short title from the first real user prompt in the transcript.
     static func firstPromptTitle(cwd: String, sessionId: String) -> String? {
-        guard let text = transcript(cwd: cwd, sessionId: sessionId) else { return nil }
+        guard let text = transcriptText(cwd: cwd, sessionId: sessionId) else { return nil }
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             guard let prompt = userPromptText(fromLine: String(line)) else { continue }
             if let title = condense(prompt) { return title }
@@ -46,14 +46,19 @@ enum JsonlRenameReader {
 
     private static let maxTitleLength = 60
 
-    private static func transcript(cwd: String, sessionId: String) -> String? {
+    /// Path Claude Code writes a session transcript to: cwd with `/` and `.`
+    /// flattened to `-`, under `~/.claude/projects/<encoded>/<sessionId>.jsonl`.
+    static func transcriptPath(cwd: String, sessionId: String) -> String {
         let encoded = cwd
             .replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: ".", with: "-")
-        let path = (NSHomeDirectory() as NSString)
+        return (NSHomeDirectory() as NSString)
             .appendingPathComponent(".claude/projects")
             .appending("/\(encoded)/\(sessionId).jsonl")
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
+    }
+
+    static func transcriptText(cwd: String, sessionId: String) -> String? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: transcriptPath(cwd: cwd, sessionId: sessionId))) else { return nil }
         return String(data: data, encoding: .utf8)
     }
 
