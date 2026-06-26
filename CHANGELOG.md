@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.2](https://github.com/JaysonRawlins/claude-gavel/compare/v1.34.1...v1.34.2) (2026-06-26)
+
+
+### Bug Fixes
+
+* **session:** cap and TTL-evict dead-session tombstones ([#171](https://github.com/JaysonRawlins/claude-gavel/issues/171)) ([7228ed2](https://github.com/JaysonRawlins/claude-gavel/commit/7228ed28b21522f4cb14e1df29933afbf6c5631f))
+
 ## [1.34.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.34.0...v1.34.1) (2026-06-24)
 
 
