@@ -154,6 +154,75 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertNotNil(manager.sessions[livePid], "Live session must survive clearDead")
     }
 
+    // MARK: - Retention (prune)
+
+    /// Tombstone `count` distinct dead PIDs and return their sids in creation order.
+    @discardableResult
+    private func makeTombstones(_ count: Int, sidPrefix: String = "prune-sid") -> [String] {
+        var sids: [String] = []
+        for i in 0..<count {
+            let session = manager.session(for: deadPid + i)
+            session.sessionId = "\(sidPrefix)-\(i)"
+            sids.append("\(sidPrefix)-\(i)")
+        }
+        manager.cleanupDeadSessions()
+        return sids
+    }
+
+    /// Read the labels actually written to disk, since `sessionLabels` is file-private.
+    private func persistedLabels() -> [String: String] {
+        let path = tmpHome.appendingPathComponent(".claude/gavel/session-defaults.json")
+        guard let data = try? Data(contentsOf: path),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let labels = json["sessionLabels"] as? [String: String] else { return [:] }
+        return labels
+    }
+
+    func testTombstonesPastTTLAreEvicted() {
+        let sids = makeTombstones(2)
+        manager.deadSessions[sids[0]]?.endedAt = Date(timeIntervalSinceNow: -GavelConstants.deadSessionTTL - 3600)
+        manager.deadSessions[sids[1]]?.endedAt = Date()
+
+        manager.pruneDeadSessions()
+
+        XCTAssertNil(manager.deadSessions[sids[0]], "A tombstone older than the TTL is evicted")
+        XCTAssertNotNil(manager.deadSessions[sids[1]], "A recent tombstone survives")
+    }
+
+    func testTombstonesAreCappedAtMax() {
+        makeTombstones(GavelConstants.maxDeadSessions + 5)
+        XCTAssertEqual(manager.deadSessions.count, GavelConstants.maxDeadSessions,
+                       "Tombstones beyond the cap are dropped — a runaway loop can't grow unbounded")
+    }
+
+    func testFreshTombstoneSurvivesTheCleanupTickPrune() {
+        let sids = makeTombstones(1)
+        XCTAssertNotNil(manager.deadSessions[sids[0]],
+                        "endedAt is set on a deferred block, so a just-promoted tombstone must not read as aged-out")
+    }
+
+    func testForgetTombstoneAlsoDropsSavedLabel() {
+        let sid = makeTombstones(1)[0]
+        manager.setLabel("keep-me", for: sid)
+        XCTAssertEqual(persistedLabels()[sid], "keep-me")
+
+        manager.forgetTombstone(sessionId: sid)
+
+        XCTAssertNil(manager.deadSessions[sid])
+        XCTAssertNil(persistedLabels()[sid], "Forgetting a tombstone must not leak its label")
+    }
+
+    func testPruneEvictsLabelAlongsideAgedOutTombstone() {
+        let sid = makeTombstones(1)[0]
+        manager.setLabel("old-name", for: sid)
+        manager.deadSessions[sid]?.endedAt = Date(timeIntervalSinceNow: -GavelConstants.deadSessionTTL - 3600)
+
+        manager.pruneDeadSessions()
+
+        XCTAssertNil(manager.deadSessions[sid])
+        XCTAssertNil(persistedLabels()[sid], "An aged-out tombstone must not leak its label")
+    }
+
     // MARK: - Promotion
 
     func testRecordSessionIdPromotesMatchingTombstoneToLive() {
