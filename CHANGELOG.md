@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.35.0...v1.35.1) (2026-06-26)
+
+
+### Bug Fixes
+
+* **matcher:** prompt on exfil-content heuristic instead of silent deny ([#175](https://github.com/JaysonRawlins/claude-gavel/issues/175)) ([c0defe1](https://github.com/JaysonRawlins/claude-gavel/commit/c0defe1a53dcf8a6f154b4ba27ba7603a92a2b74))
+
 ## [1.35.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.34.2...v1.35.0) (2026-06-26)
 
 
