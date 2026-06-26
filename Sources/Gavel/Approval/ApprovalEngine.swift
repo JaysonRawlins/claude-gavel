@@ -1,6 +1,6 @@
 import Foundation
 
-/// Evaluates a PreToolUse event in strict priority order (dangerous, deny, pause, checkpoints, sensitive paths, prompt, allow, auto-approve); deny rules and the commit/sensitive-path checkpoints always beat any allow.
+/// Evaluates a PreToolUse event in strict priority order (dangerous, deny, pause, checkpoints, exfil-content prompt, sensitive paths, prompt, allow, auto-approve); deny rules and the commit/sensitive-path checkpoints always beat any allow.
 final class ApprovalEngine {
     let patternMatcher: PatternMatcher
     let ruleStore: RuleStore
@@ -25,6 +25,13 @@ final class ApprovalEngine {
 
         if let decision = ruleStore.evaluateBuiltInPromptNonOverridable(payload: payload) {
             return decision
+        }
+
+        // Heuristic exfil-content scan → prompt the user rather than silently deny. Sits in the
+        // askUser tier (after deny rules + pause) so a false positive is recoverable with one tap,
+        // while an unanswered prompt still fails closed on timeout.
+        if let reason = patternMatcher.matchDangerousContentScan(payload: payload) {
+            return Decision(verdict: .block, reason: reason, askUser: true)
         }
 
         if let reason = patternMatcher.matchSensitivePath(payload: payload) {

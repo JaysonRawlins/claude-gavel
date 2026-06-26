@@ -128,11 +128,11 @@ final class Phase1RefactorTests: XCTestCase {
                 "content": AnyCodable(content)
             ]
         )
-        XCTAssertNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNil(matcher.matchDangerousContentScan(payload: payload))
     }
 
     func testWriteToTmpStillScansContent() {
-        // Same content in /tmp should be blocked
+        // Same content in /tmp should be flagged by the heuristic content scan
         let content = buildExfilContent()
         let payload = PreToolUsePayload(
             toolName: "Write",
@@ -141,7 +141,7 @@ final class Phase1RefactorTests: XCTestCase {
                 "content": AnyCodable(content)
             ]
         )
-        XCTAssertNotNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNotNil(matcher.matchDangerousContentScan(payload: payload))
     }
 
     func testProtectedPathStillBlockedRegardlessOfContent() {
