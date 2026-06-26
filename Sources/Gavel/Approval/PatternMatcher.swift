@@ -295,23 +295,36 @@ struct PatternMatcher {
         case "Bash":
             return matchBashCommand(payload.command)
         case "Write", "Edit", "MultiEdit":
-            if let pathBlock = matchProtectedPath(payload.filePath) {
-                return pathBlock
-            }
+            // Protected-path writes are a precise, structural block. The heuristic exfil
+            // content scan is handled separately (matchDangerousContentScan) because it's
+            // probabilistic and routes to an askUser prompt rather than a hard deny.
+            return matchProtectedPath(payload.filePath)
+        case "Read":
+            return matchSensitiveRead(payload.filePath)
+        default:
+            return nil
+        }
+    }
+
+    /// Heuristic exfil-content scan for files written to temp dirs: flags content that both
+    /// references a credential path AND has network capability (or generic file-read + network).
+    /// Probabilistic — a benign script that reads a dotfile and calls an API trips it — so
+    /// ApprovalEngine routes this to an askUser prompt, NOT a silent deny. A hard deny here can't
+    /// tell a false positive from a real exfil script and only trains the agent to reword around
+    /// the scanner; an unanswered prompt still fails closed on timeout, so prompting costs nothing.
+    func matchDangerousContentScan(payload: PreToolUsePayload) -> String? {
+        switch payload.toolName {
+        case "Write", "Edit", "MultiEdit":
             // Only scan content for files in temp directories — project source files
             // contain pattern strings as literals that trigger false positives.
             // Skip documentation extensions: scanner targets polyglot exfil scripts,
             // not prose that happens to mention credentials and contain hyperlinks.
-            if let path = payload.filePath, Self.isTempPath(path), !Self.isDocumentationPath(path) {
-                let contentToScan = payload.toolInput["content"]?.stringValue
-                    ?? payload.toolInput["new_string"]?.stringValue
-                if let content = contentToScan {
-                    return matchDangerousContent(content)
-                }
-            }
-            return nil
-        case "Read":
-            return matchSensitiveRead(payload.filePath)
+            guard let path = payload.filePath,
+                  Self.isTempPath(path),
+                  !Self.isDocumentationPath(path) else { return nil }
+            let content = payload.toolInput["content"]?.stringValue
+                ?? payload.toolInput["new_string"]?.stringValue
+            return content.flatMap(matchDangerousContent)
         default:
             return nil
         }

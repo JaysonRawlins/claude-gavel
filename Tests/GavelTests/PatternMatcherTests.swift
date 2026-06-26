@@ -771,7 +771,7 @@ final class PatternMatcherTests: XCTestCase {
                 """)
             ]
         )
-        XCTAssertNotNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNotNil(matcher.matchDangerousContentScan(payload: payload))
     }
 
     func testWriteExfilPerlBlocked() {
@@ -788,7 +788,7 @@ final class PatternMatcherTests: XCTestCase {
                 """)
             ]
         )
-        XCTAssertNotNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNotNil(matcher.matchDangerousContentScan(payload: payload))
     }
 
     func testWriteNormalCodeAllowed() {
@@ -803,7 +803,7 @@ final class PatternMatcherTests: XCTestCase {
                 """)
             ]
         )
-        XCTAssertNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNil(matcher.matchDangerousContentScan(payload: payload))
     }
 
     func testWriteExfilWrapperBlocked() {
@@ -830,7 +830,7 @@ final class PatternMatcherTests: XCTestCase {
                 """)
             ]
         )
-        XCTAssertNotNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNotNil(matcher.matchDangerousContentScan(payload: payload))
     }
 
     func testWriteExfilGoBlocked() {
@@ -848,7 +848,7 @@ final class PatternMatcherTests: XCTestCase {
                 """)
             ]
         )
-        XCTAssertNotNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNotNil(matcher.matchDangerousContentScan(payload: payload))
     }
 
     func testWriteExfilSwiftBlocked() {
@@ -866,7 +866,7 @@ final class PatternMatcherTests: XCTestCase {
                 """)
             ]
         )
-        XCTAssertNotNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNotNil(matcher.matchDangerousContentScan(payload: payload))
     }
 
     func testWriteNetworkOnlyAllowed() {
@@ -881,7 +881,7 @@ final class PatternMatcherTests: XCTestCase {
                 """)
             ]
         )
-        XCTAssertNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNil(matcher.matchDangerousContentScan(payload: payload))
     }
 
     func testWriteMarkdownDocWithCredentialsAndUrlsAllowed() {
@@ -902,7 +902,7 @@ final class PatternMatcherTests: XCTestCase {
                 """)
             ]
         )
-        XCTAssertNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNil(matcher.matchDangerousContentScan(payload: payload))
     }
 
     func testWriteCodeFileWithBareCredentialsKeywordAllowed() {
@@ -920,7 +920,7 @@ final class PatternMatcherTests: XCTestCase {
                 """)
             ]
         )
-        XCTAssertNil(matcher.matchDangerous(payload: payload))
+        XCTAssertNil(matcher.matchDangerousContentScan(payload: payload))
     }
 
     // MARK: - Shell variable expansion bypass prevention
