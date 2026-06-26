@@ -32,6 +32,13 @@ enum GavelConstants {
     /// Session cleanup check interval in seconds.
     static let sessionCleanupInterval: TimeInterval = 5.0
 
+    /// Tombstone retention. The dead-session store is otherwise append-only, so a
+    /// runaway respawn loop (e.g. a `/loop` spawning a fresh CLI every ~90s) can
+    /// pile up thousands of permanent rows. Keep at most this many tombstones, and
+    /// drop any older than the TTL — whichever removes more.
+    static let maxDeadSessions = 200
+    static let deadSessionTTL: TimeInterval = 14 * 24 * 60 * 60
+
     /// Minimum content length to scan for dangerous patterns.
     /// Short content can't contain both file I/O and network code.
     static let minContentScanLength = 50

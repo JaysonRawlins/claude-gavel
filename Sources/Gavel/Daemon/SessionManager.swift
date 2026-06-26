@@ -56,6 +56,7 @@ final class SessionManager: ObservableObject {
 
         loadDefaults()
         loadActiveSessions()
+        pruneDeadSessions()
         if autoDiscover { discoverRunningSessions() }
         if autoStartTimers {
             startCleanupTimer()
@@ -232,10 +233,11 @@ final class SessionManager: ObservableObject {
 
     func forgetTombstone(sessionId: String) {
         lock.lock()
-        if deadSessions.removeValue(forKey: sessionId) != nil {
-            saveActiveSessionsLocked()
-        }
+        let droppedTombstone = deadSessions.removeValue(forKey: sessionId) != nil
+        let droppedLabel = sessionLabels.removeValue(forKey: sessionId) != nil
+        if droppedTombstone { saveActiveSessionsLocked() }
         lock.unlock()
+        if droppedLabel { saveDefaults() }
     }
 
     /// Re-derive a name for every still-blank session (live or asleep) by re-reading its transcript; catches sessions that were empty when first seen but have since produced a first prompt, which the one-shot seed guard never retries.
@@ -275,11 +277,13 @@ final class SessionManager: ObservableObject {
             sessions.removeValue(forKey: pid)
         }
         let hadTombstones = !deadSessions.isEmpty
+        for sid in deadSessions.keys { sessionLabels.removeValue(forKey: sid) }
         deadSessions.removeAll()
         if !strayPids.isEmpty || hadTombstones {
             saveActiveSessionsLocked()
         }
         lock.unlock()
+        if hadTombstones { saveDefaults() }
     }
 
     // MARK: - Active session persistence
@@ -501,6 +505,43 @@ final class SessionManager: ObservableObject {
                 session.endedAt = now
             }
         }
+        pruneDeadSessions()
+    }
+
+    /// Bound the append-only tombstone store and persist if it shrank. Runs every
+    /// cleanup tick (cheap for a few-hundred-entry dict) so TTL aging happens even
+    /// on ticks where nothing newly died.
+    func pruneDeadSessions() {
+        lock.lock()
+        let changed = pruneDeadSessionsLocked()
+        if changed { saveActiveSessionsLocked() }
+        lock.unlock()
+        if changed { saveDefaults() }
+    }
+
+    /// Drop tombstones past the TTL, then keep only the most-recent `maxDeadSessions`,
+    /// evicting each dropped session's saved label alongside it. Returns whether
+    /// anything changed. Caller holds `lock`. Mutates `deadSessions` off-main under
+    /// lock, matching the promotion path above.
+    ///
+    /// `endedAt` is set on a deferred main-thread block right after a tombstone is
+    /// created, so a just-promoted session can still be nil here — treat nil as
+    /// "now" so a fresh tombstone is never mistaken for an aged-out one.
+    @discardableResult
+    private func pruneDeadSessionsLocked() -> Bool {
+        let recency: (Session) -> Date = { $0.endedAt ?? Date() }
+        let cutoff = Date().addingTimeInterval(-GavelConstants.deadSessionTTL)
+        var survivors = deadSessions.filter { recency($0.value) >= cutoff }
+        if survivors.count > GavelConstants.maxDeadSessions {
+            let kept = survivors.sorted { recency($0.value) > recency($1.value) }
+                .prefix(GavelConstants.maxDeadSessions)
+            survivors = Dictionary(uniqueKeysWithValues: kept.map { ($0.key, $0.value) })
+        }
+        guard survivors.count != deadSessions.count else { return false }
+        let evicted = Set(deadSessions.keys).subtracting(survivors.keys)
+        deadSessions = survivors
+        for sid in evicted { sessionLabels.removeValue(forKey: sid) }
+        return true
     }
 
     // MARK: - Bulk prompt mode
