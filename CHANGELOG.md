@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.34.2...v1.35.0) (2026-06-26)
+
+
+### Features
+
+* **monitor:** session history viewer + Forget Short triage ([#173](https://github.com/JaysonRawlins/claude-gavel/issues/173)) ([291e306](https://github.com/JaysonRawlins/claude-gavel/commit/291e306d19e311e1ea98252ea29a0f63f867c86f))
+
 ## [1.34.2](https://github.com/JaysonRawlins/claude-gavel/compare/v1.34.1...v1.34.2) (2026-06-26)
 
 
