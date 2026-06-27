@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.37.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.36.0...v1.37.0) (2026-06-27)
+
+
+### Features
+
+* **matcher:** extend unconditional tier to outbound + exec-persistence vectors ([#181](https://github.com/JaysonRawlins/claude-gavel/issues/181)) ([2a64a46](https://github.com/JaysonRawlins/claude-gavel/commit/2a64a4695410ec548c0e47c2d57a258a162e9849))
+
 ## [1.36.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.35.2...v1.36.0) (2026-06-27)
 
 
