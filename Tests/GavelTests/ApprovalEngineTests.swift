@@ -76,10 +76,74 @@ final class ApprovalEngineTests: XCTestCase {
         XCTAssertTrue(decision.askUser, "exfil-content heuristic must prompt, not silently deny")
     }
 
+    // The backstop in ApprovalCoordinator.handleAction refuses exactly these actions on a
+    // nonSuppressible approval. Allow-once and all deny/prompt actions must stay permitted.
+    func testCreatesDurableAllowClassification() {
+        typealias A = ApprovalCoordinator.Action
+        XCTAssertTrue(A.allowPatternForSession(pattern: "*", context: nil, updatedCommand: nil, updatedInput: nil).createsDurableAllow)
+        XCTAssertTrue(A.suppressRuleForSession(ruleId: UUID(), context: nil, updatedCommand: nil, updatedInput: nil).createsDurableAllow)
+        XCTAssertTrue(A.alwaysAllowPattern(pattern: "*", isRegex: false).createsDurableAllow)
+
+        XCTAssertFalse(A.allow(context: nil, updatedCommand: nil, updatedInput: nil).createsDurableAllow)
+        XCTAssertFalse(A.deny(context: nil).createsDurableAllow)
+        XCTAssertFalse(A.denyPatternForSession(pattern: "*", explanation: nil).createsDurableAllow)
+        XCTAssertFalse(A.alwaysDenyPattern(pattern: "*", isRegex: false, explanation: nil).createsDurableAllow)
+        XCTAssertFalse(A.alwaysPromptPattern(pattern: "*", isRegex: false).createsDurableAllow)
+    }
+
     func testTempExecutionPromptsRatherThanHardDeny() {
         let decision = engine.evaluate(payload: payload(command: "node /tmp/scratch.js"), session: session)
         XCTAssertEqual(decision.verdict, .block)
         XCTAssertTrue(decision.askUser, "running from temp must prompt, not silently deny")
+    }
+
+    func testGavelConfigWriteIsNonSuppressiblePrompt() {
+        let p = PreToolUsePayload(toolName: "Write", toolInput: [
+            "file_path": AnyCodable("/Users/x/.claude/gavel/rules.json"),
+            "content": AnyCodable("[]"),
+        ])
+        let decision = engine.evaluate(payload: p, session: session)
+        XCTAssertEqual(decision.verdict, .block)
+        XCTAssertTrue(decision.askUser)
+        XCTAssertTrue(decision.nonSuppressible, "Gavel config writes must be Allow-once only")
+    }
+
+    func testClaudeSettingsWriteIsNonSuppressiblePrompt() {
+        let p = PreToolUsePayload(toolName: "Write", toolInput: [
+            "file_path": AnyCodable("/Users/x/.claude/settings.json"),
+            "content": AnyCodable("{}"),
+        ])
+        let decision = engine.evaluate(payload: p, session: session)
+        XCTAssertTrue(decision.nonSuppressible)
+    }
+
+    func testClaudeHookWriteIsNonSuppressiblePrompt() {
+        let p = PreToolUsePayload(toolName: "Write", toolInput: [
+            "file_path": AnyCodable("/Users/x/.claude/hooks/pre_tool_use.sh"),
+            "content": AnyCodable("#!/bin/bash"),
+        ])
+        let decision = engine.evaluate(payload: p, session: session)
+        XCTAssertTrue(decision.nonSuppressible)
+    }
+
+    func testReadingGavelConfigIsNotNonSuppressible() {
+        // Reads stay regular sensitive-prompts — only writes are unconditional.
+        let p = PreToolUsePayload(toolName: "Read", toolInput: [
+            "file_path": AnyCodable("/Users/x/.claude/gavel/rules.json"),
+        ])
+        let decision = engine.evaluate(payload: p, session: session)
+        XCTAssertFalse(decision.nonSuppressible)
+    }
+
+    func testOrdinarySensitiveWriteIsNotNonSuppressible() {
+        let p = PreToolUsePayload(toolName: "Write", toolInput: [
+            "file_path": AnyCodable("/Users/x/.zshrc"),
+            "content": AnyCodable("export X=1"),
+        ])
+        let decision = engine.evaluate(payload: p, session: session)
+        XCTAssertEqual(decision.verdict, .block)
+        XCTAssertTrue(decision.askUser)
+        XCTAssertFalse(decision.nonSuppressible, "shell config prompts but stays suppressible")
     }
 
     func testBenignTempScriptNotBlocked() {

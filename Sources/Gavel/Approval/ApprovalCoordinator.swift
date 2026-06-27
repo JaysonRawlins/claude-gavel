@@ -21,6 +21,16 @@ final class ApprovalCoordinator: ObservableObject {
         case alwaysDenyPattern(pattern: String, isRegex: Bool, explanation: String?)
         case alwaysAllowPattern(pattern: String, isRegex: Bool)
         case alwaysPromptPattern(pattern: String, isRegex: Bool)
+
+        /// Actions that grant a durable (non-Allow-once) allow — refused on nonSuppressible approvals.
+        var createsDurableAllow: Bool {
+            switch self {
+            case .allowPatternForSession, .suppressRuleForSession, .alwaysAllowPattern:
+                return true
+            default:
+                return false
+            }
+        }
     }
 
     /// RuleStore for persistent always-deny/always-allow rules.
@@ -47,6 +57,8 @@ final class ApprovalCoordinator: ObservableObject {
         let triggeringRuleId: UUID?
         let triggeringRulePattern: String?
         let triggeringRuleIsRegex: Bool
+        /// Allow-once only: the coordinator refuses session/persistent-allow actions for this approval.
+        let nonSuppressible: Bool
         let resolvable: ResolvableApproval
         let respond: (Decision) -> Void
     }
@@ -87,7 +99,8 @@ final class ApprovalCoordinator: ObservableObject {
         forceDialog: Bool = false,
         forceRemoteMirror: Bool = false,
         triggerReason: String? = nil,
-        triggeringRuleId: UUID? = nil
+        triggeringRuleId: UUID? = nil,
+        nonSuppressible: Bool = false
     ) -> Decision {
         if !forceDialog && session.isAutoApproveEnabled {
             return Decision(verdict: .allow, reason: "Auto-approved")
@@ -112,6 +125,7 @@ final class ApprovalCoordinator: ObservableObject {
             triggeringRuleId: triggeringRuleId,
             triggeringRulePattern: firingRule?.pattern,
             triggeringRuleIsRegex: firingRule?.isRegex ?? false,
+            nonSuppressible: nonSuppressible,
             resolvable: resolvable
         ) { decision in
             resolvable.resolve(decision, from: .mac)
@@ -156,7 +170,9 @@ final class ApprovalCoordinator: ObservableObject {
         if let withheld {
             gavelLog("[remote-gate] withheld command — pid=\(session.pid) trigger=\(withheld.logDescription)")
         }
-        let allowSession: () -> Void = {
+        // Allow-once-only approvals omit the closure so the phone's "Allow for session" button
+        // is never offered (and a stale press is a no-op — RemoteApprovalBridge guards on nil).
+        let allowSession: (() -> Void)? = pending.nonSuppressible ? nil : {
             let pattern = payload.command ?? payload.filePath ?? "*"
             let rule = SessionRule(toolName: payload.toolName, pattern: pattern)
             DispatchQueue.main.async { session.sessionRules.append(rule) }
@@ -190,6 +206,18 @@ final class ApprovalCoordinator: ObservableObject {
             "[approval] action pid=\(sessionPanel.pid) currentApproval=\(presentMarker) action=\(actionLogTag(action))"
         )
         guard let current = sessionPanel.currentApproval else { return }
+
+        // Guardrail-mutation paths are Allow-once only: refuse any durable-allow action and make
+        // the user re-decide. The HookRouter already won't consult session rules for these, so a
+        // rule created here would be dead anyway — failing loudly is clearer than silently no-op.
+        if current.nonSuppressible, action.createsDurableAllow {
+            gavelLog("[approval] refused durable-allow on nonSuppressible path pid=\(sessionPanel.pid) action=\(actionLogTag(action))")
+            current.respond(Decision(
+                verdict: .block,
+                reason: "Allow-once only for this path (Gavel/Claude config) — session and persistent allow are refused"))
+            advanceQueue(on: sessionPanel)
+            return
+        }
 
         // Build updatedInput if user modified the command
         func buildUpdatedInput(_ updatedCommand: String?) -> [String: AnyCodable]? {

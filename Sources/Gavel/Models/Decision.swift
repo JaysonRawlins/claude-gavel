@@ -23,14 +23,21 @@ struct Decision: Codable {
     let askUser: Bool
     /// Set when a persistent prompt rule fired — used by per-session rule suppression.
     let triggeringRuleId: UUID?
+    /// When true, this prompt may only be satisfied by Allow-once: the router must not let a
+    /// session-allow or suppressed-rule short-circuit it, and the coordinator must refuse any
+    /// attempt to create a session/persistent allow for it. Hard-coded for guardrail-mutation
+    /// paths (Gavel config, Claude settings/hooks) so the agent can't durably allow-list its
+    /// own self-mutation after a single approval.
+    let nonSuppressible: Bool
 
-    init(verdict: DecisionVerdict, reason: String?, additionalContext: String? = nil, updatedInput: [String: AnyCodable]? = nil, askUser: Bool = false, triggeringRuleId: UUID? = nil) {
+    init(verdict: DecisionVerdict, reason: String?, additionalContext: String? = nil, updatedInput: [String: AnyCodable]? = nil, askUser: Bool = false, triggeringRuleId: UUID? = nil, nonSuppressible: Bool = false) {
         self.verdict = verdict
         self.reason = reason
         self.additionalContext = additionalContext
         self.updatedInput = updatedInput
         self.askUser = askUser
         self.triggeringRuleId = triggeringRuleId
+        self.nonSuppressible = nonSuppressible
     }
 
     /// Internal protocol JSON sent to the gavel-hook shim via socket.

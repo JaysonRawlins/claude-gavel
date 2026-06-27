@@ -164,26 +164,30 @@ final class HookRouter {
         let engineDecision = approvalEngine.evaluate(payload: payload, session: session)
         if engineDecision.verdict == .block {
             if engineDecision.askUser {
-                // Rule suppressed for session — covers the rule's full regex scope.
-                if let ruleId = engineDecision.triggeringRuleId,
-                   session.suppressedRuleIds.contains(ruleId) {
-                    session.stats.incrementAllow()
-                    emitFeed(.decision(badge: .allow, reason: "Rule suppressed for session", pid: session.pid, at: timestamp))
-                    sendResponse(Decision(verdict: .allow, reason: "Rule suppressed for session"), payload: payload, session: session, respond: respond)
-                    return
-                }
+                // Unconditional prompts (guardrail-mutation writes) can't be short-circuited by a
+                // session-allow or a suppressed rule — they always reach the dialog, Allow-once only.
+                if !engineDecision.nonSuppressible {
+                    // Rule suppressed for session — covers the rule's full regex scope.
+                    if let ruleId = engineDecision.triggeringRuleId,
+                       session.suppressedRuleIds.contains(ruleId) {
+                        session.stats.incrementAllow()
+                        emitFeed(.decision(badge: .allow, reason: "Rule suppressed for session", pid: session.pid, at: timestamp))
+                        sendResponse(Decision(verdict: .allow, reason: "Rule suppressed for session"), payload: payload, session: session, respond: respond)
+                        return
+                    }
 
-                // Before forcing dialog, check if a session rule already covers this.
-                // Session Allow from a previous dialog should skip re-prompting.
-                if let rule = session.matchesSessionRule(
-                    toolName: payload.toolName,
-                    command: payload.command,
-                    filePath: payload.filePath
-                ) {
-                    session.stats.incrementAllow()
-                    emitFeed(.decision(badge: .allow, reason: "Session rule: \(rule.toolName): \(rule.pattern)", pid: session.pid, at: timestamp))
-                    sendResponse(Decision(verdict: .allow, reason: "Session rule: \(rule.pattern)"), payload: payload, session: session, respond: respond)
-                    return
+                    // Before forcing dialog, check if a session rule already covers this.
+                    // Session Allow from a previous dialog should skip re-prompting.
+                    if let rule = session.matchesSessionRule(
+                        toolName: payload.toolName,
+                        command: payload.command,
+                        filePath: payload.filePath
+                    ) {
+                        session.stats.incrementAllow()
+                        emitFeed(.decision(badge: .allow, reason: "Session rule: \(rule.toolName): \(rule.pattern)", pid: session.pid, at: timestamp))
+                        sendResponse(Decision(verdict: .allow, reason: "Session rule: \(rule.pattern)"), payload: payload, session: session, respond: respond)
+                        return
+                    }
                 }
 
                 // MCP-style block: jump straight to interactive dialog
@@ -193,7 +197,8 @@ final class HookRouter {
                     payload: payload, session: session, timestamp: timestamp,
                     forceDialog: true,
                     triggerReason: engineDecision.reason,
-                    triggeringRuleId: engineDecision.triggeringRuleId
+                    triggeringRuleId: engineDecision.triggeringRuleId,
+                    nonSuppressible: engineDecision.nonSuppressible
                 )
                 switch decision.verdict {
                 case .allow, .prompt:

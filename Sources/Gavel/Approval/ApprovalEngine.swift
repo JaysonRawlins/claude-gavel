@@ -34,6 +34,12 @@ final class ApprovalEngine {
             return Decision(verdict: .block, reason: reason, askUser: true)
         }
 
+        // Guardrail-mutation writes prompt unconditionally: Allow-once only, never suppressible
+        // by a session/persistent allow. Must precede the regular sensitive-path tier.
+        if let reason = patternMatcher.matchUnconditionalPromptPath(payload: payload) {
+            return Decision(verdict: .block, reason: reason, askUser: true, nonSuppressible: true)
+        }
+
         if let reason = patternMatcher.matchSensitivePath(payload: payload) {
             return Decision(verdict: .block, reason: reason, askUser: true)
         }
