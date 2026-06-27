@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.2](https://github.com/JaysonRawlins/claude-gavel/compare/v1.35.1...v1.35.2) (2026-06-27)
+
+
+### Bug Fixes
+
+* **matcher:** prompt on temp-file exec instead of hard deny ([#177](https://github.com/JaysonRawlins/claude-gavel/issues/177)) ([7f88b06](https://github.com/JaysonRawlins/claude-gavel/commit/7f88b0635d358bdcff22d35e47dc54db9ab735af))
+
 ## [1.35.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.35.0...v1.35.1) (2026-06-26)
 
 
