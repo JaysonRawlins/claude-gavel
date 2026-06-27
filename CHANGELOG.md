@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.35.2...v1.36.0) (2026-06-27)
+
+
+### Features
+
+* **matcher:** unconditional-prompt tier for guardrail-mutation writes ([#179](https://github.com/JaysonRawlins/claude-gavel/issues/179)) ([1197a81](https://github.com/JaysonRawlins/claude-gavel/commit/1197a8174c50b1bd5f6c8544552d57b7ebd8626f))
+
 ## [1.35.2](https://github.com/JaysonRawlins/claude-gavel/compare/v1.35.1...v1.35.2) (2026-06-27)
 
 
