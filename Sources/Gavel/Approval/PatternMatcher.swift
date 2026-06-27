@@ -137,22 +137,11 @@ struct PatternMatcher {
             ("\\$\\(.*\\bbase64\\b.*--decode", "Base64 decode in subshell (command obfuscation)"),
             ("\\bbash\\s*<<", "Heredoc execution (potential obfuscation)"),
 
-            // ── Compiled/scripted exfiltration via temp files ──
-            // Compiling in temp directories
-            ("\\b(gcc|g\\+\\+|clang|clang\\+\\+|rustc|javac|swiftc)\\b.*/tmp/", "Compiling code in temp directory"),
-            ("\\b(go\\s+build|go\\s+run)\\b.*/tmp/", "Building/running Go code from temp directory"),
-            ("\\bcargo\\s+(build|run)\\b.*--manifest-path.*/tmp/", "Building Rust code from temp directory"),
-            // Executing scripts from temp directories
-            ("\\b(perl|ruby|node|swift|php|lua)\\b\\s+/tmp/", "Running script from temp directory"),
-            // Running any executable from /tmp (direct execution)
-            ("^\\s*/tmp/\\S+", "Running executable from temp directory"),
-            ("&&\\s*/tmp/\\S+", "Running executable from temp directory (chained)"),
-            ("\\|\\s*/tmp/\\S+", "Running executable from temp directory (piped)"),
-            (";\\s*/tmp/\\S+", "Running executable from temp directory (sequential)"),
-            // cd to /tmp then execute (bypass /tmp/ path check)
-            ("\\bcd\\s+/tmp\\b.*&&", "Changing to temp directory and executing"),
-            // chmod +x on temp files (making them executable)
-            ("\\bchmod\\b.*\\+x.*/tmp/", "Making temp file executable"),
+            // Note: the temp-file compile/run cluster (gcc/rustc/go/node from /tmp,
+            // chmod +x, cd /tmp && …) lives in rawAskUserBash, not here. Running scratch
+            // code from temp is routine dev work, so a hard deny false-positives constantly
+            // and only trains the agent to route around it; it prompts instead and still
+            // fails closed on timeout for unattended sessions.
         ]
 
         // Destructive/sensitive bash commands — force dialog instead of hard block
@@ -178,6 +167,23 @@ struct PatternMatcher {
             ("\\bcurl\\b.*(?-i:-d|--data|--data-raw|--data-binary|--data-urlencode|-F|--form|--upload-file|-T)\\b", "curl sending data — review for exfiltration"),
             ("\\bcrontab\\b", "crontab reference (broad — review)"),
             ("\\blaunchctl\\b\\s+(load|unload|submit|bootstrap|bootout|enable|disable|kickstart)", "LaunchAgent/Daemon modification"),
+
+            // ── Compiled/scripted exfiltration via temp files (prompt, not hard deny) ──
+            // Compiling in temp directories
+            ("\\b(gcc|g\\+\\+|clang|clang\\+\\+|rustc|javac|swiftc)\\b.*/tmp/", "Compiling code in temp directory"),
+            ("\\b(go\\s+build|go\\s+run)\\b.*/tmp/", "Building/running Go code from temp directory"),
+            ("\\bcargo\\s+(build|run)\\b.*--manifest-path.*/tmp/", "Building Rust code from temp directory"),
+            // Executing scripts from temp directories
+            ("\\b(perl|ruby|node|swift|php|lua)\\b\\s+/tmp/", "Running script from temp directory"),
+            // Running any executable from /tmp (direct execution)
+            ("^\\s*/tmp/\\S+", "Running executable from temp directory"),
+            ("&&\\s*/tmp/\\S+", "Running executable from temp directory (chained)"),
+            ("\\|\\s*/tmp/\\S+", "Running executable from temp directory (piped)"),
+            (";\\s*/tmp/\\S+", "Running executable from temp directory (sequential)"),
+            // cd to /tmp then execute (bypass /tmp/ path check)
+            ("\\bcd\\s+/tmp\\b.*&&", "Changing to temp directory and executing"),
+            // chmod +x on temp files (making them executable)
+            ("\\bchmod\\b.*\\+x.*/tmp/", "Making temp file executable"),
         ]
 
         // Hard block — credentials and persistence vectors that should never be written

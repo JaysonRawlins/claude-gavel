@@ -76,6 +76,12 @@ final class ApprovalEngineTests: XCTestCase {
         XCTAssertTrue(decision.askUser, "exfil-content heuristic must prompt, not silently deny")
     }
 
+    func testTempExecutionPromptsRatherThanHardDeny() {
+        let decision = engine.evaluate(payload: payload(command: "node /tmp/scratch.js"), session: session)
+        XCTAssertEqual(decision.verdict, .block)
+        XCTAssertTrue(decision.askUser, "running from temp must prompt, not silently deny")
+    }
+
     func testBenignTempScriptNotBlocked() {
         let p = PreToolUsePayload(toolName: "Write", toolInput: [
             "file_path": AnyCodable("/tmp/hello.rs"),
