@@ -723,34 +723,38 @@ final class PatternMatcherTests: XCTestCase {
     }
 
     // MARK: - Compiled/scripted temp file execution
+    // These prompt (askUser tier via matchSensitivePath), not hard-deny — running scratch
+    // code from temp is routine dev work, and an unanswered prompt still fails closed.
 
-    func testGccTempBlocked() {
-        XCTAssertNotNil(matcher.matchDangerous(payload: bashPayload(command: "gcc /tmp/exfil.c -o /tmp/exfil && /tmp/exfil")))
+    func testGccTempPrompts() {
+        XCTAssertNil(matcher.matchDangerous(payload: bashPayload(command: "gcc /tmp/exfil.c -o /tmp/exfil && /tmp/exfil")))
+        XCTAssertNotNil(matcher.matchSensitivePath(payload: bashPayload(command: "gcc /tmp/exfil.c -o /tmp/exfil && /tmp/exfil")))
     }
 
-    func testRustcTempBlocked() {
-        XCTAssertNotNil(matcher.matchDangerous(payload: bashPayload(command: "rustc /tmp/exfil.rs && /tmp/exfil")))
+    func testRustcTempPrompts() {
+        XCTAssertNotNil(matcher.matchSensitivePath(payload: bashPayload(command: "rustc /tmp/exfil.rs && /tmp/exfil")))
     }
 
-    func testGoRunTempBlocked() {
-        XCTAssertNotNil(matcher.matchDangerous(payload: bashPayload(command: "go run /tmp/exfil.go")))
+    func testGoRunTempPrompts() {
+        XCTAssertNotNil(matcher.matchSensitivePath(payload: bashPayload(command: "go run /tmp/exfil.go")))
     }
 
-    func testPerlTempBlocked() {
-        XCTAssertNotNil(matcher.matchDangerous(payload: bashPayload(command: "perl /tmp/exfil.pl")))
+    func testPerlTempPrompts() {
+        XCTAssertNotNil(matcher.matchSensitivePath(payload: bashPayload(command: "perl /tmp/exfil.pl")))
     }
 
-    func testChmodTempBlocked() {
-        XCTAssertNotNil(matcher.matchDangerous(payload: bashPayload(command: "chmod +x /tmp/exfil && /tmp/exfil")))
+    func testChmodTempPrompts() {
+        XCTAssertNotNil(matcher.matchSensitivePath(payload: bashPayload(command: "chmod +x /tmp/exfil && /tmp/exfil")))
     }
 
-    func testNodeTempBlocked() {
-        XCTAssertNotNil(matcher.matchDangerous(payload: bashPayload(command: "node /tmp/exfil.js")))
+    func testNodeTempPrompts() {
+        XCTAssertNotNil(matcher.matchSensitivePath(payload: bashPayload(command: "node /tmp/exfil.js")))
     }
 
     func testCompileInProjectAllowed() {
-        // Compiling in a project directory is fine
+        // Compiling in a project directory is fine — neither hard-deny nor prompt
         XCTAssertNil(matcher.matchDangerous(payload: bashPayload(command: "gcc src/main.c -o build/main")))
+        XCTAssertNil(matcher.matchSensitivePath(payload: bashPayload(command: "gcc src/main.c -o build/main")))
     }
 
     // MARK: - Write content scanning (polyglot exfil)
