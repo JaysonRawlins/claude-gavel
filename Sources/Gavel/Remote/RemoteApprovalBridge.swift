@@ -105,10 +105,13 @@ final class RemoteApprovalBridge {
         var keyboard: [[TelegramButton]] = [
             [TelegramButton(text: "✅ Allow once", callbackData: "a:\(nonce)"),
              TelegramButton(text: "🛑 Deny", callbackData: "d:\(nonce)")],
-            [TelegramButton(text: "✅ Allow for session", callbackData: "s:\(nonce)")],
-            [TelegramButton(text: "✅ Allow w/ note", callbackData: "ar:\(nonce)"),
-             TelegramButton(text: "🛑 Deny w/ reason", callbackData: "dr:\(nonce)")]
         ]
+        // Allow-once-only approvals (nil allowSession) omit the session button entirely.
+        if allowSession != nil {
+            keyboard.append([TelegramButton(text: "✅ Allow for session", callbackData: "s:\(nonce)")])
+        }
+        keyboard.append([TelegramButton(text: "✅ Allow w/ note", callbackData: "ar:\(nonce)"),
+                         TelegramButton(text: "🛑 Deny w/ reason", callbackData: "dr:\(nonce)")])
         if offerCommentClean {
             keyboard.append([TelegramButton(text: "🧹 Clean comments & re-propose", callbackData: "c:\(nonce)")])
         }

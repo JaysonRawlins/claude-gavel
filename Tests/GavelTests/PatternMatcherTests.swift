@@ -526,6 +526,30 @@ final class PatternMatcherTests: XCTestCase {
         XCTAssertNil(matcher.matchDangerous(payload: writePayload(filePath: "/Users/x/project/src/main.swift")))
     }
 
+    // MARK: - Unconditional prompt paths (Allow-once only)
+
+    func testGavelConfigWriteIsUnconditional() {
+        XCTAssertNotNil(matcher.matchUnconditionalPromptPath(payload: writePayload(filePath: "/Users/x/.claude/gavel/rules.json")))
+        XCTAssertNotNil(matcher.matchUnconditionalPromptPath(payload: writePayload(filePath: "/Users/x/.claude/gavel/session-context.md")))
+    }
+
+    func testClaudeSettingsAndHooksWriteIsUnconditional() {
+        XCTAssertNotNil(matcher.matchUnconditionalPromptPath(payload: writePayload(filePath: "/Users/x/.claude/settings.json")))
+        XCTAssertNotNil(matcher.matchUnconditionalPromptPath(payload: writePayload(filePath: "/Users/x/.claude/settings.local.json")))
+        XCTAssertNotNil(matcher.matchUnconditionalPromptPath(payload: editPayload(filePath: "/Users/x/.claude/hooks/pre_tool_use.sh")))
+    }
+
+    func testReadingUnconditionalPathIsNotUnconditional() {
+        // Writes only — reads fall through to the regular sensitive-read prompts.
+        let read = PreToolUsePayload(toolName: "Read", toolInput: ["file_path": AnyCodable("/Users/x/.claude/gavel/rules.json")])
+        XCTAssertNil(matcher.matchUnconditionalPromptPath(payload: read))
+    }
+
+    func testOrdinarySensitiveAndNormalWritesAreNotUnconditional() {
+        XCTAssertNil(matcher.matchUnconditionalPromptPath(payload: writePayload(filePath: "/Users/x/.zshrc")))
+        XCTAssertNil(matcher.matchUnconditionalPromptPath(payload: writePayload(filePath: "/Users/x/project/src/main.swift")))
+    }
+
     // MARK: - Edit protected paths
 
     func testEditClaudeSettingsBlocked() {

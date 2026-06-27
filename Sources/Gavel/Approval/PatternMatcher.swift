@@ -41,6 +41,11 @@ struct PatternMatcher {
     /// Pre-compiled protected file path patterns — force dialog (config, hooks, shell).
     private let askUserPaths: [(regex: NSRegularExpression, reason: String)]
 
+    /// Pre-compiled guardrail-mutation write paths — force dialog AND forbid any session/persistent
+    /// allow (Allow-once only). Hard-coded so the agent can't durably allow-list edits to Gavel's
+    /// own config or Claude Code's settings/hooks after one approval. See matchUnconditionalPromptPath.
+    private let unconditionalPromptPaths: [(regex: NSRegularExpression, reason: String)]
+
     /// Pre-compiled sensitive read patterns — hard block (actual secrets).
     private let sensitiveReads: [(regex: NSRegularExpression, reason: String)]
 
@@ -213,6 +218,14 @@ struct PatternMatcher {
             ("LaunchDaemons/", "Sensitive: LaunchDaemon (persistence vector)"),
         ]
 
+        // Unconditional prompt — guardrail-mutation writes. Allow-once ONLY: no session-allow,
+        // no persistent-allow, no rule suppression. These paths control Gavel's own behavior or
+        // Claude Code's hook/settings surface, so a durable allow on them is a guardrail escape.
+        let rawUnconditionalPaths: [(pattern: String, reason: String)] = [
+            ("\\.claude/gavel/", "Unconditional: Gavel config (Allow-once only)"),
+            ("\\.claude/(settings\\.json|settings\\.local\\.json|hooks/)", "Unconditional: Claude Code settings/hooks (Allow-once only)"),
+        ]
+
         bashPatterns = rawBash.compactMap { entry in
             guard let regex = try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive]) else {
                 return nil
@@ -235,6 +248,13 @@ struct PatternMatcher {
         }
 
         askUserPaths = rawAskUserPaths.compactMap { entry in
+            guard let regex = try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive]) else {
+                return nil
+            }
+            return (regex, entry.reason)
+        }
+
+        unconditionalPromptPaths = rawUnconditionalPaths.compactMap { entry in
             guard let regex = try? NSRegularExpression(pattern: entry.pattern, options: [.caseInsensitive]) else {
                 return nil
             }
@@ -336,8 +356,22 @@ struct PatternMatcher {
         }
     }
 
+    /// Guardrail-mutation writes that may be approved Allow-once ONLY (no session/persistent allow).
+    /// Writes only — reads of these paths fall through to the regular sensitive-read prompts.
+    func matchUnconditionalPromptPath(payload: PreToolUsePayload) -> String? {
+        guard ["Write", "Edit", "MultiEdit"].contains(payload.toolName),
+              let path = payload.filePath else { return nil }
+        let range = NSRange(path.startIndex..., in: path)
+        for (regex, reason) in unconditionalPromptPaths {
+            if regex.firstMatch(in: path, range: range) != nil {
+                return reason
+            }
+        }
+        return nil
+    }
+
     /// Check sensitive paths that require user confirmation (gavel config, hooks, shell config).
-    /// Called from ApprovalEngine AFTER allow rules — returns askUser decision.
+    /// Returns an askUser decision; runs before allow rules in ApprovalEngine.
     func matchSensitivePath(payload: PreToolUsePayload) -> String? {
         // Bash: check askUser destructive patterns (rm -rf etc.)
         if payload.toolName == "Bash", let command = payload.command {

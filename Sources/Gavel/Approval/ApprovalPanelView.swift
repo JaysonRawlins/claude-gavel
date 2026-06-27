@@ -562,14 +562,17 @@ struct ApprovalPanelView: View {
                 .tint(.red)
                 .keyboardShortcut("d", modifiers: [.command, .shift])
 
-                Button(action: {
-                    coordinator.handleAction(.alwaysAllowPattern(pattern: sessionPattern, isRegex: isRegexMode), on: sessionPanel)
-                }) {
-                    Label("Always Allow", systemImage: "shield.checkered")
+                // Durable-allow controls are hidden for Allow-once-only (guardrail-mutation) paths.
+                if !approval.nonSuppressible {
+                    Button(action: {
+                        coordinator.handleAction(.alwaysAllowPattern(pattern: sessionPattern, isRegex: isRegexMode), on: sessionPanel)
+                    }) {
+                        Label("Always Allow", systemImage: "shield.checkered")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.blue)
+                    .keyboardShortcut("a", modifiers: [.command, .shift])
                 }
-                .buttonStyle(.bordered)
-                .tint(.blue)
-                .keyboardShortcut("a", modifiers: [.command, .shift])
 
                 Button(action: {
                     coordinator.handleAction(.alwaysPromptPattern(pattern: sessionPattern, isRegex: isRegexMode), on: sessionPanel)
@@ -594,22 +597,24 @@ struct ApprovalPanelView: View {
                 .tint(.pink)
                 .keyboardShortcut("d", modifiers: [.command])
 
-                Button(action: {
-                    coordinator.handleAction(.allowPatternForSession(
-                        pattern: sessionPattern,
-                        context: noteState.noteForAllowContext,
-                        updatedCommand: cmdIfModified,
-                        updatedInput: updatedInputIfModified
-                    ), on: sessionPanel)
-                    coordinator.sessionManager?.noteInteraction()
-                }) {
-                    Label("Session Allow", systemImage: "checkmark.shield")
+                if !approval.nonSuppressible {
+                    Button(action: {
+                        coordinator.handleAction(.allowPatternForSession(
+                            pattern: sessionPattern,
+                            context: noteState.noteForAllowContext,
+                            updatedCommand: cmdIfModified,
+                            updatedInput: updatedInputIfModified
+                        ), on: sessionPanel)
+                        coordinator.sessionManager?.noteInteraction()
+                    }) {
+                        Label("Session Allow", systemImage: "checkmark.shield")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.purple)
+                    .keyboardShortcut("s", modifiers: [.command])
                 }
-                .buttonStyle(.bordered)
-                .tint(.purple)
-                .keyboardShortcut("s", modifiers: [.command])
 
-                if let ruleId = approval.triggeringRuleId {
+                if let ruleId = approval.triggeringRuleId, !approval.nonSuppressible {
                     Button(action: {
                         coordinator.handleAction(.suppressRuleForSession(
                             ruleId: ruleId,
