@@ -224,6 +224,9 @@ struct PatternMatcher {
         let rawUnconditionalPaths: [(pattern: String, reason: String)] = [
             ("\\.claude/gavel/", "Unconditional: Gavel config (Allow-once only)"),
             ("\\.claude/(settings\\.json|settings\\.local\\.json|hooks/)", "Unconditional: Claude Code settings/hooks (Allow-once only)"),
+            ("\\.mcp\\.json$", "Unconditional: MCP server config (Allow-once only)"),
+            ("\\.git/hooks/", "Unconditional: Git hook — runs on git ops (Allow-once only)"),
+            ("\\.github/workflows/", "Unconditional: CI workflow — runs with repo secrets (Allow-once only)"),
         ]
 
         bashPatterns = rawBash.compactMap { entry in

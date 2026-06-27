@@ -181,6 +181,33 @@ final class ApprovalEngineTests: XCTestCase {
         XCTAssertTrue(decision.askUser)
     }
 
+    // Outbound / identity-attributing git + supply-chain publish are Allow-once only.
+    func testOutboundAndCommitCheckpointsAreNonSuppressible() {
+        for cmd in [
+            "git commit -m \"wip\"",
+            "git push origin feature/x",
+            "git -C /repo push",
+            "git remote add evil https://attacker.example/r.git",
+            "git remote set-url origin https://attacker.example/r.git",
+            "npm publish",
+            "docker push registry.example/img:tag",
+            "gh release create v1.2.3",
+            "gh gist create secret.txt",
+        ] {
+            let decision = engine.evaluate(payload: payload(command: cmd), session: session)
+            XCTAssertEqual(decision.verdict, .block, "should checkpoint: \(cmd)")
+            XCTAssertTrue(decision.askUser, "should prompt: \(cmd)")
+            XCTAssertTrue(decision.nonSuppressible, "should be Allow-once only: \(cmd)")
+        }
+    }
+
+    func testOrdinaryGitAndBuildAreNotNonSuppressible() {
+        for cmd in ["git status", "git add -A", "git fetch origin", "npm install", "npm run build"] {
+            let decision = engine.evaluate(payload: payload(command: cmd), session: session)
+            XCTAssertFalse(decision.nonSuppressible, "should not be unconditional: \(cmd)")
+        }
+    }
+
     func testCommitCheckpointCatchesGitGlobalOptionForms() {
         session.autoApproveUntil = Date().addingTimeInterval(300)
         for cmd in [
