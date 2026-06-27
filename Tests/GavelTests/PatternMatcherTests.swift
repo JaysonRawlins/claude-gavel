@@ -539,6 +539,12 @@ final class PatternMatcherTests: XCTestCase {
         XCTAssertNotNil(matcher.matchUnconditionalPromptPath(payload: editPayload(filePath: "/Users/x/.claude/hooks/pre_tool_use.sh")))
     }
 
+    func testMcpAndGitHookAndWorkflowWritesAreUnconditional() {
+        XCTAssertNotNil(matcher.matchUnconditionalPromptPath(payload: writePayload(filePath: "/Users/x/project/.mcp.json")))
+        XCTAssertNotNil(matcher.matchUnconditionalPromptPath(payload: writePayload(filePath: "/Users/x/project/.git/hooks/pre-commit")))
+        XCTAssertNotNil(matcher.matchUnconditionalPromptPath(payload: editPayload(filePath: "/Users/x/project/.github/workflows/ci.yml")))
+    }
+
     func testReadingUnconditionalPathIsNotUnconditional() {
         // Writes only — reads fall through to the regular sensitive-read prompts.
         let read = PreToolUsePayload(toolName: "Read", toolInput: ["file_path": AnyCodable("/Users/x/.claude/gavel/rules.json")])

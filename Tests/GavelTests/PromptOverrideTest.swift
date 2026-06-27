@@ -50,12 +50,13 @@ final class PromptOverrideTest: XCTestCase {
         let path = NSTemporaryDirectory() + "promptoverride-\(UUID().uuidString).json"
         defer { try? FileManager.default.removeItem(atPath: path) }
         let store = RuleStore(configPath: path)
-        store.addRule(PersistentRule(toolName: "Bash", pattern: "git push*", verdict: .prompt))
+        // Neutral command: git push is now a nonSuppressible checkpoint and would reach the dialog.
+        store.addRule(PersistentRule(toolName: "Bash", pattern: "mytool sync*", verdict: .prompt))
 
         let session = Session(pid: 88881)
-        session.sessionRules.append(SessionRule(toolName: "Bash", pattern: "git push*"))
+        session.sessionRules.append(SessionRule(toolName: "Bash", pattern: "mytool sync*"))
 
-        let response = runRouter(session: session, store: store, toolInputJson: bashInput("git push origin main"))
+        let response = runRouter(session: session, store: store, toolInputJson: bashInput("mytool sync --all"))
         XCTAssertEqual(response?["verdict"] as? String, "allow",
                        "Session allow should override user always-prompt rule. Got: \(String(describing: response))")
     }
@@ -64,12 +65,13 @@ final class PromptOverrideTest: XCTestCase {
         let path = NSTemporaryDirectory() + "promptoverride-\(UUID().uuidString).json"
         defer { try? FileManager.default.removeItem(atPath: path) }
         let store = RuleStore(configPath: path)
-        store.addRule(PersistentRule(toolName: "Bash", pattern: "git push*", isRegex: false, verdict: .prompt, builtIn: true))
+        // Overridable built-in prompt on a neutral command (real git push is now nonSuppressible).
+        store.addRule(PersistentRule(toolName: "Bash", pattern: "mytool sync*", isRegex: false, verdict: .prompt, builtIn: true))
 
         let session = Session(pid: 88882)
-        session.sessionRules.append(SessionRule(toolName: "Bash", pattern: "git push*"))
+        session.sessionRules.append(SessionRule(toolName: "Bash", pattern: "mytool sync*"))
 
-        let response = runRouter(session: session, store: store, toolInputJson: bashInput("git push origin main"))
+        let response = runRouter(session: session, store: store, toolInputJson: bashInput("mytool sync --all"))
         XCTAssertEqual(response?["verdict"] as? String, "allow",
                        "Session allow should override built-in prompt rule. Got: \(String(describing: response))")
     }

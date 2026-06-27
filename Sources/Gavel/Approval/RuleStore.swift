@@ -24,7 +24,7 @@ final class RuleStore: ObservableObject {
     )
 
     /// Current seed version — bump when adding new default rules.
-    private static let seedVersion = 12
+    private static let seedVersion = 13
 
     /// Built-in patterns replaced by a corrected/broadened seeded rule. On re-seed
     /// these are dropped from existing rules.json so a pattern fix swaps cleanly
@@ -33,7 +33,9 @@ final class RuleStore: ObservableObject {
         "\\bgit\\s+commit\\b",  // broadened to catch `git -C <path> commit` etc.
         "\\.claude/(gavel/|settings|hooks/)",  // trailing-slash form missed `-v ~/.claude/gavel:/dst` (colon)
         "\\.claude/(gavel|settings|hooks)\\b|\\.codex/(config|hooks)\\b",  // broadened to cover .mcp.json
-        "\\.claude/(gavel/|settings|hooks/)|\\.codex/(config|hooks)|\\.(zshrc|bashrc|bash_profile|profile)\\b"  // apply_patch: + .mcp.json
+        "\\.claude/(gavel/|settings|hooks/)|\\.codex/(config|hooks)|\\.(zshrc|bashrc|bash_profile|profile)\\b",  // apply_patch: + .mcp.json
+        "\\bgit\\b(\\s+-{1,2}\\S+(\\s+\\S+)?)*\\s+commit\\b",  // re-seed commit checkpoint as nonSuppressible
+        "git\\s+push\\b.*\\b(main|master)\\b"  // replaced by any-branch nonSuppressible push checkpoint
     ]
 
     init(configPath: String? = nil) {
@@ -95,7 +97,7 @@ final class RuleStore: ObservableObject {
     func evaluateBuiltInPromptNonOverridable(payload: PreToolUsePayload) -> Decision? {
         for i in rules.indices where rules[i].verdict == .prompt && rules[i].builtIn && !rules[i].overridable && !rules[i].isDisabled {
             if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
-                return Decision(verdict: .block, reason: "Checkpoint: \(rules[i].name)", askUser: true, triggeringRuleId: rules[i].id)
+                return Decision(verdict: .block, reason: "Checkpoint: \(rules[i].name)", askUser: true, triggeringRuleId: rules[i].id, nonSuppressible: rules[i].nonSuppressible)
             }
         }
         return nil
@@ -295,7 +297,7 @@ final class RuleStore: ObservableObject {
             builtIn: true
         ),
 
-        // ── Git safety: destructive reset and push to main ──
+        // ── Git safety: destructive reset (discards uncommitted work) ──
         PersistentRule(
             toolName: "Bash",
             pattern: "\\bgit\\s+(reset\\s+--hard|checkout\\s+--\\s+\\.|clean\\s+-[fd]|restore\\s+--staged\\s+\\.)",
@@ -304,16 +306,44 @@ final class RuleStore: ObservableObject {
             explanation: "Destructive git operation — discards uncommitted work",
             builtIn: true
         ),
+
+        // ── Outbound git: push / remote repoint — Allow-once only (the publish/exfil moment) ──
+        // Any-branch push, not just main: pushing a feature branch still sends code off-machine.
+        // Same git-global-option tolerance as the commit pattern so `git -C /repo push` can't slip past.
         PersistentRule(
-            toolName: "*",
-            pattern: "git\\s+push\\b.*\\b(main|master)\\b",
+            toolName: "Bash",
+            pattern: "\\bgit\\b(\\s+-{1,2}\\S+(\\s+\\S+)?)*\\s+push\\b",
             isRegex: true,
             verdict: .prompt,
-            explanation: "Push to main/master — verify changes before pushing",
-            builtIn: true
+            explanation: "Push checkpoint — code leaves the machine; review before publishing",
+            builtIn: true,
+            overridable: false,
+            nonSuppressible: true
+        ),
+        PersistentRule(
+            toolName: "Bash",
+            pattern: "\\bgit\\b(\\s+-{1,2}\\S+(\\s+\\S+)?)*\\s+remote\\s+(add|set-url)\\b",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "Git remote repoint — changes where pushes go",
+            builtIn: true,
+            overridable: false,
+            nonSuppressible: true
         ),
 
-        // ── Commit checkpoint (non-overridable: a broad allow rule can't silence it) ──
+        // ── Supply-chain publish: outbound artifact — Allow-once only ──
+        PersistentRule(
+            toolName: "Bash",
+            pattern: "\\b(npm\\s+publish|yarn\\s+publish|pnpm\\s+publish|twine\\s+upload|cargo\\s+publish|docker\\s+push|gh\\s+release\\s+create|gh\\s+gist\\s+create)\\b",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "Publish/upload — outbound artifact (supply chain)",
+            builtIn: true,
+            overridable: false,
+            nonSuppressible: true
+        ),
+
+        // ── Commit checkpoint — Allow-once only (identity-attributing; can't be session-allowed) ──
         // Tolerates git global options before the subcommand (`-C <path>`, `-c k=v`,
         // `--no-pager`) so `git -C /repo commit` can't slip past the bare-form pattern.
         PersistentRule(
@@ -323,7 +353,8 @@ final class RuleStore: ObservableObject {
             verdict: .prompt,
             explanation: "Commit checkpoint — review staged changes before recording history",
             builtIn: true,
-            overridable: false
+            overridable: false,
+            nonSuppressible: true
         ),
 
         PersistentRule(
@@ -540,6 +571,10 @@ struct PersistentRule: Codable, Identifiable {
     let builtIn: Bool
     /// When true (default), a user allow rule can override this built-in prompt; false marks a hard checkpoint (e.g. git commit) that allow rules can't silence.
     let overridable: Bool
+    /// When true, this checkpoint is Allow-once only: the router won't let a session-allow or
+    /// suppressed-rule short-circuit it, and the coordinator refuses session/persistent allow on it.
+    /// Hard-coded on built-in rules guarding irreversible/outbound actions (commit, push, publish).
+    let nonSuppressible: Bool
     /// Skip this rule during evaluation when true. Persisted so the disable
     /// survives daemon restarts (so a forgotten "temporarily off" rule still
     /// surfaces in the UI rather than silently re-engaging on reboot). Toggle
@@ -558,11 +593,11 @@ struct PersistentRule: Codable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, toolName, pattern, isRegex, verdict, createdAt, explanation, builtIn, overridable, isDisabled
+        case id, name, toolName, pattern, isRegex, verdict, createdAt, explanation, builtIn, overridable, isDisabled, nonSuppressible
     }
 
-    /// Backward-compatible decoding — isRegex, explanation, builtIn, isDisabled
-    /// all default for old rules.json files lacking the field.
+    /// Backward-compatible decoding — isRegex, explanation, builtIn, isDisabled,
+    /// nonSuppressible all default for old rules.json files lacking the field.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -576,6 +611,7 @@ struct PersistentRule: Codable, Identifiable {
         builtIn = try c.decodeIfPresent(Bool.self, forKey: .builtIn) ?? false
         overridable = try c.decodeIfPresent(Bool.self, forKey: .overridable) ?? true
         isDisabled = try c.decodeIfPresent(Bool.self, forKey: .isDisabled) ?? false
+        nonSuppressible = try c.decodeIfPresent(Bool.self, forKey: .nonSuppressible) ?? false
     }
 
     init(
@@ -586,7 +622,8 @@ struct PersistentRule: Codable, Identifiable {
         explanation: String? = nil,
         builtIn: Bool = false,
         overridable: Bool = true,
-        isDisabled: Bool = false
+        isDisabled: Bool = false,
+        nonSuppressible: Bool = false
     ) {
         self.id = UUID()
         self.toolName = toolName
@@ -599,6 +636,7 @@ struct PersistentRule: Codable, Identifiable {
         self.builtIn = builtIn
         self.overridable = overridable
         self.isDisabled = isDisabled
+        self.nonSuppressible = nonSuppressible
         self._compiledRegex = Self.compilePattern(pattern, isRegex: isRegex)
     }
 
@@ -615,6 +653,7 @@ struct PersistentRule: Codable, Identifiable {
         self.builtIn = old.builtIn
         self.overridable = old.overridable
         self.isDisabled = old.isDisabled
+        self.nonSuppressible = old.nonSuppressible
         self._compiledRegex = Self.compilePattern(pattern, isRegex: isRegex)
     }
 
