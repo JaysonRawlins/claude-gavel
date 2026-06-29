@@ -24,7 +24,7 @@ final class RuleStore: ObservableObject {
     )
 
     /// Current seed version — bump when adding new default rules.
-    private static let seedVersion = 13
+    private static let seedVersion = 14
 
     /// Built-in patterns replaced by a corrected/broadened seeded rule. On re-seed
     /// these are dropped from existing rules.json so a pattern fix swaps cleanly
@@ -352,6 +352,22 @@ final class RuleStore: ObservableObject {
             isRegex: true,
             verdict: .prompt,
             explanation: "Commit checkpoint — review staged changes before recording history",
+            builtIn: true,
+            overridable: false,
+            nonSuppressible: true
+        ),
+
+        // ── Bash writes to guardrail paths — Allow-once only ──
+        // Closes the shell bypass of the Write-tool path rules: a write verb (redirect, tee, cp,
+        // mv, dd, install, sed -i) targeting a guardrail/config path. Keyed on the path literal,
+        // so side-effect writers that don't name it (granted/assume, `aws configure`) stay exempt.
+        // [^|;&] keeps the verb and the path within the same command segment, not across a pipe/&&.
+        PersistentRule(
+            toolName: "Bash",
+            pattern: "(>>?|\\btee\\b|\\bcp\\b|\\bmv\\b|\\bdd\\b|\\binstall\\b|\\bsed\\s+-i\\S*)\\s*[^|;&]*(\\.claude/gavel/|\\.claude/(settings\\.json|settings\\.local\\.json|hooks/)|\\.mcp\\.json|\\.git/hooks/|\\.github/workflows/|\\.aws/config)\\b",
+            isRegex: true,
+            verdict: .prompt,
+            explanation: "Writing a guardrail/config file via shell — review (Allow-once only)",
             builtIn: true,
             overridable: false,
             nonSuppressible: true

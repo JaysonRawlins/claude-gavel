@@ -545,6 +545,18 @@ final class PatternMatcherTests: XCTestCase {
         XCTAssertNotNil(matcher.matchUnconditionalPromptPath(payload: editPayload(filePath: "/Users/x/project/.github/workflows/ci.yml")))
     }
 
+    func testAwsConfigWriteIsUnconditionalNotHardBlocked() {
+        // .aws/config (profiles/SSO) downgraded from hard-block to Allow-once prompt.
+        XCTAssertNil(matcher.matchDangerous(payload: writePayload(filePath: "/Users/x/.aws/config")))
+        XCTAssertNotNil(matcher.matchUnconditionalPromptPath(payload: writePayload(filePath: "/Users/x/.aws/config")))
+    }
+
+    func testAwsCredentialsWriteStaysHardBlocked() {
+        // The secret file is unchanged — still a hard block, never just a prompt.
+        XCTAssertNotNil(matcher.matchDangerous(payload: writePayload(filePath: "/Users/x/.aws/credentials")))
+        XCTAssertNil(matcher.matchUnconditionalPromptPath(payload: writePayload(filePath: "/Users/x/.aws/credentials")))
+    }
+
     func testReadingUnconditionalPathIsNotUnconditional() {
         // Writes only — reads fall through to the regular sensitive-read prompts.
         let read = PreToolUsePayload(toolName: "Read", toolInput: ["file_path": AnyCodable("/Users/x/.claude/gavel/rules.json")])

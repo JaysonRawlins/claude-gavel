@@ -197,8 +197,10 @@ struct PatternMatcher {
             ("\\.ssh/(id_|authorized_keys|config)", "Protected: SSH keys/config"),
             // GPG keys
             ("\\.gnupg/", "Protected: GPG keys"),
-            // AWS/cloud credentials
-            ("\\.aws/(credentials|config)", "Protected: AWS credentials"),
+            // AWS/cloud credentials — the secret file stays hard-blocked; .aws/config
+            // (profiles/SSO/role config) is unconditional-prompt instead, since it's
+            // legitimately edited but can repoint a profile to a hostile role.
+            ("\\.aws/credentials", "Protected: AWS credentials"),
             ("\\.kube/config", "Protected: Kubernetes config"),
             // Environment files
             ("\\.env$", "Protected: Environment file"),
@@ -227,6 +229,7 @@ struct PatternMatcher {
             ("\\.mcp\\.json$", "Unconditional: MCP server config (Allow-once only)"),
             ("\\.git/hooks/", "Unconditional: Git hook — runs on git ops (Allow-once only)"),
             ("\\.github/workflows/", "Unconditional: CI workflow — runs with repo secrets (Allow-once only)"),
+            ("\\.aws/config", "Unconditional: AWS profile/SSO config (Allow-once only)"),
         ]
 
         bashPatterns = rawBash.compactMap { entry in
