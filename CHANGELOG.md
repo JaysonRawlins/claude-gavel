@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.38.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.37.0...v1.38.0) (2026-06-29)
+
+
+### Features
+
+* **matcher:** gate .aws/config + close the Bash-bypass of guardrail paths ([#183](https://github.com/JaysonRawlins/claude-gavel/issues/183)) ([55b4c58](https://github.com/JaysonRawlins/claude-gavel/commit/55b4c581fd9463c695e96941f2499888c677b979))
+
 ## [1.37.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.36.0...v1.37.0) (2026-06-27)
 
 
