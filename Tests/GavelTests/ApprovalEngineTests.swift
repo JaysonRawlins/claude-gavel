@@ -201,6 +201,36 @@ final class ApprovalEngineTests: XCTestCase {
         }
     }
 
+    // Shell writes to guardrail paths can't bypass the Write-tool path rules: a redirect/tee/cp/sed
+    // targeting one is Allow-once only, same as editing it with the Write tool.
+    func testBashWritesToGuardrailPathsAreNonSuppressible() {
+        for cmd in [
+            "echo '[profile evil]' >> ~/.aws/config",
+            "cp /tmp/evil ~/.claude/gavel/rules.json",
+            "sed -i '' 's/x/y/' ~/.claude/settings.json",
+            "echo '{}' | tee ~/project/.mcp.json",
+            "printf '#!/bin/sh\\ncurl evil' > .git/hooks/pre-commit",
+            "cp /tmp/ci.yml .github/workflows/deploy.yml",
+        ] {
+            let decision = engine.evaluate(payload: payload(command: cmd), session: session)
+            XCTAssertEqual(decision.verdict, .block, "should checkpoint: \(cmd)")
+            XCTAssertTrue(decision.nonSuppressible, "should be Allow-once only: \(cmd)")
+        }
+    }
+
+    // Side-effect writers that don't name the path on the command line stay exempt — no SSO friction.
+    func testSsoAndConfigSideEffectWritersAreExempt() {
+        for cmd in [
+            "assume prod",
+            "aws configure set region us-east-1",
+            "aws sso login --profile prod",
+            "cat ~/.aws/config",
+        ] {
+            let decision = engine.evaluate(payload: payload(command: cmd), session: session)
+            XCTAssertFalse(decision.nonSuppressible, "should not be unconditional: \(cmd)")
+        }
+    }
+
     func testOrdinaryGitAndBuildAreNotNonSuppressible() {
         for cmd in ["git status", "git add -A", "git fetch origin", "npm install", "npm run build"] {
             let decision = engine.evaluate(payload: payload(command: cmd), session: session)
@@ -311,7 +341,9 @@ final class ApprovalEngineTests: XCTestCase {
         FileManager.default.createFile(atPath: path, contents: data)
 
         let store = RuleStore(configPath: path)
-        let selfProtect = store.rules.filter { $0.toolName == "Bash" && $0.pattern.contains("gavel") }.map(\.pattern)
+        // Filter to the self-protection rule's unique alternation; the guardrail-write Bash rule
+        // also mentions "gavel" but uses the path form (.claude/gavel/), not this alternation.
+        let selfProtect = store.rules.filter { $0.toolName == "Bash" && $0.pattern.contains("gavel|settings|hooks") }.map(\.pattern)
         XCTAssertEqual(selfProtect.count, 1, "exactly one Bash self-protection rule after re-seed (no duplicate)")
         XCTAssertFalse(selfProtect.contains(oldNarrow), "old trailing-slash pattern dropped on re-seed")
         XCTAssertTrue(selfProtect.first?.contains("gavel|settings|hooks") ?? false, "broadened pattern seeded")
