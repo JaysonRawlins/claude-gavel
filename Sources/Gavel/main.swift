@@ -19,14 +19,18 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
     let sessionManager = SessionManager()
     let approvalEngine = ApprovalEngine()
     let approvalCoordinator = ApprovalCoordinator()
+    let proposalStore = ProposalStore()
     lazy var hookRouter: HookRouter = {
         approvalCoordinator.ruleStore = approvalEngine.ruleStore
         approvalCoordinator.sessionManager = sessionManager
-        return HookRouter(
+        proposalStore.ruleStore = approvalEngine.ruleStore
+        let router = HookRouter(
             sessionManager: sessionManager,
             approvalEngine: approvalEngine,
             approvalCoordinator: approvalCoordinator
         )
+        router.proposalStore = proposalStore
+        return router
     }()
     lazy var viewModel = MonitorViewModel(
         sessionManager: sessionManager,
@@ -354,6 +358,8 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupHookRouter() {
+        viewModel.attachProposalStore(proposalStore)
+
         hookRouter.onFeedEvent = { [weak self] entry in
             self?.viewModel.appendFeedEntry(entry)
 

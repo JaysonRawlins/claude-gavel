@@ -16,6 +16,11 @@ final class MonitorViewModel: ObservableObject {
     @Published var testerTestString: String = ""
     @Published var testerIsRegex: Bool = true
 
+    /// Main-thread mirror of ProposalStore's pending inbox (the store itself is
+    /// lock-guarded, not @Published — submits arrive on the socket queue).
+    @Published var pendingProposals: [RuleProposal] = []
+    private var proposalStore: ProposalStore?
+
     let approvalCoordinator: ApprovalCoordinator
     let sessionManager: SessionManager
     private let maxFeedEntries = GavelConstants.maxFeedEntries
@@ -31,6 +36,24 @@ final class MonitorViewModel: ObservableObject {
 
     deinit {
         statsTimer?.invalidate()
+    }
+
+    func attachProposalStore(_ store: ProposalStore) {
+        proposalStore = store
+        pendingProposals = store.proposals
+        store.onChange = { [weak self] snapshot in
+            self?.pendingProposals = snapshot
+        }
+    }
+
+    func acceptProposal(id: UUID) {
+        proposalStore?.accept(id: id, via: "monitor")
+        noteInteraction()
+    }
+
+    func rejectProposal(id: UUID) {
+        proposalStore?.reject(id: id, via: "monitor")
+        noteInteraction()
     }
 
     func appendFeedEntry(_ entry: FeedEntry) {
@@ -145,7 +168,7 @@ final class MonitorViewModel: ObservableObject {
         let rules = try JSONDecoder().decode([PersistentRule].self, from: data)
         guard !rules.isEmpty else { return 0 }
         for rule in rules {
-            approvalCoordinator.ruleStore?.addRule(rule)
+            approvalCoordinator.ruleStore?.addRule(rule, origin: "import")
         }
         return rules.count
     }

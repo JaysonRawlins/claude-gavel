@@ -149,7 +149,10 @@ struct MonitorWindow: View {
             // Tab picker
             Picker("", selection: $selectedTab) {
                 Text("Feed").tag(MonitorTab.feed)
-                Text("Rules (\(viewModel.ruleCount))").tag(MonitorTab.rules)
+                Text(viewModel.pendingProposals.isEmpty
+                     ? "Rules (\(viewModel.ruleCount))"
+                     : "Rules (\(viewModel.ruleCount) · ⚑\(viewModel.pendingProposals.count))")
+                    .tag(MonitorTab.rules)
                 Text("Sessions").tag(MonitorTab.sessions)
                 Text("Context").tag(MonitorTab.context)
                 Text("Tester").tag(MonitorTab.tester)
@@ -888,6 +891,14 @@ struct RulesView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Pending Claude proposals — inert until accepted here
+            if !viewModel.pendingProposals.isEmpty {
+                proposalsSection
+                    .padding(10)
+                    .background(Color.orange.opacity(0.08))
+                Divider()
+            }
+
             // Add rule form
             addRuleForm
                 .padding(10)
@@ -964,6 +975,72 @@ struct RulesView: View {
             .font(.system(.caption, design: .monospaced))
             .background(Color(nsColor: .textBackgroundColor))
         }
+    }
+
+    // MARK: - Pending Proposals
+
+    private var proposalsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Claude proposed \(viewModel.pendingProposals.count) rule\(viewModel.pendingProposals.count == 1 ? "" : "s") — no effect until accepted", systemImage: "flag.fill")
+                .font(.caption.bold())
+                .foregroundColor(.orange)
+
+            ForEach(viewModel.pendingProposals) { proposal in
+                proposalRow(proposal)
+            }
+        }
+    }
+
+    private func proposalRow(_ proposal: RuleProposal) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(verdictLabel(proposal.verdict))
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(verdictColor(proposal.verdict).opacity(0.2))
+                        .foregroundColor(verdictColor(proposal.verdict))
+                        .cornerRadius(3)
+                    Text("\(proposal.toolName): \(proposal.isRegex ? "/" : "")\(proposal.pattern)\(proposal.isRegex ? "/" : "")")
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                }
+                Text(proposal.reason)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                if let example = proposal.example, !example.isEmpty {
+                    Text("e.g. \(example)")
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundColor(.secondary.opacity(0.7))
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                }
+                Text("from session \(Text(verbatim: String(proposal.sessionPid))) · \(proposal.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption2)
+                    .foregroundColor(.secondary.opacity(0.6))
+            }
+
+            Spacer()
+
+            Button(action: { viewModel.acceptProposal(id: proposal.id) }) {
+                Label("Accept", systemImage: "checkmark.circle")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.green)
+            .controlSize(.small)
+            .help("Add as a persistent \(verdictLabel(proposal.verdict)) rule (audited)")
+
+            Button(action: { viewModel.rejectProposal(id: proposal.id) }) {
+                Label("Reject", systemImage: "xmark.circle")
+            }
+            .buttonStyle(.bordered)
+            .tint(.red)
+            .controlSize(.small)
+        }
+        .padding(6)
+        .background(Color(nsColor: .textBackgroundColor))
+        .cornerRadius(6)
     }
 
     // MARK: - Add Rule Form

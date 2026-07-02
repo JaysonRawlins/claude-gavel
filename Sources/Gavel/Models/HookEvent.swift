@@ -12,6 +12,7 @@ enum HookType: String, Codable {
     case subagentStart = "SubagentStart"
     case subagentStop = "SubagentStop"
     case permissionRequest = "PermissionRequest"
+    case proposeRule = "ProposeRule"
     case unknown
 }
 
@@ -58,6 +59,7 @@ enum HookPayload: Codable {
     case userPromptSubmit(UserPromptSubmitPayload)
     case notification(NotificationPayload)
     case stopFailure(StopFailurePayload)
+    case proposeRule(ProposeRulePayload)
     case passthrough(String) // Unhandled event types — store hook_event_name
 
     private enum CodingKeys: String, CodingKey {
@@ -82,6 +84,8 @@ enum HookPayload: Codable {
             self = .notification(try NotificationPayload(from: decoder))
         case "StopFailure":
             self = .stopFailure(try StopFailurePayload(from: decoder))
+        case "ProposeRule":
+            self = .proposeRule(try ProposeRulePayload(from: decoder))
         default:
             self = .passthrough(type)
         }
@@ -95,6 +99,7 @@ enum HookPayload: Codable {
         case .userPromptSubmit(let p): try p.encode(to: encoder)
         case .notification(let p): try p.encode(to: encoder)
         case .stopFailure(let p): try p.encode(to: encoder)
+        case .proposeRule(let p): try p.encode(to: encoder)
         case .stop, .passthrough: break
         }
     }
@@ -214,6 +219,28 @@ struct StopFailurePayload: Codable {
 
     enum CodingKeys: String, CodingKey {
         case errorType = "error_type"
+        case sessionId = "session_id"
+    }
+}
+
+/// A tighten-only rule proposal from `gavel-hook propose-rule`.
+/// Verdict is validated server-side in ProposalStore — never trust this payload.
+struct ProposeRulePayload: Codable {
+    let toolName: String?
+    let pattern: String?
+    let isRegex: Bool?
+    let verdict: String?
+    let reason: String?
+    let example: String?
+    let sessionId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case toolName = "tool_name"
+        case pattern
+        case isRegex = "is_regex"
+        case verdict
+        case reason
+        case example
         case sessionId = "session_id"
     }
 }

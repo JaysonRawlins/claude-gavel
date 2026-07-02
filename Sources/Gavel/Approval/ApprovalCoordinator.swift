@@ -290,7 +290,7 @@ final class ApprovalCoordinator: ObservableObject {
             let rule = PersistentRule(
                 toolName: current.payload.toolName, pattern: sanitized, isRegex: isRegex,
                 verdict: .block, explanation: explText)
-            ruleStore?.addRule(rule)
+            ruleStore?.addRule(rule, origin: "approval-panel:always-deny")
             var reason = "Always deny: \(current.payload.toolName): \(pattern)"
             if let e = explText { reason += " — \(e)" }
             current.respond(Decision(verdict: .block, reason: reason))
@@ -302,7 +302,7 @@ final class ApprovalCoordinator: ObservableObject {
             let rule = PersistentRule(
                 toolName: current.payload.toolName, pattern: sanitized, isRegex: isRegex,
                 verdict: .allow)
-            ruleStore?.addRule(rule)
+            ruleStore?.addRule(rule, origin: "approval-panel:always-allow")
             current.respond(
                 Decision(
                     verdict: .allow, reason: "Always allow: \(current.payload.toolName): \(pattern)"
@@ -315,7 +315,7 @@ final class ApprovalCoordinator: ObservableObject {
             let rule = PersistentRule(
                 toolName: current.payload.toolName, pattern: sanitized, isRegex: isRegex,
                 verdict: .prompt)
-            ruleStore?.addRule(rule)
+            ruleStore?.addRule(rule, origin: "approval-panel:always-prompt")
             current.respond(
                 Decision(
                     verdict: .allow,

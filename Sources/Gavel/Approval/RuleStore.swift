@@ -19,6 +19,13 @@ final class RuleStore: ObservableObject {
 
     private var signaturePath: String { configPath + ".integrity" }
     private var backupPath: String { configPath + ".bak" }
+
+    /// Tamper-evident journal of every authorized rule mutation. Sibling of
+    /// rules.json (rules.audit.jsonl). Nil for /dev/* config paths (tests).
+    private(set) lazy var auditLog: RuleAuditLog? = {
+        guard !configPath.hasPrefix("/dev/") else { return nil }
+        return RuleAuditLog(path: (configPath as NSString).deletingPathExtension + ".audit.jsonl")
+    }()
     private lazy var baseline = ConfigBaseline(
         keyPath: (configPath as NSString).deletingLastPathComponent + "/.integrity-key"
     )
@@ -109,28 +116,32 @@ final class RuleStore: ObservableObject {
 
     /// Toggle a rule's disabled state. Persists immediately so the change
     /// survives a daemon restart (and stays visible in the UI as "off").
-    func setDisabled(id: UUID, isDisabled: Bool) {
+    func setDisabled(id: UUID, isDisabled: Bool, origin: String = "panel") {
         guard let idx = rules.firstIndex(where: { $0.id == id }) else { return }
         rules[idx].isDisabled = isDisabled
         saveRules()
+        audit(action: isDisabled ? "rule_disabled" : "rule_enabled", origin: origin, rule: rules[idx])
     }
 
     // MARK: - Rule Management
 
-    func addRule(_ rule: PersistentRule) {
+    func addRule(_ rule: PersistentRule, origin: String = "panel") {
         rules.append(rule)
         saveRules()
+        audit(action: "rule_added", origin: origin, rule: rule)
     }
 
-    func removeRule(id: UUID) {
-        if let rule = rules.first(where: { $0.id == id }), rule.builtIn {
+    func removeRule(id: UUID, origin: String = "panel") {
+        guard let rule = rules.first(where: { $0.id == id }) else { return }
+        if rule.builtIn {
             deletedBuiltInPatterns.append(rule.pattern)
         }
         rules.removeAll { $0.id == id }
         saveRules()
+        audit(action: "rule_removed", origin: origin, rule: rule)
     }
 
-    func updateRule(id: UUID, pattern: String, isRegex: Bool, verdict: DecisionVerdict, explanation: String?) {
+    func updateRule(id: UUID, pattern: String, isRegex: Bool, verdict: DecisionVerdict, explanation: String?, origin: String = "panel") {
         guard let idx = rules.firstIndex(where: { $0.id == id }) else { return }
         let old = rules[idx]
         rules[idx] = PersistentRule(
@@ -138,6 +149,16 @@ final class RuleStore: ObservableObject {
             verdict: verdict, explanation: explanation
         )
         saveRules()
+        audit(action: "rule_updated", origin: origin, rule: rules[idx],
+              detail: old.pattern == pattern ? nil : "was: \(old.pattern)")
+    }
+
+    private func audit(action: String, origin: String, rule: PersistentRule, detail: String? = nil) {
+        auditLog?.record(
+            action: action, origin: origin,
+            toolName: rule.toolName, pattern: rule.pattern,
+            verdict: rule.verdict.rawValue, detail: detail
+        )
     }
 
     var denyRules: [PersistentRule] {

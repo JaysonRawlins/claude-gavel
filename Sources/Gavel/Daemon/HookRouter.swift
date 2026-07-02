@@ -11,6 +11,8 @@ final class HookRouter {
     let approvalEngine: ApprovalEngine
     let approvalCoordinator: ApprovalCoordinator
     var onFeedEvent: ((FeedEntry) -> Void)?
+    /// Pending rule-proposal inbox (set at wiring time; nil in tests that don't exercise proposals).
+    var proposalStore: ProposalStore?
 
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
@@ -87,8 +89,61 @@ final class HookRouter {
             let errType = payload.errorType ?? "unknown"
             emitFeed(.system("Stop failure: \(errType)", pid: session.pid, at: ts))
 
+        case .proposeRule(let payload):
+            handleProposeRule(payload: payload, session: session, timestamp: ts, respond: respond)
+
         case .passthrough(let eventName):
             emitFeed(.system(eventName, pid: session.pid, at: ts))
+        }
+    }
+
+    // MARK: - ProposeRule
+
+    /// Queue a tighten-only rule proposal for user review. Always responds
+    /// (the propose-rule CLI waits for the ack) — either a queued id or a
+    /// rejection reason Claude can act on.
+    private func handleProposeRule(
+        payload: ProposeRulePayload,
+        session: Session,
+        timestamp: Date,
+        respond: ((Data) -> Void)?
+    ) {
+        let result: ProposalStore.SubmitResult
+        if let store = proposalStore {
+            result = store.submit(
+                toolName: payload.toolName ?? "",
+                pattern: payload.pattern ?? "",
+                isRegex: payload.isRegex ?? true,
+                verdict: payload.verdict ?? "",
+                reason: payload.reason ?? "",
+                example: payload.example,
+                sessionPid: session.pid,
+                sessionId: payload.sessionId
+            )
+        } else {
+            result = .rejected("Proposal inbox unavailable")
+        }
+
+        let response: [String: Any]
+        switch result {
+        case .queued(let id):
+            let summary = "\(payload.toolName ?? "?"): \(payload.pattern ?? "?") (\(payload.verdict ?? "?"))"
+            emitFeed(.system("⚑ Claude proposed rule: \(summary) — pending review in Rules tab", pid: session.pid, at: timestamp))
+            GavelNotifications.notify(
+                title: "Gavel — Rule Proposed",
+                body: "\(summary)\n\(payload.reason ?? "")",
+                sound: false
+            )
+            response = ["status": "queued", "id": id.uuidString,
+                        "message": "Proposal queued for user review in the Gavel Monitor"]
+        case .rejected(let reason):
+            emitFeed(.system("⚑ Rule proposal rejected: \(reason)", pid: session.pid, at: timestamp))
+            response = ["status": "rejected", "reason": reason]
+        }
+
+        if let respond = respond,
+           let data = try? JSONSerialization.data(withJSONObject: response) {
+            respond(data)
         }
     }
 
