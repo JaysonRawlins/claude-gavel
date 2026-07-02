@@ -361,10 +361,26 @@ func findAgentPid(from startPid: Int32, named needle: String) -> Int32? {
            name.lowercased().contains(target) {
             return current
         }
+        // Native-install agent binaries are version-named files
+        // (…/claude/versions/2.1.198), so p_comm is the version string and the
+        // name check above never matches. Match an exact path COMPONENT of the
+        // executable instead — component equality, not substring, so paths like
+        // …/claude-gavel/… can't false-positive.
+        if let path = executablePath(pid: current),
+           path.lowercased().split(separator: "/").contains(Substring(target)) {
+            return current
+        }
         guard let ppid = parentPid(of: current), ppid > 1 else { break }
         current = ppid
     }
     return nil
+}
+
+func executablePath(pid: Int32) -> String? {
+    var buf = [CChar](repeating: 0, count: 4096)
+    let n = proc_pidpath(pid, &buf, UInt32(buf.count))
+    guard n > 0 else { return nil }
+    return String(cString: buf)
 }
 
 func parentPid(of pid: Int32) -> Int32? {
