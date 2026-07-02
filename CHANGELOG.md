@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.39.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.39.0...v1.39.1) (2026-07-02)
+
+
+### Bug Fixes
+
+* **session:** discover native-install claude sessions with version-named binaries ([#187](https://github.com/JaysonRawlins/claude-gavel/issues/187)) ([60b6f5d](https://github.com/JaysonRawlins/claude-gavel/commit/60b6f5d7bf140cfc58da2f7d75e7ae76595885ef))
+
 ## [1.39.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.38.0...v1.39.0) (2026-07-02)
 
 
