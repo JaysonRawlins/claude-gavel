@@ -16,6 +16,12 @@ import GavelHookCore
 let socketPath = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".claude/gavel/gavel.sock").path
 
+// propose-rule is a flag-driven subcommand, not a hook shim — branch BEFORE the
+// stdin read below, which would block forever on a terminal with no redirect.
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "propose-rule" {
+    runProposeRule()
+}
+
 // stderr is preserved by the bash shim — we write deny reasons there.
 
 // Read stdin
@@ -185,6 +191,156 @@ if needsResponse {
     close(fd)
 }
 
+// MARK: - propose-rule subcommand
+
+/// `gavel-hook propose-rule --tool <name> --pattern <p> --verdict <deny|prompt> --reason <why> [--example <cmd>] [--glob]`
+///
+/// Submits a tighten-only rule proposal to the daemon's pending inbox. The
+/// daemon re-validates everything (verdict direction, regex compile, dedupe) —
+/// this function is just transport + a readable result. Never returns.
+func runProposeRule() -> Never {
+    var tool: String?
+    var pattern: String?
+    var verdict: String?
+    var reason: String?
+    var example: String?
+    var isRegex = true
+
+    var args = CommandLine.arguments.dropFirst(2).makeIterator()
+    while let flag = args.next() {
+        switch flag {
+        case "--tool": tool = args.next()
+        case "--pattern": pattern = args.next()
+        case "--verdict": verdict = args.next()
+        case "--reason": reason = args.next()
+        case "--example": example = args.next()
+        case "--glob": isRegex = false
+        default:
+            FileHandle.standardError.write(Data("Unknown flag: \(flag)\n".utf8))
+            exit(1)
+        }
+    }
+
+    guard let tool, let pattern, let verdict, let reason else {
+        let usage = """
+        Usage: gavel-hook propose-rule --tool <name|*> --pattern <regex> --verdict <deny|prompt> \
+        --reason <why this needs a gate> [--example <triggering command>] [--glob]
+
+        Proposes a persistent Gavel rule for the user to review in the Monitor's Rules tab.
+        Tighten-only: allow rules cannot be proposed. The proposal changes nothing until accepted.
+        """
+        FileHandle.standardError.write(Data((usage + "\n").utf8))
+        exit(1)
+    }
+
+    // Attribute the proposal to the agent session that spawned this call.
+    let pid = getppid()
+    let sessionPid = findAgentPid(from: pid, named: "claude")
+        ?? findAgentPid(from: pid, named: "codex")
+        ?? pid
+
+    var payload: [String: Any] = [
+        "type": "ProposeRule",
+        "tool_name": tool,
+        "pattern": pattern,
+        "is_regex": isRegex,
+        "verdict": verdict,
+        "reason": reason,
+    ]
+    if let example { payload["example"] = example }
+
+    let envelope: [String: Any] = [
+        "hookType": "ProposeRule",
+        "sessionPid": Int(sessionPid),
+        "agent": "claude",
+        "timestamp": Date().timeIntervalSince1970,
+        "payload": payload,
+    ]
+
+    guard let envelopeData = try? JSONSerialization.data(withJSONObject: envelope) else {
+        FileHandle.standardError.write(Data("propose-rule: failed to serialize proposal\n".utf8))
+        exit(1)
+    }
+
+    guard let fd = daemonConnect() else {
+        FileHandle.standardError.write(Data("propose-rule: Gavel daemon not running — proposal not submitted\n".utf8))
+        exit(1)
+    }
+
+    envelopeData.withUnsafeBytes { ptr in
+        _ = write(fd, ptr.baseAddress!, envelopeData.count)
+    }
+    shutdown(fd, SHUT_WR)
+
+    var response = Data()
+    let bufSize = 4096
+    let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: bufSize)
+    defer { buf.deallocate() }
+    var timeout = timeval(tv_sec: 30, tv_usec: 0)
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+    while true {
+        let n = read(fd, buf, bufSize)
+        if n <= 0 { break }
+        response.append(buf, count: n)
+    }
+    close(fd)
+
+    guard let json = try? JSONSerialization.jsonObject(with: response) as? [String: Any] else {
+        FileHandle.standardError.write(Data("propose-rule: no valid response from daemon\n".utf8))
+        exit(1)
+    }
+    guard let status = json["status"] as? String else {
+        // A verdict-shaped reply means an older daemon routed this through the
+        // hook fallback — it predates rule proposals entirely.
+        let hint = json["verdict"] != nil
+            ? "running Gavel daemon predates rule proposals — update/restart Gavel and retry"
+            : "no valid response from daemon"
+        FileHandle.standardError.write(Data("propose-rule: \(hint)\n".utf8))
+        exit(1)
+    }
+
+    if status == "queued" {
+        let id = (json["id"] as? String) ?? "?"
+        print("Proposal queued for user review in the Gavel Monitor (id \(id)). It has no effect until accepted.")
+        exit(0)
+    } else {
+        let why = (json["reason"] as? String) ?? "unknown"
+        print("Proposal rejected: \(why)")
+        exit(1)
+    }
+}
+
+/// Connect to the daemon socket. Returns nil when no daemon is listening.
+func daemonConnect() -> Int32? {
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else { return nil }
+
+    var addr = sockaddr_un()
+    addr.sun_family = sa_family_t(AF_UNIX)
+    let pathBytes = socketPath.utf8CString
+    guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else {
+        close(fd)
+        return nil
+    }
+    withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
+        ptr.withMemoryRebound(to: CChar.self, capacity: pathBytes.count) { dest in
+            for (i, byte) in pathBytes.enumerated() {
+                dest[i] = byte
+            }
+        }
+    }
+    let result = withUnsafePointer(to: &addr) { ptr in
+        ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+            connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    }
+    guard result == 0 else {
+        close(fd)
+        return nil
+    }
+    return fd
+}
+
 // MARK: - Helpers
 
 func printAllow(isCodex: Bool) {
@@ -205,10 +361,26 @@ func findAgentPid(from startPid: Int32, named needle: String) -> Int32? {
            name.lowercased().contains(target) {
             return current
         }
+        // Native-install agent binaries are version-named files
+        // (…/claude/versions/2.1.198), so p_comm is the version string and the
+        // name check above never matches. Match an exact path COMPONENT of the
+        // executable instead — component equality, not substring, so paths like
+        // …/claude-gavel/… can't false-positive.
+        if let path = executablePath(pid: current),
+           path.lowercased().split(separator: "/").contains(Substring(target)) {
+            return current
+        }
         guard let ppid = parentPid(of: current), ppid > 1 else { break }
         current = ppid
     }
     return nil
+}
+
+func executablePath(pid: Int32) -> String? {
+    var buf = [CChar](repeating: 0, count: 4096)
+    let n = proc_pidpath(pid, &buf, UInt32(buf.count))
+    guard n > 0 else { return nil }
+    return String(cString: buf)
 }
 
 func parentPid(of pid: Int32) -> Int32? {
