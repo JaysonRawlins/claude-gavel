@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.39.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.38.0...v1.39.0) (2026-07-02)
+
+
+### Features
+
+* **approval:** tighten-only rule proposals with audited accept/reject ([#185](https://github.com/JaysonRawlins/claude-gavel/issues/185)) ([926668e](https://github.com/JaysonRawlins/claude-gavel/commit/926668e80663482788b9ceefb33f43bc9bf75903))
+
 ## [1.38.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.37.0...v1.38.0) (2026-06-29)
 
 
