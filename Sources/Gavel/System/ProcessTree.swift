@@ -19,6 +19,15 @@ struct ProcessTree {
                name.lowercased().contains(target) {
                 return current
             }
+            // Native-install agent binaries are version-named files
+            // (…/claude/versions/2.1.198), so p_comm is the version string and
+            // the name check above never matches. Match an exact path COMPONENT
+            // of the executable instead — component equality, not substring, so
+            // paths like …/claude-gavel/… can't false-positive.
+            if let path = executablePath(pid: current),
+               pathHasComponent(path, matching: target) {
+                return current
+            }
             guard let ppid = parentPid(of: current), ppid > 1 else {
                 break
             }
@@ -143,17 +152,66 @@ struct ProcessTree {
         }
     }
 
-    /// Discover live CLI sessions whose `p_comm` matches `processName` exactly.
-    /// Exact-match (not substring) so we don't pick up helper processes whose
-    /// truncated paths happen to contain the agent name.
+    /// Path of the executable image backing `pid`, via proc_pidpath.
+    /// Resolves to the real vnode path, so a symlink launch
+    /// (~/.local/bin/claude → …/versions/2.1.198) reports the target.
+    static func executablePath(pid: Int32) -> String? {
+        var buf = [CChar](repeating: 0, count: 4096)
+        let n = proc_pidpath(pid, &buf, UInt32(buf.count))
+        guard n > 0 else { return nil }
+        return String(cString: buf)
+    }
+
+    /// True if any path component equals `target` (case-insensitive).
+    /// Component equality, not substring, so …/claude-gavel/… can't
+    /// false-positive against "claude".
+    static func pathHasComponent(_ path: String, matching target: String) -> Bool {
+        path.lowercased().split(separator: "/").contains(Substring(target.lowercased()))
+    }
+
+    /// True if a DIRECTORY component of `path` equals `target` (case-insensitive).
+    /// Excludes the basename: Claude Desktop's binary is
+    /// /Applications/Claude.app/Contents/MacOS/Claude, whose basename lowercases
+    /// to "claude" — only the install-directory component identifies the CLI.
+    static func pathHasDirectoryComponent(_ path: String, matching target: String) -> Bool {
+        path.lowercased().split(separator: "/").dropLast().contains(Substring(target.lowercased()))
+    }
+
+    /// Discover live CLI sessions for the agent named `target`.
+    ///
+    /// A process matches when its `p_comm` equals `target` exactly, or — for
+    /// native-install binaries that are version-named files
+    /// (…/claude/versions/2.1.198, p_comm "2.1.198") — when a directory
+    /// component of its executable path equals `target`. Exact matches only
+    /// (no substring) so helper processes can't false-positive.
+    ///
+    /// Wrapper processes that exec the agent as a direct child (the
+    /// ClaudeCode.app pty-host, the cc-daemon) match too; only the leaf
+    /// process is the session, so candidates that are direct parents of
+    /// other candidates are dropped.
     static func findCliSessions(processName target: String) -> [(pid: Int32, cwd: String)] {
-        var results: [(Int32, String)] = []
+        var candidates: [(pid: Int32, cwd: String)] = []
         for pid in enumerateAllPids() {
-            guard let name = processName(pid: pid), name == target else { continue }
+            guard let name = processName(pid: pid) else { continue }
+            if name != target {
+                guard let path = executablePath(pid: pid),
+                      pathHasDirectoryComponent(path, matching: target) else { continue }
+            }
             guard let cwd = cwd(of: pid) else { continue }
-            results.append((pid, cwd))
+            candidates.append((pid, cwd))
         }
-        return results
+        return dropWrapperParents(candidates)
+    }
+
+    /// Drop candidates that are direct parents of other candidates — a wrapper
+    /// (pty-host, cc-daemon) that spawned the real REPL as its child isn't
+    /// itself a session. `parentOf` is injectable for tests.
+    static func dropWrapperParents(
+        _ candidates: [(pid: Int32, cwd: String)],
+        parentOf: (Int32) -> Int32? = ProcessTree.parentPid(of:)
+    ) -> [(pid: Int32, cwd: String)] {
+        let wrapperPids = Set(candidates.compactMap { parentOf($0.pid) })
+        return candidates.filter { !wrapperPids.contains($0.pid) }
     }
 
     /// Convenience wrapper preserved for existing call sites.
