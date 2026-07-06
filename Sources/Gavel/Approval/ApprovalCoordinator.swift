@@ -179,6 +179,17 @@ final class ApprovalCoordinator: ObservableObject {
             let rule = SessionRule(toolName: payload.toolName, pattern: pattern)
             DispatchQueue.main.async { session.sessionRules.append(rule) }
         }
+        // Browsing-lease button: only for chrome navigate approvals with a
+        // parseable URL — the phone twin of the panel's "Allow Site".
+        let leaseDomain: String? = (pending.nonSuppressible || payload.toolName != BrowsingLease.navigateTool)
+            ? nil
+            : BrowsingLease.normalizedHost(fromURL: payload.toolInput["url"]?.stringValue ?? "")
+        let allowSite: (() -> Void)? = leaseDomain.map { domain in
+            {
+                session.grantBrowsingLease(domain: domain)
+                gavelLog("[lease] granted pid=\(session.pid) domain=\(domain) via=phone")
+            }
+        }
         resolvable.addCleanup { [weak self] source, _ in
             guard source == .telegram else { return }
             DispatchQueue.main.async { self?.dismissPending(id: pendingId, pid: session.pid) }
@@ -187,7 +198,7 @@ final class ApprovalCoordinator: ObservableObject {
             ? RemoteApprovalBridge.withheldBody(payload: payload, session: session)
             : RemoteApprovalBridge.summaryBody(payload: payload, session: session, triggerReason: pending.triggerReason)
         let isCommit = withheld == nil && payload.toolName == "Bash" && (payload.command?.contains("commit") ?? false)
-        bridge.notify(resolvable: resolvable, text: text, pid: session.pid, toolName: payload.toolName, withheld: withheld != nil, allowSession: allowSession, offerCommentClean: isCommit)
+        bridge.notify(resolvable: resolvable, text: text, pid: session.pid, toolName: payload.toolName, withheld: withheld != nil, allowSession: allowSession, offerCommentClean: isCommit, leaseDomain: leaseDomain, allowSite: allowSite)
     }
 
     /// Remove a pending approval resolved remotely from its session panel.

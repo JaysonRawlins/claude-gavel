@@ -13,13 +13,18 @@ final class RemoteApprovalBridge {
         let toolName: String
         let resolvable: ResolvableApproval
         let allowSession: (() -> Void)?
+        let allowSite: (() -> Void)?
         var messageId: Int?
-        init(nonce: String, pid: Int, toolName: String, resolvable: ResolvableApproval, allowSession: (() -> Void)?) {
+        init(
+            nonce: String, pid: Int, toolName: String, resolvable: ResolvableApproval,
+            allowSession: (() -> Void)?, allowSite: (() -> Void)? = nil
+        ) {
             self.nonce = nonce
             self.pid = pid
             self.toolName = toolName
             self.resolvable = resolvable
             self.allowSession = allowSession
+            self.allowSite = allowSite
         }
     }
 
@@ -77,7 +82,10 @@ final class RemoteApprovalBridge {
     // MARK: - Outbound
 
     /// Send a pending approval to the phone and register it for inbound resolution.
-    func notify(resolvable: ResolvableApproval, text: String, pid: Int = 0, toolName: String = "", withheld: Bool = false, allowSession: (() -> Void)?, offerCommentClean: Bool = false) {
+    /// `leaseDomain`/`allowSite` (both required together) add a browsing-lease
+    /// button for chrome navigate approvals — the phone twin of the panel's
+    /// "Allow Site" (see BrowsingLease).
+    func notify(resolvable: ResolvableApproval, text: String, pid: Int = 0, toolName: String = "", withheld: Bool = false, allowSession: (() -> Void)?, offerCommentClean: Bool = false, leaseDomain: String? = nil, allowSite: (() -> Void)? = nil) {
         lock.lock(); let chat = chatId; lock.unlock()
         guard let chat else { return }
 
@@ -88,7 +96,9 @@ final class RemoteApprovalBridge {
         }
 
         let nonce = Self.makeNonce()
-        let corr = Correlation(nonce: nonce, pid: pid, toolName: toolName, resolvable: resolvable, allowSession: allowSession)
+        let corr = Correlation(
+            nonce: nonce, pid: pid, toolName: toolName, resolvable: resolvable,
+            allowSession: allowSession, allowSite: allowSite)
         lock.lock(); byNonce[nonce] = corr; pendingOrder.append(nonce); lock.unlock()
 
         resolvable.addCleanup { [weak self] source, _ in
@@ -109,6 +119,9 @@ final class RemoteApprovalBridge {
         // Allow-once-only approvals (nil allowSession) omit the session button entirely.
         if allowSession != nil {
             keyboard.append([TelegramButton(text: "✅ Allow for session", callbackData: "s:\(nonce)")])
+        }
+        if allowSite != nil, let leaseDomain {
+            keyboard.append([TelegramButton(text: "🌐 Allow site: \(leaseDomain)", callbackData: "g:\(nonce)")])
         }
         keyboard.append([TelegramButton(text: "✅ Allow w/ note", callbackData: "ar:\(nonce)"),
                          TelegramButton(text: "🛑 Deny w/ reason", callbackData: "dr:\(nonce)")])
@@ -256,6 +269,7 @@ final class RemoteApprovalBridge {
         forget(nonce)
 
         if action == "s" { corr.allowSession?() }
+        if action == "g" { corr.allowSite?() }
         let decision = Self.decision(for: action)
         let won = corr.resolvable.resolve(decision, from: .telegram)
         remoteLog?("resolved pid=\(corr.pid) nonce=\(nonce) action=\(action) won=\(won)")
@@ -302,6 +316,7 @@ final class RemoteApprovalBridge {
         case "d": return Decision(verdict: .block, reason: "Denied from phone")
         case "c": return Decision(verdict: .block, reason: "Denied from phone — clean up the house-rule comment violations in this change, then re-propose the commit.")
         case "s": return Decision(verdict: .allow, reason: "Approved for session from phone")
+        case "g": return Decision(verdict: .allow, reason: "Browsing lease granted from phone")
         default: return Decision(verdict: .allow, reason: "Approved from phone")
         }
     }
@@ -328,6 +343,7 @@ final class RemoteApprovalBridge {
         switch action {
         case "d": return "🛑 Denied from phone"
         case "c": return "🧹 Denied — clean comments & re-propose"
+        case "g": return "🌐 Site leased from phone"
         default: return "✅ Approved from phone"
         }
     }
