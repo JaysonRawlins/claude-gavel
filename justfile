@@ -46,13 +46,13 @@ dev-install: build
     # The identity NAME is resolved from the local keychain at runtime so the
     # repo carries no personal info; the private key never leaves the keychain.
     #
-    # Daemon-side caveat: even with Developer ID, LaunchAgent kills the daemon
-    # for "Invalid Page" because the brew bottle is also notarized — `spctl -a`
-    # confirms `source=Unnotarized Developer ID` rejects this binary. Notarizing
-    # locally is impractical (multi-min round-trip to Apple per build). For
-    # daemon-side dev, use `just dev-daemon` instead — foreground spawn from an
-    # interactive shell is permissive about codesigning. dev-install is most
-    # useful for hook-side testing where the parent chain is more lenient.
+    # Daemon-side caveat, corrected 2026-07-06: the "Invalid Page" SIGKILL under
+    # LaunchAgent is caused by overwriting the Cellar binary IN PLACE — the
+    # kernel caches the code signature per vnode, so new content on the same
+    # inode fails validation. Replacing on a fresh inode (rm, then cp — see the
+    # swap loop) runs fine under launchd with a plain Developer ID signature.
+    # `just dev-daemon` remains the fastest loop for daemon-side iteration;
+    # dev-install is the persistent option once a change is worth dogfooding.
     set -euo pipefail
     ver=$(brew list --versions gavel | awk '{print $2}')
     cellar="/opt/homebrew/Cellar/gavel/${ver}/bin"
@@ -75,17 +75,24 @@ dev-install: build
     fi
 
     for bin in gavel gavel-hook; do
-        [[ -f "$cellar/$bin" ]] || { echo "missing $cellar/$bin"; exit 1; }
         # Preserve the FIRST backup as the brew-pristine snapshot — re-running
         # dev-install would otherwise capture the currently-installed dev binary,
-        # erasing the restore path. `cp -p` also preserves source mode (555),
-        # which makes an overwrite-cp permission-denied on subsequent runs.
+        # erasing the restore path.
         bak="$backup/${bin}.${ver}.bak"
-        if [[ ! -f "$bak" ]]; then
-            cp -p "$cellar/$bin" "$bak"
+        if [[ -f "$cellar/$bin" ]]; then
+            [[ -f "$bak" ]] || cp -p "$cellar/$bin" "$bak"
+        elif [[ ! -f "$bak" ]]; then
+            # No installed binary AND no pristine backup — nothing to restore
+            # to later, so refuse rather than strand the user.
+            echo "missing $cellar/$bin and no backup at $bak — run 'brew reinstall gavel' first"
+            exit 1
         fi
         codesign --force --sign "$identity" --options runtime ".build/release/$bin"
-        chmod u+w "$cellar/$bin"
+        # Replace on a FRESH inode: the kernel caches code signatures per
+        # vnode, so cp'ing over the existing file leaves a stale signature
+        # association and launchd SIGKILLs the daemon with "Invalid Page"
+        # (crash-looped 2026-07-06 until replaced rm-then-cp).
+        rm -f "$cellar/$bin"
         cp ".build/release/$bin" "$cellar/$bin"
         chmod 555 "$cellar/$bin"
     done

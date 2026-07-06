@@ -35,6 +35,37 @@ final class RemoteApprovalBridgeTests: XCTestCase {
         XCTAssertTrue(fake.edits.contains { $0.text.contains("from phone") })
     }
 
+    func testAllowSiteButtonGrantsLeaseAndResolvesAllow() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        var resolved: Decision?
+        var leaseGranted = false
+        let approval = ResolvableApproval { resolved = $0 }
+
+        bridge.notify(
+            resolvable: approval, text: "navigate?", allowSession: nil,
+            leaseDomain: "example.com", allowSite: { leaseGranted = true })
+        XCTAssertTrue(
+            fake.lastCallbackData.contains { $0.hasPrefix("g:") },
+            "keyboard should carry the Allow-site button")
+
+        let n = nonce(from: fake.lastCallbackData)
+        bridge.handle(callbackUpdate(action: "g", nonce: n, fromId: owner, chatId: owner, messageId: fake.lastSentMessageId))
+
+        XCTAssertTrue(leaseGranted)
+        XCTAssertEqual(resolved?.verdict, .allow)
+        XCTAssertEqual(resolved?.reason, "Browsing lease granted from phone")
+        XCTAssertTrue(fake.edits.contains { $0.text.contains("Site leased from phone") })
+    }
+
+    func testNoAllowSiteButtonWithoutLeaseDomain() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+
+        bridge.notify(resolvable: ResolvableApproval { _ in }, text: "approve?", allowSession: nil)
+        XCTAssertFalse(fake.lastCallbackData.contains { $0.hasPrefix("g:") })
+    }
+
     func testUnauthorizedChatIgnored() {
         let fake = FakeTelegramTransport()
         let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)

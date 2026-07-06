@@ -79,6 +79,41 @@ final class Session: ObservableObject, Identifiable {
         return (_remoteEnabled, _remoteUntil)
     }
 
+    // Browsing lease — site-scoped session allow for claude-in-chrome tools.
+    // Lock-guarded like remote approval: granted on main (panel action) but
+    // read on the socket queue for every chrome PreToolUse, and revoked from
+    // the PostToolUse path, which must be visible to the very next PreToolUse.
+    private var _browsingLease: BrowsingLease?
+    private let browsingLeaseLock = NSLock()
+
+    /// Main-thread mirror for Monitor display only — never gate on this.
+    @Published var browsingLeaseDomainUI: String?
+
+    var browsingLease: BrowsingLease? {
+        browsingLeaseLock.lock()
+        defer { browsingLeaseLock.unlock() }
+        return _browsingLease
+    }
+
+    func grantBrowsingLease(domain: String, ttl: TimeInterval = BrowsingLease.defaultTTL) {
+        browsingLeaseLock.lock()
+        _browsingLease = BrowsingLease(domain: domain, ttl: ttl)
+        browsingLeaseLock.unlock()
+        DispatchQueue.main.async { self.browsingLeaseDomainUI = domain }
+    }
+
+    @discardableResult
+    func revokeBrowsingLease() -> BrowsingLease? {
+        browsingLeaseLock.lock()
+        let lease = _browsingLease
+        _browsingLease = nil
+        browsingLeaseLock.unlock()
+        if lease != nil {
+            DispatchQueue.main.async { self.browsingLeaseDomainUI = nil }
+        }
+        return lease
+    }
+
     // Worker-mutable state. NOT @Published on purpose — both are touched on
     // every PreToolUse hook from background threads, and `@Published`
     // mutations from non-main contend with SwiftUI's main-thread publish
@@ -134,6 +169,7 @@ final class Session: ObservableObject, Identifiable {
         autoApproveUntil = nil
         sessionRules.removeAll()
         suppressedRuleIds.removeAll()
+        revokeBrowsingLease()
     }
 
     /// Check if a tool call matches any session allow rule.

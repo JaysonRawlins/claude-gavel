@@ -243,6 +243,20 @@ final class HookRouter {
                         sendResponse(Decision(verdict: .allow, reason: "Session rule: \(rule.pattern)"), payload: payload, session: session, respond: respond)
                         return
                     }
+
+                    // Browsing lease: site-scoped session allow for chrome
+                    // page-interaction tools + same-site navigation. Drift
+                    // revocation lives in handlePostToolUse.
+                    if let lease = session.browsingLease,
+                       let reason = lease.allows(
+                           toolName: payload.toolName,
+                           url: payload.toolInput["url"]?.stringValue
+                       ) {
+                        session.stats.incrementAllow()
+                        emitFeed(.decision(badge: .allow, reason: reason, pid: session.pid, at: timestamp))
+                        sendResponse(Decision(verdict: .allow, reason: reason), payload: payload, session: session, respond: respond)
+                        return
+                    }
                 }
 
                 // MCP-style block: jump straight to interactive dialog
@@ -337,18 +351,54 @@ final class HookRouter {
     ) {
         var output = ""
         if let response = payload.toolResponse {
-            if let str = response.stringValue {
-                output = str
-            } else if let dict = response.dictValue {
-                let stdout = dict["stdout"]?.stringValue ?? ""
-                let stderr = dict["stderr"]?.stringValue ?? ""
-                output = [stdout, stderr].filter { !$0.isEmpty }.joined(separator: "\n")
+            output = Self.extractResponseText(response)
+        }
+
+        // Browsing-lease drift check: the extension appends a Tab Context
+        // block (with the executed tab's live URL) to every chrome tool
+        // result, so an in-page navigation is visible in the response of the
+        // click that caused it. Any off-domain URL — or an unparseable
+        // response, fail closed — revokes the lease before the next call.
+        if BrowsingLease.driftCheckedTools.contains(payload.toolName),
+           let lease = session.browsingLease {
+            if !lease.isActive {
+                session.revokeBrowsingLease()
+                gavelLog("[lease] expired pid=\(session.pid) domain=\(lease.domain)")
+            } else if let why = BrowsingLease.driftReason(inResponse: output, domain: lease.domain) {
+                session.revokeBrowsingLease()
+                let reason = "Browsing lease revoked (\(lease.domain)): \(why)"
+                gavelLog("[lease] \(reason) pid=\(session.pid)")
+                emitFeed(.system(reason, pid: session.pid, at: timestamp))
             }
         }
 
         if !output.isEmpty {
             emitFeed(.toolResult(output: output, pid: session.pid, at: timestamp))
         }
+    }
+
+    /// Flatten a tool_response into displayable text. Handles the Bash shape
+    /// ({stdout, stderr}), plain strings, and MCP content arrays
+    /// ({content: [{type: "text", text: ...}]} or a bare array of items).
+    static func extractResponseText(_ response: AnyCodable) -> String {
+        if let str = response.stringValue { return str }
+        if let dict = response.dictValue {
+            let stdout = dict["stdout"]?.stringValue ?? ""
+            let stderr = dict["stderr"]?.stringValue ?? ""
+            if !stdout.isEmpty || !stderr.isEmpty {
+                return [stdout, stderr].filter { !$0.isEmpty }.joined(separator: "\n")
+            }
+            if let content = dict["content"]?.arrayValue {
+                return content.compactMap { $0.dictValue?["text"]?.stringValue }
+                    .joined(separator: "\n")
+            }
+            return ""
+        }
+        if let arr = response.arrayValue {
+            return arr.compactMap { $0.dictValue?["text"]?.stringValue }
+                .joined(separator: "\n")
+        }
+        return ""
     }
 
     // MARK: - Helpers
