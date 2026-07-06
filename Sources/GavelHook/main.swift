@@ -71,6 +71,40 @@ let requestsRemoteApproval = ["1", "true", "yes"].contains(
 let spawnedSessionName = (ProcessInfo.processInfo.environment["GAVEL_SESSION_NAME"] ?? "")
     .trimmingCharacters(in: .whitespacesAndNewlines)
 
+// PostToolUse tool_response can be huge (screenshot base64, long Bash output).
+// The daemon's socket read treats a short read as end-of-message, so an
+// oversized envelope arrives truncated and the WHOLE event is silently
+// dropped — which breaks the feed and, worse, browsing-lease drift detection
+// (the screenshot response is exactly where a site drift becomes visible).
+// Sanitize client-side: drop non-text MCP content items (images) and keep
+// each string's TAIL (the chrome extension appends its Tab Context block at
+// the end, and Bash errors also tend to be last).
+let sanitizeCap = 8 * 1024
+
+func sanitizeString(_ s: String) -> String {
+    guard s.utf8.count > sanitizeCap else { return s }
+    let tail = String(s.suffix(sanitizeCap / 2))
+    return "[gavel-hook: truncated \(s.utf8.count) bytes]…\(tail)"
+}
+
+func sanitizeResponseValue(_ value: Any) -> Any {
+    if let s = value as? String { return sanitizeString(s) }
+    if let arr = value as? [Any] {
+        // MCP content array: keep text items, drop image/binary items.
+        return arr.compactMap { item -> Any? in
+            if let dict = item as? [String: Any], let type = dict["type"] as? String,
+                type != "text" {
+                return nil
+            }
+            return sanitizeResponseValue(item)
+        }
+    }
+    if let dict = value as? [String: Any] {
+        return dict.mapValues { sanitizeResponseValue($0) }
+    }
+    return value
+}
+
 // Merge stdin JSON as payload (add "type" discriminator for daemon decoding)
 if var payload = stdinJson {
     payload["type"] = hookType
@@ -79,6 +113,9 @@ if var payload = stdinJson {
     }
     if hookType == "SessionStart", !spawnedSessionName.isEmpty {
         payload["session_name"] = spawnedSessionName
+    }
+    if hookType == "PostToolUse", let response = payload["tool_response"] {
+        payload["tool_response"] = sanitizeResponseValue(response)
     }
     envelope["payload"] = payload
 }

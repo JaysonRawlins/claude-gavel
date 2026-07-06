@@ -254,6 +254,7 @@ struct AnyCodable: Codable {
     var intValue: Int? { value as? Int }
     var boolValue: Bool? { value as? Bool }
     var dictValue: [String: AnyCodable]? { value as? [String: AnyCodable] }
+    var arrayValue: [AnyCodable]? { value as? [AnyCodable] }
 
     init(_ value: Any) {
         self.value = value

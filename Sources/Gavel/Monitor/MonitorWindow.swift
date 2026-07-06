@@ -1476,6 +1476,11 @@ struct SessionRulesView: View {
                     if session.isPaused {
                         badge("PAUSED", color: .orange)
                     }
+                    if let leaseDomain = session.browsingLeaseDomainUI {
+                        badge("SITE \(leaseDomain)", color: .teal)
+                            .onTapGesture { session.revokeBrowsingLease() }
+                            .help("Browsing lease: chrome page interaction auto-allowed on \(leaseDomain). Click to revoke.")
+                    }
                 }
             }
 

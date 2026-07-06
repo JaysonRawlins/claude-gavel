@@ -631,6 +631,35 @@ struct ApprovalPanelView: View {
                     .keyboardShortcut("r", modifiers: [.command])
                     .help(approval.triggeringRulePattern.map { "Suppress rule for session: \($0)" } ?? "Suppress firing rule for session")
                 }
+
+            }
+
+            // Site lease: offered only on chrome navigate approvals with a
+            // parseable URL. Own row — the rules row above already holds up
+            // to seven buttons and would clip this one in the fixed-width
+            // panel. Scoped tighter than Session Allow: page interaction +
+            // same-site navigation on this domain, auto-revoked on site
+            // drift / TTL; javascript & uploads still prompt.
+            if !approval.nonSuppressible,
+               approval.payload.toolName == BrowsingLease.navigateTool,
+               let leaseDomain = BrowsingLease.normalizedHost(
+                   fromURL: approval.payload.toolInput["url"]?.stringValue ?? "") {
+                HStack {
+                    Spacer()
+                    Button(action: {
+                        coordinator.handleAction(.allowSiteForSession(
+                            domain: leaseDomain,
+                            context: noteState.noteForAllowContext
+                        ), on: sessionPanel)
+                        coordinator.sessionManager?.noteInteraction()
+                    }) {
+                        Label("Allow Site: \(leaseDomain)", systemImage: "globe")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.teal)
+                    .keyboardShortcut("g", modifiers: [.command])
+                    .help("Session lease for \(leaseDomain): auto-allow page interaction (computer, form_input) and same-site navigation. Auto-revokes if the page leaves \(leaseDomain), after \(Int(BrowsingLease.defaultTTL / 60)) min, or via the SITE badge in the Monitor. javascript_tool and file uploads still prompt.")
+                }
             }
 
             // One-time actions

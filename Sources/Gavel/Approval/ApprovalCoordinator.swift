@@ -21,11 +21,13 @@ final class ApprovalCoordinator: ObservableObject {
         case alwaysDenyPattern(pattern: String, isRegex: Bool, explanation: String?)
         case alwaysAllowPattern(pattern: String, isRegex: Bool)
         case alwaysPromptPattern(pattern: String, isRegex: Bool)
+        case allowSiteForSession(domain: String, context: String?)
 
         /// Actions that grant a durable (non-Allow-once) allow — refused on nonSuppressible approvals.
         var createsDurableAllow: Bool {
             switch self {
-            case .allowPatternForSession, .suppressRuleForSession, .alwaysAllowPattern:
+            case .allowPatternForSession, .suppressRuleForSession, .alwaysAllowPattern,
+                .allowSiteForSession:
                 return true
             default:
                 return false
@@ -259,6 +261,17 @@ final class ApprovalCoordinator: ObservableObject {
                     reason: "User approved (\(current.payload.toolName): \(pattern))",
                     additionalContext: ctx, updatedInput: updated))
 
+        case .allowSiteForSession(let domain, let context):
+            ctx = context
+            updated = nil
+            current.session.grantBrowsingLease(domain: domain)
+            gavelLog("[lease] granted pid=\(current.session.pid) domain=\(domain)")
+            current.respond(
+                Decision(
+                    verdict: .allow,
+                    reason: "Browsing lease granted: \(domain) (session, auto-revokes on site drift)",
+                    additionalContext: ctx))
+
         case .suppressRuleForSession(let ruleId, let context, let updatedCommand, let fieldUpdates):
             ctx = context
             updated = fieldUpdates ?? buildUpdatedInput(updatedCommand)
@@ -418,6 +431,7 @@ final class ApprovalCoordinator: ObservableObject {
         case .alwaysDenyPattern: return "alwaysDenyPattern"
         case .alwaysAllowPattern: return "alwaysAllowPattern"
         case .alwaysPromptPattern: return "alwaysPromptPattern"
+        case .allowSiteForSession: return "allowSiteForSession"
         }
     }
 
