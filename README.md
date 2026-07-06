@@ -4,7 +4,7 @@ Native macOS menu bar daemon for [Claude Code](https://docs.anthropic.com/en/doc
 
 Gavel intercepts every tool call your agent makes — file edits, shell commands, MCP calls — and routes them through a configurable approval engine before they execute. You see what's happening, control what's allowed, and block what isn't.
 
-![Feed tab with auto-approve enabled (green icon)](docs/images/feed-auto-approve.png)
+![Feed tab — live tool-call stream with allow/block verdicts](docs/images/feed.png)
 
 ## Install
 
@@ -77,6 +77,18 @@ Gavel ships with 12 seeded rules that prompt before potentially dangerous operat
 
 These are visible and editable in the Rules tab. You can override them with allow rules or add your own.
 
+![Seeded ask rules — push to main, terraform/pulumi apply, cloud deploys](docs/images/rules-ask.png)
+
+## Rule Proposals
+
+Claude can propose new guardrails from inside a session with `gavel-hook propose-rule` — for example after noticing a dangerous pattern that sailed through, or a denial that generalizes. Proposals are **inert until you accept them**. They land in an inbox banner at the top of the Rules tab:
+
+![Claude proposed a rule — no effect until accepted](docs/images/rule-proposal-inbox.png)
+
+Each proposal shows the verdict badge, tool and pattern, Claude's stated reason, an example command that would match, and which session proposed it and when. **Accept** compiles it into the live rule set; **Reject** discards it. Proposals are tighten-only — `allow` proposals are rejected server-side — and accepted rules are appended to the hash-chained audit journal (`rules.audit.jsonl`) like any manual edit.
+
+![Rules tab after accepting — banner cleared, rule count incremented](docs/images/rules-after-accept.png)
+
 ## Interactive Approval Panel
 
 When a tool call needs approval, a floating panel appears showing:
@@ -103,12 +115,14 @@ Each Claude Code session gets its own approval panel — parallel sessions don't
 
 Click the menu bar icon to open the monitor. Six tabs:
 
-- **Feed** — live stream of hook events with timestamps and decisions
+- **Feed** — live stream of hook events with timestamps and decisions, plus command output previews, session lifecycle events, and a `Ready for your input` marker when a session goes idle
 - **Rules** — searchable list of persistent rules with inline editing, import/export, glob/regex badges
 - **Sessions** — per-session state: active rules, stats, tainted paths, auto-approve status
 - **Context** — edit the session context injected into every Claude Code session
 - **Tester** — interactive regex/glob pattern tester with match highlighting
-- **Reference** — regex syntax cheat sheet
+- **Reference** — regex syntax cheat sheet and copy-ready rule-pattern examples per tool family
+
+The header strip shows the approval mode at a glance — `Auto-approve: all N sessions`, `Auto-approve: N/M sessions`, or `Interactive approval` — alongside live tool/allow/block counters and daemon uptime.
 
 ### Menu Bar Icon
 
@@ -126,6 +140,16 @@ Click the menu bar icon to open the monitor. Six tabs:
 ### Sessions
 
 ![Sessions tab](docs/images/sessions.png)
+
+### Session rows
+
+Every tab keeps a session strip docked at the bottom. Each live session shows its PID, repo and branch, an editable name (auto-named from the first prompt), skill tags observed during the session, and per-session toggles — **Sub** (sub-agent inherit), **Auto** (auto-approve), **Phone** (remote approval via Telegram) — plus **Prompt**, **Pause**, **History** (transcript viewer), and **Sleep** buttons.
+
+![Session rows — per-session toggles and controls](docs/images/session-rows.png)
+
+Slept and exited sessions remain as tombstones with **History**, **Resume** (copies a resume command), and **Forget**. The bottom bar holds bulk operations, a session filter, and the defaults for new sessions:
+
+![Bulk operations bar](docs/images/session-bulk-bar.png)
 
 ## Session Context
 
@@ -164,7 +188,11 @@ Test glob and regex patterns interactively before creating rules.
 
 ![Regex tester](docs/images/tester.png)
 
+The Reference tab pairs a regex cheat sheet with copy-ready rule-pattern examples for each tool family — file tools, Glob/Grep, Agent, MCP tools (block Slack/Jira writes while allowing reads, block Playwright navigation), and wildcard rules that match across all tools.
+
 ![Regex reference](docs/images/reference.png)
+
+![Rule pattern examples](docs/images/reference-examples.png)
 
 ## Security
 
