@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.40.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.39.1...v1.40.0) (2026-07-06)
+
+
+### Features
+
+* **approval:** site-scoped browsing lease for claude-in-chrome ([#190](https://github.com/JaysonRawlins/claude-gavel/issues/190)) ([9f1f31a](https://github.com/JaysonRawlins/claude-gavel/commit/9f1f31a5dbd9ca9a6ab2d6db2f380f870854bfb1))
+
 ## [1.39.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.39.0...v1.39.1) (2026-07-02)
 
 
