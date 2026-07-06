@@ -34,15 +34,22 @@ query engram for `claude-gavel pr title release-please convention`.
 
 ## Gavel self-protection
 
-Gavel's own PreToolUse hook blocks writes and deletes against:
+Gavel's own PreToolUse hook gates its guardrail paths — but the mechanism is
+an **unconditional prompt, not a deny** (verified against ApprovalEngine.swift
+2026-07-06; this section previously said "blocks writes", which was wrong):
 
-- `~/.claude/gavel/**`
-- `~/.claude/settings*`
-- `~/.claude/hooks/**`
-- `~/.codex/{config,hooks}`
-- shell init files (`.zshrc`, `.bashrc`, etc.)
+- Writes/edits to `~/.claude/gavel/**`, `~/.claude/settings*`,
+  `~/.claude/hooks/**`, `.mcp.json`, `.git/hooks/`, `.github/workflows/`,
+  `.aws/config` → `matchUnconditionalPromptPath` fires BEFORE all rules.
+  Allow-once ONLY: no session-allow, no persistent allow rule, no suppression
+  can ever silence the prompt. The user approving the panel applies the write.
+- Deletes (`rm` against `~/.claude/gavel/`) → hard deny (`matchDangerous`).
+- `rules.json` additionally carries `uchg` filesystem immutability (Tier 1).
+- Shell-side writes (`>>`, `tee`, `cp`, `mv`, `sed -i` into those paths) are
+  caught by a seeded Bash rule — same Allow-once-only prompt.
 
-If a tool call against those paths fails with `User denied — …` style errors,
-that's Gavel's deny rule firing — not a bug. Either route through Gavel's own
-APIs (`setLabel`, `saveDefaults`, etc.) or have the user run the operation
-in a non-Gavel-monitored terminal.
+A `User denied — …` error on those paths means the user declined the prompt,
+not that the path is unwritable. Separately, Claude Code's auto-mode
+classifier can deny self-modification writes (e.g. session-context.md) even
+after Gavel approval if there's no explicit user directive in the transcript —
+that's the harness, not Gavel.
