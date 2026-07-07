@@ -4,7 +4,7 @@ import Foundation
 /// (the on-Mac panel and the Telegram bridge). Exactly one `resolve` wins.
 final class ResolvableApproval {
 
-    enum Source { case mac, telegram, timeout, autoApprove }
+    enum Source { case mac, telegram, timeout, autoApprove, web }
 
     private let lock = NSLock()
     private var resolved = false

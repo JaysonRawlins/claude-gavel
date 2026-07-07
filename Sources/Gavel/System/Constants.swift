@@ -64,4 +64,19 @@ enum GavelConstants {
     /// Minimum length of an alphanumeric run treated as credential-shaped by the
     /// credential gate's entropy heuristic.
     static let credentialEntropyRunLength = 20
+
+    /// Loopback port for the diff review server. Only ever bound to 127.0.0.1;
+    /// tailnet reachability comes exclusively via `tailscale serve`.
+    static let reviewServerPort: UInt16 = 48765
+
+    /// Cap on a review verdict POST body.
+    static let reviewMaxBodyBytes = 64 * 1024
+
+    /// Cap on captured diff text. Bigger diffs are truncated with a banner —
+    /// a phone review of a multi-megabyte diff isn't a real review anyway.
+    static let reviewDiffMaxBytes = 2 * 1024 * 1024
+
+    /// How long a resolved review stays retrievable (shows "resolved by …"
+    /// instead of 404) before it's garbage-collected.
+    static let reviewResolvedTTL: TimeInterval = 3600
 }
