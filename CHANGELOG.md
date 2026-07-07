@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.41.2](https://github.com/JaysonRawlins/claude-gavel/compare/v1.41.1...v1.41.2) (2026-07-07)
+
+
+### Bug Fixes
+
+* **approval:** honor cd compounds when resolving review diff repo ([6086612](https://github.com/JaysonRawlins/claude-gavel/commit/60866124bd4e0832990819e2457b030a0fdfcf80))
+
 ## [1.41.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.41.0...v1.41.1) (2026-07-07)
 
 
