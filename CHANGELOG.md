@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.41.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.41.0...v1.41.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* **approval:** capture add-and-commit compounds for review diff ([7d5a3df](https://github.com/JaysonRawlins/claude-gavel/commit/7d5a3dff8373617714c11ddfe0d23d79d4e57918))
+
 ## [1.41.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.40.0...v1.41.0) (2026-07-07)
 
 
