@@ -5,13 +5,17 @@ import XCTest
 final class TailscaleServeTests: XCTestCase {
 
     private var savedRunner: ((_ binary: String, _ args: [String]) -> (status: Int32, stdout: String)?)!
+    private var savedSockets: (() -> [String])!
 
-    override func setUp() {
+    override func setUpWithError() throws {
+        try XCTSkipIf(TailscaleServe.candidateBinaries().isEmpty, "no tailscale CLI installed")
         savedRunner = TailscaleServe.runner
+        savedSockets = TailscaleServe.socketPaths
     }
 
     override func tearDown() {
-        TailscaleServe.runner = savedRunner
+        if savedRunner != nil { TailscaleServe.runner = savedRunner }
+        if savedSockets != nil { TailscaleServe.socketPaths = savedSockets }
     }
 
     private func statusJSON(state: String, dns: String?, iosPeerOnline: Bool? = nil) -> String {
@@ -22,138 +26,181 @@ final class TailscaleServeTests: XCTestCase {
         return #"{"BackendState": "\#(state)", \#(selfBlock) \#(peerBlock) "Version": "1.98"}"#
     }
 
+    private func socketArg(in args: [String]) -> String? {
+        args.first { $0.hasPrefix("--socket=") }
+    }
+
     // MARK: - Status parsing
 
-    func testBackendStripsTrailingDot() {
+    func testBackendStripsTrailingDotAndKeepsSocket() {
         let backend = TailscaleServe.backend(
-            binary: "/bin/ts",
+            binary: "/bin/ts", socketPath: "/var/run/tailscaled-x.sock",
             statusJSON: Data(statusJSON(state: "Running", dns: "mac.tail1234.ts.net.").utf8))
         XCTAssertEqual(backend?.host, "mac.tail1234.ts.net")
+        XCTAssertEqual(backend?.socketPath, "/var/run/tailscaled-x.sock")
         XCTAssertEqual(backend?.hasOnlineIOSPeer, false)
     }
 
     func testStoppedBackendYieldsNil() {
         XCTAssertNil(TailscaleServe.backend(
-            binary: "/bin/ts",
+            binary: "/bin/ts", socketPath: nil,
             statusJSON: Data(statusJSON(state: "Stopped", dns: "mac.tail1234.ts.net.").utf8)))
     }
 
     func testMissingSelfOrGarbageYieldsNil() {
         XCTAssertNil(TailscaleServe.backend(
-            binary: "/bin/ts", statusJSON: Data(statusJSON(state: "Running", dns: nil).utf8)))
-        XCTAssertNil(TailscaleServe.backend(binary: "/bin/ts", statusJSON: Data("not json".utf8)))
+            binary: "/bin/ts", socketPath: nil,
+            statusJSON: Data(statusJSON(state: "Running", dns: nil).utf8)))
+        XCTAssertNil(TailscaleServe.backend(
+            binary: "/bin/ts", socketPath: nil, statusJSON: Data("not json".utf8)))
     }
 
     func testDetectsOnlineIOSPeer() {
         let online = TailscaleServe.backend(
-            binary: "/bin/ts",
+            binary: "/bin/ts", socketPath: nil,
             statusJSON: Data(statusJSON(state: "Running", dns: "a.ts.net.", iosPeerOnline: true).utf8))
         XCTAssertEqual(online?.hasOnlineIOSPeer, true)
 
         let offline = TailscaleServe.backend(
-            binary: "/bin/ts",
+            binary: "/bin/ts", socketPath: nil,
             statusJSON: Data(statusJSON(state: "Running", dns: "a.ts.net.", iosPeerOnline: false).utf8))
         XCTAssertEqual(offline?.hasOnlineIOSPeer, false)
     }
 
-    // MARK: - Backend choice + serve registration
+    // MARK: - Endpoint discovery + backend choice
 
-    /// Stub a fleet of backends: binary path → status JSON (or nil for "can't run").
-    /// Serve calls succeed and are recorded.
-    private func stubBackends(_ fleet: [String: String?], serveCalls: NSMutableArray) {
-        TailscaleServe.runner = { binary, args in
-            if args.first == "status" {
-                guard let json = fleet[binary] ?? nil else { return nil }
-                return (0, json)
+    /// The dogfood topology: GUI extension Stopped, custom-socket daemon
+    /// Running with the phone online. The socket endpoint must win, and
+    /// serve must be registered through the same socket.
+    func testCustomSocketDaemonChosenOverStoppedExtension() {
+        TailscaleServe.socketPaths = { ["/var/run/tailscaled-personal.sock"] }
+        var serveCalls: [[String]] = []
+        TailscaleServe.runner = { _, args in
+            if args.contains("--json") {
+                if self.socketArg(in: args) != nil {
+                    return (0, self.statusJSON(state: "Running", dns: "personal.tail2.ts.net.", iosPeerOnline: true))
+                }
+                return (0, self.statusJSON(state: "Stopped", dns: "work.tail1.ts.net."))
             }
-            serveCalls.add([binary] + args)
+            serveCalls.append(args)
             return (0, "")
         }
-    }
-
-    func testSingleRunningBackendIsUsed() {
-        let serveCalls = NSMutableArray()
-        // Only probe binaries that exist on this machine — candidateBinaries()
-        // filters by executability, so stub every candidate uniformly.
-        var fleet: [String: String?] = [:]
-        for (index, binary) in TailscaleServe.candidateBinaries().enumerated() {
-            fleet[binary] = index == 0
-                ? statusJSON(state: "Running", dns: "solo.tail1.ts.net.")
-                : statusJSON(state: "Stopped", dns: "other.tail2.ts.net.")
-        }
-        try? XCTSkipIf(fleet.isEmpty, "no tailscale binaries installed")
-        stubBackends(fleet, serveCalls: serveCalls)
 
         let base = TailscaleServe.reviewBaseURL()
-        XCTAssertEqual(base, "https://solo.tail1.ts.net:\(GavelConstants.reviewTailnetHTTPSPort)")
+        XCTAssertEqual(base, "https://personal.tail2.ts.net:\(GavelConstants.reviewTailnetHTTPSPort)")
         XCTAssertEqual(serveCalls.count, 1)
-        let call = serveCalls[0] as! [String]
-        XCTAssertEqual(Array(call.dropFirst()), [
+        XCTAssertEqual(socketArg(in: serveCalls[0]), "--socket=/var/run/tailscaled-personal.sock")
+        XCTAssertEqual(Array(serveCalls[0].dropFirst()), [
             "serve", "--bg",
             "--https=\(GavelConstants.reviewTailnetHTTPSPort)",
             "http://127.0.0.1:\(GavelConstants.reviewServerPort)",
         ])
     }
 
-    func testTwoRunningBackendsPrefersOnlineIOSPeer() throws {
-        let candidates = TailscaleServe.candidateBinaries()
-        try XCTSkipIf(candidates.count < 2, "needs two installed tailscale binaries")
-
-        let serveCalls = NSMutableArray()
-        var fleet: [String: String?] = [:]
-        // First candidate running but phoneless; second running WITH the phone.
-        fleet[candidates[0]] = statusJSON(state: "Running", dns: "work.tail1.ts.net.", iosPeerOnline: false)
-        fleet[candidates[1]] = statusJSON(state: "Running", dns: "personal.tail2.ts.net.", iosPeerOnline: true)
-        for extra in candidates.dropFirst(2) { fleet[extra] = nil }
-        stubBackends(fleet, serveCalls: serveCalls)
+    func testBothRunningPrefersBackendWithOnlineIOSPeer() {
+        TailscaleServe.socketPaths = { ["/var/run/tailscaled-personal.sock"] }
+        var serveCalls: [[String]] = []
+        TailscaleServe.runner = { _, args in
+            if args.contains("--json") {
+                if self.socketArg(in: args) != nil {
+                    return (0, self.statusJSON(state: "Running", dns: "personal.tail2.ts.net.", iosPeerOnline: false))
+                }
+                return (0, self.statusJSON(state: "Running", dns: "work.tail1.ts.net.", iosPeerOnline: true))
+            }
+            serveCalls.append(args)
+            return (0, "")
+        }
 
         let base = TailscaleServe.reviewBaseURL()
-        XCTAssertEqual(base, "https://personal.tail2.ts.net:\(GavelConstants.reviewTailnetHTTPSPort)")
-        // Serve must be registered through the SAME backend the URL points at.
-        XCTAssertEqual((serveCalls[0] as! [String]).first, candidates[1])
+        XCTAssertEqual(base, "https://work.tail1.ts.net:\(GavelConstants.reviewTailnetHTTPSPort)")
+        XCTAssertNil(socketArg(in: serveCalls[0]), "serve must go through the same (default) endpoint as the chosen backend")
     }
 
-    func testTwoRunningBackendsNoPhoneFallsBackToFirst() throws {
-        let candidates = TailscaleServe.candidateBinaries()
-        try XCTSkipIf(candidates.count < 2, "needs two installed tailscale binaries")
-
-        let serveCalls = NSMutableArray()
-        var fleet: [String: String?] = [:]
-        fleet[candidates[0]] = statusJSON(state: "Running", dns: "first.tail1.ts.net.", iosPeerOnline: false)
-        fleet[candidates[1]] = statusJSON(state: "Running", dns: "second.tail2.ts.net.", iosPeerOnline: false)
-        for extra in candidates.dropFirst(2) { fleet[extra] = nil }
-        stubBackends(fleet, serveCalls: serveCalls)
-
+    func testBothRunningNoPhoneFallsBackToSocketEndpoint() {
+        TailscaleServe.socketPaths = { ["/var/run/tailscaled-personal.sock"] }
+        TailscaleServe.runner = { _, args in
+            if args.contains("--json") {
+                if self.socketArg(in: args) != nil {
+                    return (0, self.statusJSON(state: "Running", dns: "personal.tail2.ts.net.", iosPeerOnline: false))
+                }
+                return (0, self.statusJSON(state: "Running", dns: "work.tail1.ts.net.", iosPeerOnline: false))
+            }
+            return (0, "")
+        }
+        // Socket endpoints are probed first, so with no phone anywhere the
+        // explicitly-configured daemon wins.
         XCTAssertEqual(
             TailscaleServe.reviewBaseURL(),
-            "https://first.tail1.ts.net:\(GavelConstants.reviewTailnetHTTPSPort)")
+            "https://personal.tail2.ts.net:\(GavelConstants.reviewTailnetHTTPSPort)")
+    }
+
+    func testSameNodeReachedTwiceIsDeduped() {
+        TailscaleServe.socketPaths = { [] }
+        var serveCalls = 0
+        // Every default-discovery probe (one per installed binary) reports
+        // the same node — must collapse to one backend, one serve call.
+        TailscaleServe.runner = { _, args in
+            if args.contains("--json") {
+                return (0, self.statusJSON(state: "Running", dns: "solo.tail1.ts.net.", iosPeerOnline: true))
+            }
+            serveCalls += 1
+            return (0, "")
+        }
+        XCTAssertEqual(
+            TailscaleServe.reviewBaseURL(),
+            "https://solo.tail1.ts.net:\(GavelConstants.reviewTailnetHTTPSPort)")
+        XCTAssertEqual(serveCalls, 1)
     }
 
     func testAllStoppedFailsSoft() {
-        let serveCalls = NSMutableArray()
-        var fleet: [String: String?] = [:]
-        for binary in TailscaleServe.candidateBinaries() {
-            fleet[binary] = statusJSON(state: "Stopped", dns: "x.ts.net.")
+        TailscaleServe.socketPaths = { ["/var/run/tailscaled-personal.sock"] }
+        var serveCalls = 0
+        TailscaleServe.runner = { _, args in
+            if args.contains("--json") {
+                return (0, self.statusJSON(state: "Stopped", dns: "x.ts.net."))
+            }
+            serveCalls += 1
+            return (0, "")
         }
-        stubBackends(fleet, serveCalls: serveCalls)
-
         XCTAssertNil(TailscaleServe.reviewBaseURL())
-        XCTAssertEqual(serveCalls.count, 0)
+        XCTAssertEqual(serveCalls, 0)
     }
 
-    func testServeRegistrationFailureFailsSoft() throws {
-        try XCTSkipIf(TailscaleServe.candidateBinaries().isEmpty, "no tailscale binaries installed")
+    func testServeFailureIncludingTimeoutFailsSoft() {
+        TailscaleServe.socketPaths = { [] }
         TailscaleServe.runner = { _, args in
-            if args.first == "status" {
+            if args.contains("--json") {
                 return (0, self.statusJSON(state: "Running", dns: "x.ts.net."))
             }
-            return (1, "")
+            // 124 is the runner's timeout status — the blocked "Serve is not
+            // enabled" interactive wait surfaces this way.
+            return (124, "Serve is not enabled on your tailnet.")
         }
         XCTAssertNil(TailscaleServe.reviewBaseURL())
     }
 
     func testNoRunnableBinariesFailsSoft() {
+        TailscaleServe.socketPaths = { [] }
         TailscaleServe.runner = { _, _ in nil }
         XCTAssertNil(TailscaleServe.reviewBaseURL())
+    }
+
+    // MARK: - Serve-disabled enable URL
+
+    func testEnableURLExtraction() {
+        let output = """
+
+        Serve is not enabled on your tailnet.
+        To enable, visit:
+
+        \thttps://login.tailscale.com/f/serve?node=nABC123CNTRL
+        """
+        XCTAssertEqual(
+            TailscaleServe.enableURL(fromServeOutput: output),
+            "https://login.tailscale.com/f/serve?node=nABC123CNTRL")
+        XCTAssertNil(TailscaleServe.enableURL(fromServeOutput: "some other failure"))
+        XCTAssertEqual(
+            TailscaleServe.enableURL(fromServeOutput: "Serve is not enabled on your tailnet."),
+            "https://login.tailscale.com")
     }
 }
