@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.41.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.40.0...v1.41.0) (2026-07-07)
+
+
+### Features
+
+* **approval:** embedded diff review server with web resolver ([#193](https://github.com/JaysonRawlins/claude-gavel/issues/193)) ([02106a1](https://github.com/JaysonRawlins/claude-gavel/commit/02106a1b98522c79f2e43edb36e92c63222fb45f))
+* **notifications:** review link in Telegram commit approvals ([#194](https://github.com/JaysonRawlins/claude-gavel/issues/194)) ([d4f4e1c](https://github.com/JaysonRawlins/claude-gavel/commit/d4f4e1c08751e264f394416eeddd0028d95eeb84))
+
+
+### Bug Fixes
+
+* **approval:** dismiss Mac panel on web-review resolution ([43cbf11](https://github.com/JaysonRawlins/claude-gavel/commit/43cbf112003d62977eb31fac545a8dda732147fe))
+* **approval:** honor git -C when capturing review diff ([ad1918b](https://github.com/JaysonRawlins/claude-gavel/commit/ad1918b5fac62be0184895063a085a65bb52b5f9))
+* **approval:** offer review link on credential-withheld commits ([6929502](https://github.com/JaysonRawlins/claude-gavel/commit/69295024d87b3ac052f279809966849ab70db03f))
+
 ## [1.40.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.39.1...v1.40.0) (2026-07-06)
 
 
