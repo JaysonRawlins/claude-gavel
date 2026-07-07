@@ -1,8 +1,24 @@
 import Foundation
 
+/// An inline keyboard button — exactly one of callbackData/url per the
+/// Telegram Bot API (callback buttons resolve approvals, url buttons open
+/// the tailnet review page).
 struct TelegramButton {
     let text: String
-    let callbackData: String
+    let callbackData: String?
+    let url: String?
+
+    init(text: String, callbackData: String) {
+        self.text = text
+        self.callbackData = callbackData
+        self.url = nil
+    }
+
+    init(text: String, url: String) {
+        self.text = text
+        self.callbackData = nil
+        self.url = url
+    }
 }
 
 struct TelegramCallback {

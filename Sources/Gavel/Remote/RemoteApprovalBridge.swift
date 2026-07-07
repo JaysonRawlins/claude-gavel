@@ -85,7 +85,7 @@ final class RemoteApprovalBridge {
     /// `leaseDomain`/`allowSite` (both required together) add a browsing-lease
     /// button for chrome navigate approvals — the phone twin of the panel's
     /// "Allow Site" (see BrowsingLease).
-    func notify(resolvable: ResolvableApproval, text: String, pid: Int = 0, toolName: String = "", withheld: Bool = false, allowSession: (() -> Void)?, offerCommentClean: Bool = false, leaseDomain: String? = nil, allowSite: (() -> Void)? = nil) {
+    func notify(resolvable: ResolvableApproval, text: String, pid: Int = 0, toolName: String = "", withheld: Bool = false, allowSession: (() -> Void)?, offerCommentClean: Bool = false, leaseDomain: String? = nil, allowSite: (() -> Void)? = nil, reviewURL: String? = nil) {
         lock.lock(); let chat = chatId; lock.unlock()
         guard let chat else { return }
 
@@ -112,10 +112,15 @@ final class RemoteApprovalBridge {
             }
         }
 
-        var keyboard: [[TelegramButton]] = [
+        var keyboard: [[TelegramButton]] = []
+        // Review link leads the keyboard: on a commit approval the intended
+        // flow is review first, then verdict (on the page or via the buttons).
+        if let reviewURL {
+            keyboard.append([TelegramButton(text: "🔍 Review diff", url: reviewURL)])
+        }
+        keyboard.append(
             [TelegramButton(text: "✅ Allow once", callbackData: "a:\(nonce)"),
-             TelegramButton(text: "🛑 Deny", callbackData: "d:\(nonce)")],
-        ]
+             TelegramButton(text: "🛑 Deny", callbackData: "d:\(nonce)")])
         // Allow-once-only approvals (nil allowSession) omit the session button entirely.
         if allowSession != nil {
             keyboard.append([TelegramButton(text: "✅ Allow for session", callbackData: "s:\(nonce)")])
