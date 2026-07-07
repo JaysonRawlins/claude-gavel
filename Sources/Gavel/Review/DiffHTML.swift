@@ -7,6 +7,7 @@ struct ReviewContent {
     let files: [DiffFile]
     let includesUnstaged: Bool
     let truncated: Bool
+    var untrackedOmitted: Int = 0
 }
 
 /// Server-side renderer for the mobile review page. Fully self-contained:
@@ -24,6 +25,9 @@ enum DiffHTML {
         }
         if content.truncated {
             banners += banner("Diff truncated at \(GavelConstants.reviewDiffMaxBytes / (1024 * 1024)) MB — review the tail at the desk.")
+        }
+        if content.untrackedOmitted > 0 {
+            banners += banner("\(content.untrackedOmitted) more untracked file\(content.untrackedOmitted == 1 ? "" : "s") will be added but aren't shown.")
         }
 
         let body: String

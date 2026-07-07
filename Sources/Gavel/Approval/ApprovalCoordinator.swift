@@ -238,7 +238,8 @@ final class ApprovalCoordinator: ObservableObject {
             commitMessage: captured.commitMessage,
             files: DiffParser.parse(captured.diffText),
             includesUnstaged: captured.includesUnstaged,
-            truncated: captured.truncated)
+            truncated: captured.truncated,
+            untrackedOmitted: captured.untrackedOmitted)
         let nonce = DiffReviewServer.shared.register(content: content, resolvable: resolvable)
         gavelLog("[review] link created pid=\(session.pid) files=\(content.files.count) nonce=\(nonce.prefix(8))…")
         return "\(base)/review/\(nonce)"

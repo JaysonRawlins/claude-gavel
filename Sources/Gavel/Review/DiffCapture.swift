@@ -6,22 +6,47 @@ import Foundation
 struct CapturedDiff {
     let diffText: String
     let commitMessage: String?
-    /// True when the commit used -a/--all, so the diff is HEAD-relative
-    /// (staged-only `--cached` would render empty or incomplete).
+    /// True when the diff is HEAD-relative rather than staged-only: the
+    /// commit used -a/--all, or the same command stages first (git add &&
+    /// git commit) so nothing is staged yet at approval time.
     let includesUnstaged: Bool
     let truncated: Bool
+    /// Untracked files beyond the synthesis cap — surfaced as a banner so
+    /// a partial page never silently reads as the full change.
+    let untrackedOmitted: Int
 }
 
 enum DiffCapture {
 
+    /// Cap on untracked files rendered as synthesized new-file diffs.
+    static let untrackedSynthesisCap = 20
+
     static func capture(cwd: String, command: String) -> CapturedDiff? {
-        let allFlag = commitUsesAllFlag(command)
-        let diffArgs = allFlag
+        let stagesFirst = commandStagesBeforeCommit(command)
+        let headRelative = commitUsesAllFlag(command) || stagesFirst
+        let diffArgs = headRelative
             ? ["diff", "HEAD", "--no-color", "--no-ext-diff"]
             : ["diff", "--cached", "--no-color", "--no-ext-diff"]
         guard let raw = runGit(diffArgs, cwd: cwd) else { return nil }
 
         var text = raw
+        var untrackedOmitted = 0
+        if stagesFirst {
+            // The pending `git add` will pick up untracked files that no
+            // HEAD-relative diff can show — synthesize their new-file diffs.
+            let untracked = (runGit(["ls-files", "--others", "--exclude-standard"], cwd: cwd) ?? "")
+                .split(separator: "\n").map(String.init)
+            for path in untracked.prefix(untrackedSynthesisCap) {
+                // --no-index exits 1 when the files differ — that's success here.
+                guard let fileDiff = runGit(
+                    ["diff", "--no-color", "--no-index", "--", "/dev/null", path],
+                    cwd: cwd, okStatuses: [0, 1]) else { continue }
+                if !text.isEmpty, !text.hasSuffix("\n") { text += "\n" }
+                text += fileDiff
+            }
+            untrackedOmitted = max(0, untracked.count - untrackedSynthesisCap)
+        }
+
         var truncated = false
         if text.utf8.count > GavelConstants.reviewDiffMaxBytes {
             // Cut at a line boundary so the parser never sees a torn hunk line.
@@ -32,9 +57,23 @@ enum DiffCapture {
         return CapturedDiff(
             diffText: text,
             commitMessage: commitMessage(from: command),
-            includesUnstaged: allFlag,
-            truncated: truncated
+            includesUnstaged: headRelative,
+            truncated: truncated,
+            untrackedOmitted: untrackedOmitted
         )
+    }
+
+    /// True when a `git add` segment precedes the commit in the same
+    /// command ("git add -A && git commit …"): at approval time the add
+    /// hasn't run, so the staged diff is empty and HEAD-relative capture
+    /// plus untracked synthesis is the only faithful preview.
+    static func commandStagesBeforeCommit(_ command: String) -> Bool {
+        let stripped = strippingQuotedSpans(command)
+        guard let commitRange = stripped.range(of: #"\bcommit\b"#, options: .regularExpression) else {
+            return false
+        }
+        let head = String(stripped[..<commitRange.lowerBound])
+        return head.range(of: #"\bgit\b[^;&|]*\badd\b"#, options: .regularExpression) != nil
     }
 
     /// Repo dir for the diff. Honors `git -C <path>` — agents routinely
@@ -110,7 +149,7 @@ enum DiffCapture {
     /// Runs git synchronously in `cwd` and returns stdout, or nil on failure.
     /// Absolute binary + augmented PATH: the LaunchAgent inherits a minimal
     /// PATH and git may exec helpers from /usr/local or homebrew.
-    static func runGit(_ args: [String], cwd: String) -> String? {
+    static func runGit(_ args: [String], cwd: String, okStatuses: Set<Int32> = [0]) -> String? {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         task.arguments = ["-C", cwd, "--no-pager"] + args
@@ -142,7 +181,7 @@ enum DiffCapture {
         task.waitUntilExit()
         drained.wait()
 
-        guard task.terminationStatus == 0 else {
+        guard okStatuses.contains(task.terminationStatus) else {
             gavelLog("[review] git \(args.first ?? "?") exited \(task.terminationStatus) cwd=\(cwd)")
             return nil
         }

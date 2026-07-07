@@ -20,6 +20,45 @@ final class DiffCaptureTests: XCTestCase {
         XCTAssertFalse(DiffCapture.commitUsesAllFlag("git commit -m 'add -a support later'"))
     }
 
+    // MARK: - Stage-before-commit compounds
+
+    func testDetectsAddBeforeCommit() {
+        XCTAssertTrue(DiffCapture.commandStagesBeforeCommit("git add -A && git commit -m x"))
+        XCTAssertTrue(DiffCapture.commandStagesBeforeCommit("git add foo.py; git commit -m x"))
+        XCTAssertTrue(DiffCapture.commandStagesBeforeCommit("git -C /repo add . && git -C /repo commit -m x"))
+        XCTAssertFalse(DiffCapture.commandStagesBeforeCommit("git commit -m 'add stuff'"))
+        XCTAssertFalse(DiffCapture.commandStagesBeforeCommit("git commit -m x && git add later.txt"))
+        XCTAssertFalse(DiffCapture.commandStagesBeforeCommit(#"git commit -m "run git add first next time""#))
+    }
+
+    func testAddCommitCompoundCapturesUnstagedAndUntracked() throws {
+        let repo = try makeRepo()
+        try write("v1\n", to: "tracked.txt", in: repo)
+        XCTAssertNotNil(DiffCapture.runGit(["add", "tracked.txt"], cwd: repo))
+        XCTAssertNotNil(DiffCapture.runGit(
+            ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"], cwd: repo))
+
+        // Nothing staged: a tracked edit plus a brand-new untracked file,
+        // exactly the state at approval time for "git add -A && git commit".
+        try write("v2\n", to: "tracked.txt", in: repo)
+        try write("brand new\n", to: "fresh.txt", in: repo)
+
+        let captured = try XCTUnwrap(DiffCapture.capture(
+            cwd: repo, command: "git add -A && git commit -m 'compound'"))
+        XCTAssertTrue(captured.includesUnstaged)
+        XCTAssertTrue(captured.diffText.contains("+v2"), "tracked edit must appear")
+        XCTAssertTrue(captured.diffText.contains("+brand new"), "untracked file must be synthesized")
+        XCTAssertEqual(captured.untrackedOmitted, 0)
+
+        let files = DiffParser.parse(captured.diffText)
+        XCTAssertEqual(files.count, 2)
+
+        // Same tree, plain commit: staged view stays empty — the compound
+        // detection is what makes the difference.
+        let plain = try XCTUnwrap(DiffCapture.capture(cwd: repo, command: "git commit -m x"))
+        XCTAssertTrue(plain.diffText.isEmpty)
+    }
+
     // MARK: - Repo dir resolution
 
     func testRepoDirHonorsDashC() {
