@@ -39,7 +39,7 @@ final class FakeTelegramTransport: TelegramTransport {
     var parkedUpdatesCompletion: ((Result<[TelegramUpdate], Error>) -> Void)?
 
     var lastCallbackData: [String] {
-        (sentMessages.last?.keyboard ?? []).flatMap { $0 }.map { $0.callbackData }
+        (sentMessages.last?.keyboard ?? []).flatMap { $0 }.compactMap { $0.callbackData }
     }
 
     var lastSentMessageId: Int { nextMessageId - 1 }

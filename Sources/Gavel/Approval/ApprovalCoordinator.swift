@@ -198,7 +198,36 @@ final class ApprovalCoordinator: ObservableObject {
             ? RemoteApprovalBridge.withheldBody(payload: payload, session: session)
             : RemoteApprovalBridge.summaryBody(payload: payload, session: session, triggerReason: pending.triggerReason)
         let isCommit = withheld == nil && payload.toolName == "Bash" && (payload.command?.contains("commit") ?? false)
-        bridge.notify(resolvable: resolvable, text: text, pid: session.pid, toolName: payload.toolName, withheld: withheld != nil, allowSession: allowSession, offerCommentClean: isCommit, leaseDomain: leaseDomain, allowSite: allowSite)
+        let reviewURL = isCommit ? makeReviewLink(payload: payload, session: session, resolvable: resolvable) : nil
+        bridge.notify(resolvable: resolvable, text: text, pid: session.pid, toolName: payload.toolName, withheld: withheld != nil, allowSession: allowSession, offerCommentClean: isCommit, leaseDomain: leaseDomain, allowSite: allowSite, reviewURL: reviewURL)
+    }
+
+    /// Snapshot the pending commit's diff, register it with the review
+    /// server, and return the tailnet review URL. Every failure is soft —
+    /// a nil just means the Telegram message goes out without a link.
+    private func makeReviewLink(payload: PreToolUsePayload, session: Session, resolvable: ResolvableApproval) -> String? {
+        guard let cwd = payload.cwd ?? session.cwd, let command = payload.command else { return nil }
+        guard let captured = DiffCapture.capture(cwd: cwd, command: command),
+              !captured.diffText.isEmpty else {
+            // Empty diff (e.g. --amend reword) — a review page would show nothing.
+            return nil
+        }
+        do {
+            try DiffReviewServer.shared.start()
+        } catch {
+            gavelLog("[review] server start failed: \(error.localizedDescription)")
+            return nil
+        }
+        guard let base = TailscaleServe.reviewBaseURL() else { return nil }
+        let content = ReviewContent(
+            repoName: URL(fileURLWithPath: cwd).lastPathComponent,
+            commitMessage: captured.commitMessage,
+            files: DiffParser.parse(captured.diffText),
+            includesUnstaged: captured.includesUnstaged,
+            truncated: captured.truncated)
+        let nonce = DiffReviewServer.shared.register(content: content, resolvable: resolvable)
+        gavelLog("[review] link created pid=\(session.pid) files=\(content.files.count) nonce=\(nonce.prefix(8))…")
+        return "\(base)/review/\(nonce)"
     }
 
     /// Remove a pending approval resolved remotely from its session panel.

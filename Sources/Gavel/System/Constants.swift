@@ -69,6 +69,10 @@ enum GavelConstants {
     /// tailnet reachability comes exclusively via `tailscale serve`.
     static let reviewServerPort: UInt16 = 48765
 
+    /// Tailnet-side HTTPS port for review links. Dedicated port so the serve
+    /// mapping never clobbers anything the user serves on 443.
+    static let reviewTailnetHTTPSPort: UInt16 = 8443
+
     /// Cap on a review verdict POST body.
     static let reviewMaxBodyBytes = 64 * 1024
 

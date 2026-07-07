@@ -104,7 +104,14 @@ final class URLSessionTelegramTransport: TelegramTransport {
     }
 
     private func encode(_ keyboard: [[TelegramButton]]) -> [[[String: String]]] {
-        keyboard.map { row in row.map { ["text": $0.text, "callback_data": $0.callbackData] } }
+        keyboard.map { row in
+            row.map { button in
+                if let url = button.url {
+                    return ["text": button.text, "url": url]
+                }
+                return ["text": button.text, "callback_data": button.callbackData ?? ""]
+            }
+        }
     }
 
     private func call(_ method: String, params: [String: Any], completion: @escaping (Result<[String: Any], Error>) -> Void) {

@@ -151,6 +151,28 @@ Slept and exited sessions remain as tombstones with **History**, **Resume** (cop
 
 ![Bulk operations bar](docs/images/session-bulk-bar.png)
 
+## Phone Pre-Commit Review
+
+For sessions with the **Phone** toggle on, a `git commit` approval adds a
+**🔍 Review diff** button to the Telegram message. It opens a mobile review
+page of the pending commit's diff — served by the daemon on loopback and
+exposed only to your tailnet via `tailscale serve` (never funnel; requires
+Tailscale running on the Mac and your phone on the tailnet).
+
+Review change by change, attach per-hunk comments, then:
+
+- **Approve** — the commit proceeds; comments ride along as a non-blocking
+  note to Claude
+- **Request changes** — the commit is blocked and your comments become the
+  deny reason as `file:line — comment` lines; Claude applies the feedback
+  and the next commit attempt gets a fresh review link
+
+The page races the Mac panel and the Telegram buttons — whichever answers
+first wins, exactly once. Hunks containing recognizable credentials are
+withheld from the page. The diff is snapshotted at approval time; commits
+using `-a`/`-am` are captured HEAD-relative so unstaged tracked changes
+show correctly.
+
 ## Session Context
 
 Gavel injects `~/.claude/gavel/session-context.md` into every Claude Code session at startup. This seeds Claude with engineering principles, code quality standards, and verification practices.
