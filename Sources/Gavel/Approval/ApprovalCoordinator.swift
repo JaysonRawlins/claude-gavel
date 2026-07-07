@@ -206,10 +206,18 @@ final class ApprovalCoordinator: ObservableObject {
     /// server, and return the tailnet review URL. Every failure is soft —
     /// a nil just means the Telegram message goes out without a link.
     private func makeReviewLink(payload: PreToolUsePayload, session: Session, resolvable: ResolvableApproval) -> String? {
-        guard let cwd = payload.cwd ?? session.cwd, let command = payload.command else { return nil }
-        guard let captured = DiffCapture.capture(cwd: cwd, command: command),
-              !captured.diffText.isEmpty else {
+        guard let fallbackCwd = payload.cwd ?? session.cwd, let command = payload.command else {
+            gavelLog("[review] no cwd/command on commit approval — no review link")
+            return nil
+        }
+        let cwd = DiffCapture.repoDir(command: command, fallback: fallbackCwd)
+        guard let captured = DiffCapture.capture(cwd: cwd, command: command) else {
+            gavelLog("[review] diff capture failed cwd=\(cwd) — no review link")
+            return nil
+        }
+        guard !captured.diffText.isEmpty else {
             // Empty diff (e.g. --amend reword) — a review page would show nothing.
+            gavelLog("[review] empty diff cwd=\(cwd) — no review link")
             return nil
         }
         do {

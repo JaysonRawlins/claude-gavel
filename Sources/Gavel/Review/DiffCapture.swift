@@ -37,6 +37,32 @@ enum DiffCapture {
         )
     }
 
+    /// Repo dir for the diff. Honors `git -C <path>` — agents routinely
+    /// commit with -C because their shell cwd differs from the repo — else
+    /// falls back to the hook payload's cwd. Relative -C paths resolve
+    /// against that fallback.
+    static func repoDir(command: String, fallback: String) -> String {
+        // Git global options precede the subcommand, so only scan up to
+        // "commit" — a "-C /path" inside the -m message can never match.
+        let head: String
+        if let commitRange = command.range(of: #"\bcommit\b"#, options: .regularExpression) {
+            head = String(command[..<commitRange.lowerBound])
+        } else {
+            head = command
+        }
+        for pattern in [#"(?:^|\s)-C[ \t]+"([^"]+)""#, #"(?:^|\s)-C[ \t]+'([^']+)'"#, #"(?:^|\s)-C[ \t]+([^\s"']+)"#] {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(head.startIndex..., in: head)
+            if let match = regex.firstMatch(in: head, range: range),
+               let r = Range(match.range(at: 1), in: head) {
+                let path = String(head[r])
+                if path.hasPrefix("/") { return path }
+                return (fallback as NSString).appendingPathComponent(path)
+            }
+        }
+        return fallback
+    }
+
     /// Detects -a/--all on the commit invocation. Quoted spans are stripped
     /// first so words inside the -m message can't read as flags.
     static func commitUsesAllFlag(_ command: String) -> Bool {

@@ -20,6 +20,29 @@ final class DiffCaptureTests: XCTestCase {
         XCTAssertFalse(DiffCapture.commitUsesAllFlag("git commit -m 'add -a support later'"))
     }
 
+    // MARK: - Repo dir resolution
+
+    func testRepoDirHonorsDashC() {
+        XCTAssertEqual(
+            DiffCapture.repoDir(command: "git -C /tmp/scratch commit -m x", fallback: "/repo"),
+            "/tmp/scratch")
+        XCTAssertEqual(
+            DiffCapture.repoDir(command: #"git -C "/tmp/my repo" commit -m x"#, fallback: "/repo"),
+            "/tmp/my repo")
+        XCTAssertEqual(
+            DiffCapture.repoDir(command: "git -C sub/dir commit -m x", fallback: "/repo"),
+            "/repo/sub/dir")
+        XCTAssertEqual(
+            DiffCapture.repoDir(command: "git commit -m x", fallback: "/repo"),
+            "/repo")
+    }
+
+    func testRepoDirIgnoresDashCInsideMessage() {
+        XCTAssertEqual(
+            DiffCapture.repoDir(command: #"git commit -m "use -C /elsewhere for git""#, fallback: "/repo"),
+            "/repo")
+    }
+
     // MARK: - Message extraction
 
     func testCommitMessageExtraction() {
