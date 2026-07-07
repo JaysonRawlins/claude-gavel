@@ -197,9 +197,12 @@ final class ApprovalCoordinator: ObservableObject {
         let text = withheld != nil
             ? RemoteApprovalBridge.withheldBody(payload: payload, session: session)
             : RemoteApprovalBridge.summaryBody(payload: payload, session: session, triggerReason: pending.triggerReason)
-        let isCommit = withheld == nil && payload.toolName == "Bash" && (payload.command?.contains("commit") ?? false)
+        let isCommit = payload.toolName == "Bash" && (payload.command?.contains("commit") ?? false)
+        // Review link even on credential-withheld commits: the page never
+        // shows the command, secret hunks are withheld on-page, and a
+        // withheld commit is exactly when phone-side verification matters.
         let reviewURL = isCommit ? makeReviewLink(payload: payload, session: session, resolvable: resolvable) : nil
-        bridge.notify(resolvable: resolvable, text: text, pid: session.pid, toolName: payload.toolName, withheld: withheld != nil, allowSession: allowSession, offerCommentClean: isCommit, leaseDomain: leaseDomain, allowSite: allowSite, reviewURL: reviewURL)
+        bridge.notify(resolvable: resolvable, text: text, pid: session.pid, toolName: payload.toolName, withheld: withheld != nil, allowSession: allowSession, offerCommentClean: isCommit && withheld == nil, leaseDomain: leaseDomain, allowSite: allowSite, reviewURL: reviewURL)
     }
 
     /// Snapshot the pending commit's diff, register it with the review
