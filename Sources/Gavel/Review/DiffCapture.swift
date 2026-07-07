@@ -89,6 +89,15 @@ enum DiffCapture {
         } else {
             head = command
         }
+
+        // `cd <path> && git commit` compounds: the commit runs in the cd
+        // target, not the payload cwd. -C still overrides (git semantics),
+        // resolving relative to the post-cd base.
+        var base = fallback
+        if let cd = lastCdTarget(inHead: head) {
+            base = cd.hasPrefix("/") ? cd : (base as NSString).appendingPathComponent(cd)
+        }
+
         for pattern in [#"(?:^|\s)-C[ \t]+"([^"]+)""#, #"(?:^|\s)-C[ \t]+'([^']+)'"#, #"(?:^|\s)-C[ \t]+([^\s"']+)"#] {
             guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
             let range = NSRange(head.startIndex..., in: head)
@@ -96,10 +105,28 @@ enum DiffCapture {
                let r = Range(match.range(at: 1), in: head) {
                 let path = String(head[r])
                 if path.hasPrefix("/") { return path }
-                return (fallback as NSString).appendingPathComponent(path)
+                return (base as NSString).appendingPathComponent(path)
             }
         }
-        return fallback
+        return base
+    }
+
+    /// Last `cd <path>` among the command segments before the commit —
+    /// that's the directory the commit actually runs in. Best-effort shell
+    /// parsing is fine here: the review page is preview-only, so a wrong
+    /// guess affects which repo is rendered, never what executes. Args with
+    /// `$` are skipped (unresolvable) so the payload-cwd fallback applies.
+    static func lastCdTarget(inHead head: String) -> String? {
+        var target: String?
+        for rawSegment in head.components(separatedBy: CharacterSet(charactersIn: ";&|")) {
+            let segment = rawSegment.trimmingCharacters(in: .whitespaces)
+            guard segment.hasPrefix("cd ") || segment.hasPrefix("cd\t") else { continue }
+            var arg = String(segment.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+            arg = arg.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            guard !arg.isEmpty, arg != "-", !arg.contains("$") else { continue }
+            target = (arg as NSString).expandingTildeInPath
+        }
+        return target
     }
 
     /// Detects -a/--all on the commit invocation. Quoted spans are stripped

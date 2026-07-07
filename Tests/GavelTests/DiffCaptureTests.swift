@@ -76,6 +76,49 @@ final class DiffCaptureTests: XCTestCase {
             "/repo")
     }
 
+    func testRepoDirHonorsCdCompounds() {
+        XCTAssertEqual(
+            DiffCapture.repoDir(command: "cd /tmp/scratch && git commit -m x", fallback: "/repo"),
+            "/tmp/scratch")
+        XCTAssertEqual(
+            DiffCapture.repoDir(command: "cd /a; git add -A; git commit -m x", fallback: "/repo"),
+            "/a")
+        XCTAssertEqual(
+            DiffCapture.repoDir(command: "cd sub && git commit -m x", fallback: "/repo"),
+            "/repo/sub")
+        // Last cd before the commit is where the commit runs.
+        XCTAssertEqual(
+            DiffCapture.repoDir(command: "cd /a && ls && cd /b && git commit -m x", fallback: "/repo"),
+            "/b")
+        XCTAssertEqual(
+            DiffCapture.repoDir(command: #"cd "/tmp/my repo" && git commit -m x"#, fallback: "/repo"),
+            "/tmp/my repo")
+    }
+
+    func testRepoDirDashCOverridesCd() {
+        XCTAssertEqual(
+            DiffCapture.repoDir(command: "cd /a && git -C /b commit -m x", fallback: "/repo"),
+            "/b")
+        // Relative -C resolves against the post-cd base, matching git.
+        XCTAssertEqual(
+            DiffCapture.repoDir(command: "cd /a && git -C sub commit -m x", fallback: "/repo"),
+            "/a/sub")
+    }
+
+    func testRepoDirCdEdgeCases() {
+        // Unresolvable $VAR falls back to payload cwd rather than a garbage path.
+        XCTAssertEqual(
+            DiffCapture.repoDir(command: "cd $WORKDIR && git commit -m x", fallback: "/repo"),
+            "/repo")
+        // cd inside the message can't match: it's past the commit token.
+        XCTAssertEqual(
+            DiffCapture.repoDir(command: #"git commit -m "then cd /elsewhere and run""#, fallback: "/repo"),
+            "/repo")
+        XCTAssertEqual(
+            DiffCapture.repoDir(command: "cd ~/proj && git commit -m x", fallback: "/repo"),
+            ("~/proj" as NSString).expandingTildeInPath)
+    }
+
     func testRepoDirIgnoresDashCInsideMessage() {
         XCTAssertEqual(
             DiffCapture.repoDir(command: #"git commit -m "use -C /elsewhere for git""#, fallback: "/repo"),
