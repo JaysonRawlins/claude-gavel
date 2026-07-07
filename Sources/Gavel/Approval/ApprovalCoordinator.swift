@@ -191,7 +191,10 @@ final class ApprovalCoordinator: ObservableObject {
             }
         }
         resolvable.addCleanup { [weak self] source, _ in
-            guard source == .telegram else { return }
+            // Any remote resolution must clear the Mac panel, or it lingers
+            // showing a stale approval. Mac-source skips: the panel already
+            // advances itself.
+            guard source == .telegram || source == .web else { return }
             DispatchQueue.main.async { self?.dismissPending(id: pendingId, pid: session.pid) }
         }
         let text = withheld != nil

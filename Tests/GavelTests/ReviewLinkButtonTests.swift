@@ -28,6 +28,20 @@ final class ReviewLinkButtonTests: XCTestCase {
         XCTAssertTrue(fake.lastCallbackData.contains { $0.hasPrefix("c:") })
     }
 
+    func testWebResolutionEditsMessageWithReviewLabel() {
+        let fake = FakeTelegramTransport()
+        let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)
+        let approval = ResolvableApproval { _ in }
+
+        bridge.notify(
+            resolvable: approval, text: "commit?", allowSession: nil,
+            reviewURL: "https://mac.ts.net:8443/review/abc")
+        approval.resolve(Decision(verdict: .allow, reason: "User approved via web review"), from: .web)
+
+        XCTAssertTrue(fake.edits.contains { $0.text.contains("review page") },
+                      "web resolution must not read as 'Answered on Mac'")
+    }
+
     func testNoReviewURLMeansNoURLButtons() {
         let fake = FakeTelegramTransport()
         let bridge = RemoteApprovalBridge(transport: fake, chatId: owner)

@@ -411,7 +411,11 @@ final class RemoteApprovalBridge {
     }
 
     private static func macResolvedText(_ source: ResolvableApproval.Source) -> String {
-        source == .timeout ? "⏱ Timed out — denied (Mac)" : "✅ Answered on Mac"
+        switch source {
+        case .timeout: return "⏱ Timed out — denied (Mac)"
+        case .web: return "🔍 Resolved on the review page"
+        default: return "✅ Answered on Mac"
+        }
     }
 
     /// Build the redacted, control-stripped message body for an approval — full command, capped near Telegram's limit.
