@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.42.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.41.2...v1.42.0) (2026-07-10)
+
+
+### Features
+
+* **approval:** tell the agent when the diff was reviewed before approval ([#198](https://github.com/JaysonRawlins/claude-gavel/issues/198)) ([d5eaa14](https://github.com/JaysonRawlins/claude-gavel/commit/d5eaa147ddf41e53826851b5c6e0dad7d7eba981))
+
 ## [1.41.2](https://github.com/JaysonRawlins/claude-gavel/compare/v1.41.1...v1.41.2) (2026-07-07)
 
 
