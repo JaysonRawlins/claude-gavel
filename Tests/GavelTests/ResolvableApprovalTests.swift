@@ -34,6 +34,32 @@ final class ResolvableApprovalTests: XCTestCase {
         XCTAssertTrue(approval.isResolved)
     }
 
+    func testDecisionTransformDecoratesWinningDecision() {
+        var sunk: [Decision] = []
+        let approval = ResolvableApproval { sunk.append($0) }
+        var cleanupDecisions: [Decision] = []
+        approval.addDecisionTransform { decision, _ in
+            decision.appendingContext("reviewed")
+        }
+        approval.addCleanup { _, decision in cleanupDecisions.append(decision) }
+
+        approval.resolve(Decision(verdict: .allow, reason: "panel"), from: .mac)
+
+        XCTAssertEqual(sunk.first?.additionalContext, "reviewed")
+        XCTAssertEqual(cleanupDecisions.first?.additionalContext, "reviewed",
+                       "cleanup hooks must see the transformed decision")
+    }
+
+    func testDecisionTransformAfterResolutionIsIgnored() {
+        var sunk: [Decision] = []
+        let approval = ResolvableApproval { sunk.append($0) }
+        approval.resolve(Decision(verdict: .allow, reason: nil), from: .mac)
+        approval.addDecisionTransform { decision, _ in
+            decision.appendingContext("too late")
+        }
+        XCTAssertNil(sunk.first?.additionalContext)
+    }
+
     func testConcurrentResolveYieldsExactlyOneWinner() {
         let approval = ResolvableApproval { _ in }
         let winners = NSMutableArray()

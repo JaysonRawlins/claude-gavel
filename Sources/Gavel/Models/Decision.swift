@@ -40,6 +40,21 @@ struct Decision: Codable {
         self.nonSuppressible = nonSuppressible
     }
 
+    /// Copy of this decision with `line` appended to additionalContext
+    /// (newline-joined; becomes the whole context when none was set).
+    func appendingContext(_ line: String) -> Decision {
+        let merged: String
+        if let ctx = additionalContext, !ctx.isEmpty {
+            merged = ctx + "\n" + line
+        } else {
+            merged = line
+        }
+        return Decision(
+            verdict: verdict, reason: reason, additionalContext: merged,
+            updatedInput: updatedInput, askUser: askUser,
+            triggeringRuleId: triggeringRuleId, nonSuppressible: nonSuppressible)
+    }
+
     /// Internal protocol JSON sent to the gavel-hook shim via socket.
     var hookResponse: String {
         switch verdict {

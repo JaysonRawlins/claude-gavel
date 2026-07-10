@@ -35,6 +35,11 @@ final class DiffReviewServer {
         /// Set (under the server lock) once any source resolves the approval.
         var resolvedBy: ResolvableApproval.Source?
         var resolvedAt: Date?
+        /// Set (under the server lock) on the first GET of the still-pending
+        /// review page — the evidence that a human actually opened the diff.
+        /// GETs after resolution serve the "already resolved" page and never
+        /// set this, so it can't be back-filled once the race is over.
+        var viewedAt: Date?
 
         init(nonce: String, content: ReviewContent, resolvable: ResolvableApproval) {
             self.nonce = nonce
@@ -136,6 +141,22 @@ final class DiffReviewServer {
             session.resolvedAt = Date()
             self.lock.unlock()
         }
+        // Reviewed-and-approved vs approved-on-trust: when the review page
+        // was opened before the approval resolved, tell the agent — whichever
+        // responder (Mac panel / Telegram / web) wins the race.
+        resolvable.addDecisionTransform { [weak self] decision, _ in
+            guard let self, decision.verdict == .allow else { return decision }
+            self.lock.lock()
+            let viewed = session.viewedAt != nil
+            self.lock.unlock()
+            guard viewed else { return decision }
+            gavelLog("[review] reviewed-signal attached nonce=\(nonce.prefix(8))…")
+            // Standalone form when there's no note; appended line otherwise.
+            let hasNote = !(decision.additionalContext?.isEmpty ?? true)
+            return decision.appendingContext(hasNote
+                ? "User reviewed the diff before approving."
+                : "User approved this via Gavel — user reviewed the diff before approving")
+        }
         return nonce
     }
 
@@ -209,12 +230,15 @@ final class DiffReviewServer {
             }
             lock.lock()
             let resolvedBy = session.resolvedBy
+            let firstView = resolvedBy == nil && session.viewedAt == nil
+            if firstView { session.viewedAt = Date() }
             lock.unlock()
-            if let resolvedBy {
-                send(connection, status: 200, body: DiffHTML.resolvedPage(by: label(resolvedBy)), contentType: "text/html; charset=utf-8")
-            } else {
-                send(connection, status: 200, body: DiffHTML.page(content: session.content), contentType: "text/html; charset=utf-8")
+            if firstView {
+                gavelLog("[review] page viewed nonce=\(session.nonce.prefix(8))…")
             }
+            let page = resolvedBy.map { DiffHTML.resolvedPage(by: label($0)) }
+                ?? DiffHTML.page(content: session.content)
+            send(connection, status: 200, body: page, contentType: "text/html; charset=utf-8")
             return
         }
 
