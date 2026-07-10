@@ -195,6 +195,78 @@ final class DiffReviewServerTests: XCTestCase {
         XCTAssertTrue(page.body.contains("Mac panel"))
     }
 
+    // MARK: - Reviewed signal
+
+    func testViewedPageThenMacAllowCarriesReviewedSignal() throws {
+        var decision: Decision?
+        let resolvable = ResolvableApproval { decision = $0 }
+        let nonce = server.register(content: makeContent(), resolvable: resolvable)
+
+        _ = try request("/review/\(nonce)")
+        resolvable.resolve(Decision(verdict: .allow, reason: "User approved"), from: .mac)
+
+        let d = try XCTUnwrap(decision)
+        XCTAssertEqual(
+            d.additionalContext,
+            "User approved this via Gavel — user reviewed the diff before approving")
+    }
+
+    func testMacAllowWithoutViewHasNoReviewedSignal() throws {
+        var decision: Decision?
+        let resolvable = ResolvableApproval { decision = $0 }
+        _ = server.register(content: makeContent(), resolvable: resolvable)
+
+        resolvable.resolve(Decision(verdict: .allow, reason: "User approved"), from: .mac)
+
+        let d = try XCTUnwrap(decision)
+        XCTAssertNil(d.additionalContext, "approved-on-trust must not claim a review")
+    }
+
+    func testReviewedSignalAppendsToExistingNote() throws {
+        var decision: Decision?
+        let resolvable = ResolvableApproval { decision = $0 }
+        let nonce = server.register(content: makeContent(), resolvable: resolvable)
+
+        _ = try request("/review/\(nonce)")
+        resolvable.resolve(
+            Decision(
+                verdict: .allow, reason: "User approved",
+                additionalContext: "User approved this via Gavel — commit gate"),
+            from: .telegram)
+
+        let ctx = try XCTUnwrap(decision?.additionalContext)
+        XCTAssertTrue(ctx.hasPrefix("User approved this via Gavel — commit gate"))
+        XCTAssertTrue(ctx.hasSuffix("User reviewed the diff before approving."))
+    }
+
+    func testWebApproveAfterViewCarriesReviewedSignal() throws {
+        var decision: Decision?
+        let resolvable = ResolvableApproval { decision = $0 }
+        let nonce = server.register(content: makeContent(), resolvable: resolvable)
+
+        _ = try request("/review/\(nonce)")
+        let res = try request("/review/\(nonce)/verdict", method: "POST", body: #"{"verdict":"approve"}"#)
+        XCTAssertEqual(res.status, 200)
+
+        let d = try XCTUnwrap(decision)
+        XCTAssertEqual(d.verdict, .allow)
+        XCTAssertEqual(
+            d.additionalContext,
+            "User approved this via Gavel — user reviewed the diff before approving")
+    }
+
+    func testViewedPageThenDenyGetsNoSignal() throws {
+        var decision: Decision?
+        let resolvable = ResolvableApproval { decision = $0 }
+        let nonce = server.register(content: makeContent(), resolvable: resolvable)
+
+        _ = try request("/review/\(nonce)")
+        resolvable.resolve(Decision(verdict: .block, reason: "User denied"), from: .mac)
+
+        let d = try XCTUnwrap(decision)
+        XCTAssertNil(d.additionalContext)
+    }
+
     // MARK: - Credential withholding
 
     func testHunkWithKnownSecretIsWithheld() throws {

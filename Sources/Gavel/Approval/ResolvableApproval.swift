@@ -8,11 +8,15 @@ final class ResolvableApproval {
 
     private let lock = NSLock()
     private var resolved = false
-    private let sink: (Decision) -> Void
+    /// Hands the winning Decision back to the blocked approval worker — the
+    /// closure `requestApproval` passes in to capture the result and signal
+    /// its semaphore.
+    private let deliverDecision: (Decision) -> Void
     private var onResolved: [(Source, Decision) -> Void] = []
+    private var transforms: [(Decision, Source) -> Decision] = []
 
-    init(sink: @escaping (Decision) -> Void) {
-        self.sink = sink
+    init(deliverDecision: @escaping (Decision) -> Void) {
+        self.deliverDecision = deliverDecision
     }
 
     var isResolved: Bool {
@@ -27,8 +31,18 @@ final class ResolvableApproval {
         onResolved.append(hook)
     }
 
-    /// Returns true iff this call won the race. The sink and every cleanup hook
-    /// fire exactly once, on the winning caller's thread.
+    /// Register a transform applied to the winning Decision before it is
+    /// delivered — this is how state known only to one responder (e.g. the
+    /// review page was opened) can decorate a resolution won by a different
+    /// responder. Skipped if already resolved.
+    func addDecisionTransform(_ transform: @escaping (Decision, Source) -> Decision) {
+        lock.lock(); defer { lock.unlock() }
+        guard !resolved else { return }
+        transforms.append(transform)
+    }
+
+    /// Returns true iff this call won the race. The decision is delivered and
+    /// every cleanup hook fires exactly once, on the winning caller's thread.
     @discardableResult
     func resolve(_ decision: Decision, from source: Source) -> Bool {
         lock.lock()
@@ -38,11 +52,14 @@ final class ResolvableApproval {
         }
         resolved = true
         let hooks = onResolved
+        let pendingTransforms = transforms
         onResolved = []
+        transforms = []
         lock.unlock()
 
-        sink(decision)
-        for hook in hooks { hook(source, decision) }
+        let final = pendingTransforms.reduce(decision) { $1($0, source) }
+        deliverDecision(final)
+        for hook in hooks { hook(source, final) }
         return true
     }
 }
