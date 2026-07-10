@@ -59,7 +59,7 @@ final class RuleStore: ObservableObject {
 
     func evaluateDeny(payload: PreToolUsePayload) -> Decision? {
         for i in rules.indices where rules[i].verdict == .block && !rules[i].isDisabled {
-            if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
+            if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath, toolInput: payload.toolInput) {
                 var reason = "Always deny: \(rules[i].name)"
                 if let explanation = rules[i].explanation, !explanation.isEmpty {
                     reason += " — \(explanation)"
@@ -72,7 +72,7 @@ final class RuleStore: ObservableObject {
 
     func evaluateAllow(payload: PreToolUsePayload) -> Decision? {
         for i in rules.indices where rules[i].verdict == .allow && !rules[i].isDisabled {
-            if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
+            if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath, toolInput: payload.toolInput) {
                 return Decision(verdict: .allow, reason: "Always allow: \(rules[i].name)")
             }
         }
@@ -82,7 +82,7 @@ final class RuleStore: ObservableObject {
     /// User-created prompt rules — high priority, checked before allow rules.
     func evaluateUserPrompt(payload: PreToolUsePayload) -> Decision? {
         for i in rules.indices where rules[i].verdict == .prompt && !rules[i].builtIn && !rules[i].isDisabled {
-            if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
+            if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath, toolInput: payload.toolInput) {
                 return Decision(verdict: .block, reason: "Always prompt: \(rules[i].name)", askUser: true, triggeringRuleId: rules[i].id)
             }
         }
@@ -92,7 +92,7 @@ final class RuleStore: ObservableObject {
     /// Overridable built-in prompt rules (MCP exfil defaults, infra-apply, scheduler), checked after allow rules so a user allow rule can override.
     func evaluateBuiltInPrompt(payload: PreToolUsePayload) -> Decision? {
         for i in rules.indices where rules[i].verdict == .prompt && rules[i].builtIn && rules[i].overridable && !rules[i].isDisabled {
-            if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
+            if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath, toolInput: payload.toolInput) {
                 return Decision(verdict: .block, reason: "Default rule: \(rules[i].name)", askUser: true, triggeringRuleId: rules[i].id)
             }
         }
@@ -103,7 +103,7 @@ final class RuleStore: ObservableObject {
     /// checked BEFORE allow rules so a broad allow rule can't silence the checkpoint.
     func evaluateBuiltInPromptNonOverridable(payload: PreToolUsePayload) -> Decision? {
         for i in rules.indices where rules[i].verdict == .prompt && rules[i].builtIn && !rules[i].overridable && !rules[i].isDisabled {
-            if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath) {
+            if rules[i].matches(toolName: payload.toolName, command: payload.command, filePath: payload.filePath, toolInput: payload.toolInput) {
                 return Decision(verdict: .block, reason: "Checkpoint: \(rules[i].name)", askUser: true, triggeringRuleId: rules[i].id, nonSuppressible: rules[i].nonSuppressible)
             }
         }
@@ -141,12 +141,12 @@ final class RuleStore: ObservableObject {
         audit(action: "rule_removed", origin: origin, rule: rule)
     }
 
-    func updateRule(id: UUID, pattern: String, isRegex: Bool, verdict: DecisionVerdict, explanation: String?, origin: String = "panel") {
+    func updateRule(id: UUID, pattern: String, isRegex: Bool, verdict: DecisionVerdict, explanation: String?, argConditions: [String: String]? = nil, origin: String = "panel") {
         guard let idx = rules.firstIndex(where: { $0.id == id }) else { return }
         let old = rules[idx]
         rules[idx] = PersistentRule(
             replacing: old, pattern: pattern, isRegex: isRegex,
-            verdict: verdict, explanation: explanation
+            verdict: verdict, explanation: explanation, argConditions: argConditions
         )
         saveRules()
         audit(action: "rule_updated", origin: origin, rule: rules[idx],
@@ -154,6 +154,14 @@ final class RuleStore: ObservableObject {
     }
 
     private func audit(action: String, origin: String, rule: PersistentRule, detail: String? = nil) {
+        // Arg-scoped rules record their conditions so the journal shows the
+        // narrowed form, not what looks like a blanket allow.
+        var detail = detail
+        if let conditions = rule.argConditions, !conditions.isEmpty {
+            let scope = conditions.sorted { $0.key < $1.key }
+                .map { "\($0.key)=/\($0.value)/" }.joined(separator: ", ")
+            detail = [detail, "args: \(scope)"].compactMap { $0 }.joined(separator: " · ")
+        }
         auditLog?.record(
             action: action, origin: origin,
             toolName: rule.toolName, pattern: rule.pattern,
@@ -617,9 +625,18 @@ struct PersistentRule: Codable, Identifiable {
     /// surfaces in the UI rather than silently re-engaging on reboot). Toggle
     /// from the Rules tab; defaults to false (rule active).
     var isDisabled: Bool
+    /// Per-argument conditions (arg name → regex) narrowing when this rule fires,
+    /// e.g. scoping an MCP allow to `channel` values in an allowlist. Each regex is
+    /// full-string anchored at match time and EVERY condition must match; an absent
+    /// arg fails closed. Allow rules only — on a deny/prompt rule conditions would
+    /// narrow the guard (a loosening), so both inits and the decoder drop them
+    /// unless verdict == .allow. Tighten-only: conditions can only shrink an allow.
+    let argConditions: [String: String]?
 
     /// Pre-compiled regex (rebuilt on first access, not persisted).
     private var _compiledRegex: NSRegularExpression?
+    /// Pre-compiled anchored arg-condition regexes (rebuilt on first use, not persisted).
+    private var _compiledArgRegexes: [String: NSRegularExpression] = [:]
     var compiledRegex: NSRegularExpression? {
         mutating get {
             if _compiledRegex == nil {
@@ -630,7 +647,7 @@ struct PersistentRule: Codable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, toolName, pattern, isRegex, verdict, createdAt, explanation, builtIn, overridable, isDisabled, nonSuppressible
+        case id, name, toolName, pattern, isRegex, verdict, createdAt, explanation, builtIn, overridable, isDisabled, nonSuppressible, argConditions
     }
 
     /// Backward-compatible decoding — isRegex, explanation, builtIn, isDisabled,
@@ -649,6 +666,8 @@ struct PersistentRule: Codable, Identifiable {
         overridable = try c.decodeIfPresent(Bool.self, forKey: .overridable) ?? true
         isDisabled = try c.decodeIfPresent(Bool.self, forKey: .isDisabled) ?? false
         nonSuppressible = try c.decodeIfPresent(Bool.self, forKey: .nonSuppressible) ?? false
+        argConditions = Self.sanitizedConditions(
+            try c.decodeIfPresent([String: String].self, forKey: .argConditions), verdict: verdict)
     }
 
     init(
@@ -660,7 +679,8 @@ struct PersistentRule: Codable, Identifiable {
         builtIn: Bool = false,
         overridable: Bool = true,
         isDisabled: Bool = false,
-        nonSuppressible: Bool = false
+        nonSuppressible: Bool = false,
+        argConditions: [String: String]? = nil
     ) {
         self.id = UUID()
         self.toolName = toolName
@@ -668,7 +688,9 @@ struct PersistentRule: Codable, Identifiable {
         self.isRegex = isRegex
         self.verdict = verdict
         self.createdAt = Date()
+        self.argConditions = Self.sanitizedConditions(argConditions, verdict: verdict)
         self.name = "\(toolName): \(isRegex ? "/" : "")\(pattern)\(isRegex ? "/" : "")"
+            + Self.conditionsSuffix(self.argConditions)
         self.explanation = explanation
         self.builtIn = builtIn
         self.overridable = overridable
@@ -678,14 +700,16 @@ struct PersistentRule: Codable, Identifiable {
     }
 
     /// Update a rule's editable fields while preserving identity (id, toolName, createdAt, builtIn).
-    init(replacing old: PersistentRule, pattern: String, isRegex: Bool, verdict: DecisionVerdict, explanation: String?) {
+    init(replacing old: PersistentRule, pattern: String, isRegex: Bool, verdict: DecisionVerdict, explanation: String?, argConditions: [String: String]? = nil) {
         self.id = old.id
         self.toolName = old.toolName
         self.pattern = pattern
         self.isRegex = isRegex
         self.verdict = verdict
         self.createdAt = old.createdAt
+        self.argConditions = Self.sanitizedConditions(argConditions, verdict: verdict)
         self.name = "\(old.toolName): \(isRegex ? "/" : "")\(pattern)\(isRegex ? "/" : "")"
+            + Self.conditionsSuffix(self.argConditions)
         self.explanation = explanation
         self.builtIn = old.builtIn
         self.overridable = old.overridable
@@ -694,8 +718,26 @@ struct PersistentRule: Codable, Identifiable {
         self._compiledRegex = Self.compilePattern(pattern, isRegex: isRegex)
     }
 
-    mutating func matches(toolName: String, command: String?, filePath: String?) -> Bool {
+    /// Drop conditions on non-allow verdicts (they'd narrow a deny/prompt — a
+    /// loosening) and strip blank keys/patterns; empty result collapses to nil.
+    private static func sanitizedConditions(_ conditions: [String: String]?, verdict: DecisionVerdict) -> [String: String]? {
+        guard verdict == .allow, let conditions else { return nil }
+        let cleaned = conditions.filter {
+            !$0.key.trimmingCharacters(in: .whitespaces).isEmpty
+                && !$0.value.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    private static func conditionsSuffix(_ conditions: [String: String]?) -> String {
+        guard let conditions, !conditions.isEmpty else { return "" }
+        let parts = conditions.sorted { $0.key < $1.key }.map { "\($0.key)=/\($0.value)/" }
+        return " [\(parts.joined(separator: ", "))]"
+    }
+
+    mutating func matches(toolName: String, command: String?, filePath: String?, toolInput: [String: AnyCodable]? = nil) -> Bool {
         guard self.toolName == toolName || self.toolName == "*" else { return false }
+        guard argConditionsSatisfied(by: toolInput) else { return false }
 
         let raw: String
         switch toolName {
@@ -760,6 +802,41 @@ struct PersistentRule: Codable, Identifiable {
 
     private func matchesRegex(_ regex: NSRegularExpression, in string: String) -> Bool {
         regex.firstMatch(in: string, range: NSRange(string.startIndex..., in: string)) != nil
+    }
+
+    /// Every condition's regex must fully match the stringified arg value.
+    /// Fail closed: absent arg, non-scalar value, or an uncompilable pattern
+    /// all reject — the rule simply doesn't fire and evaluation falls through.
+    private mutating func argConditionsSatisfied(by toolInput: [String: AnyCodable]?) -> Bool {
+        guard let conditions = argConditions, !conditions.isEmpty else { return true }
+        for (arg, pattern) in conditions {
+            guard let value = toolInput?[arg].flatMap(Self.scalarString),
+                  let regex = compiledArgRegex(arg: arg, pattern: pattern),
+                  matchesRegex(regex, in: value) else { return false }
+        }
+        return true
+    }
+
+    /// Stringify scalar arg values so conditions can also pin ints/bools
+    /// (e.g. `limit=/50/`). Dicts, arrays, and null stay nil → fail closed.
+    /// Also used by the approval panel to decide which args are scopable.
+    static func scalarString(_ value: AnyCodable) -> String? {
+        switch value.value {
+        case let s as String: return s
+        case let b as Bool: return b ? "true" : "false"
+        case let i as Int: return String(i)
+        case let d as Double: return String(d)
+        default: return nil
+        }
+    }
+
+    /// Anchored `\A(?:pattern)\z` so a condition can't substring-match
+    /// (`C123` must not pass `C1234`) — strictly narrower, tighten-only.
+    private mutating func compiledArgRegex(arg: String, pattern: String) -> NSRegularExpression? {
+        if let cached = _compiledArgRegexes[arg] { return cached }
+        guard let regex = try? NSRegularExpression(pattern: "\\A(?:\(pattern))\\z") else { return nil }
+        _compiledArgRegexes[arg] = regex
+        return regex
     }
 
     private func matchesAnySegment(_ regex: NSRegularExpression, in command: String) -> Bool {

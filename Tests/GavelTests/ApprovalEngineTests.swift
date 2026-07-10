@@ -82,7 +82,7 @@ final class ApprovalEngineTests: XCTestCase {
         typealias A = ApprovalCoordinator.Action
         XCTAssertTrue(A.allowPatternForSession(pattern: "*", context: nil, updatedCommand: nil, updatedInput: nil).createsDurableAllow)
         XCTAssertTrue(A.suppressRuleForSession(ruleId: UUID(), context: nil, updatedCommand: nil, updatedInput: nil).createsDurableAllow)
-        XCTAssertTrue(A.alwaysAllowPattern(pattern: "*", isRegex: false).createsDurableAllow)
+        XCTAssertTrue(A.alwaysAllowPattern(pattern: "*", isRegex: false, argConditions: nil).createsDurableAllow)
 
         XCTAssertFalse(A.allow(context: nil, updatedCommand: nil, updatedInput: nil).createsDurableAllow)
         XCTAssertFalse(A.deny(context: nil).createsDurableAllow)

@@ -19,7 +19,7 @@ final class ApprovalCoordinator: ObservableObject {
             updatedInput: [String: AnyCodable]?)
         case denyPatternForSession(pattern: String, explanation: String?)
         case alwaysDenyPattern(pattern: String, isRegex: Bool, explanation: String?)
-        case alwaysAllowPattern(pattern: String, isRegex: Bool)
+        case alwaysAllowPattern(pattern: String, isRegex: Bool, argConditions: [String: String]?)
         case alwaysPromptPattern(pattern: String, isRegex: Bool)
         case allowSiteForSession(domain: String, context: String?)
 
@@ -363,17 +363,19 @@ final class ApprovalCoordinator: ObservableObject {
             if let e = explText { reason += " — \(e)" }
             current.respond(Decision(verdict: .block, reason: reason))
 
-        case .alwaysAllowPattern(let pattern, let isRegex):
+        case .alwaysAllowPattern(let pattern, let isRegex, let argConditions):
             ctx = nil
             updated = nil
             let sanitized = Self.sanitizeDashes(pattern)
             let rule = PersistentRule(
                 toolName: current.payload.toolName, pattern: sanitized, isRegex: isRegex,
-                verdict: .allow)
+                verdict: .allow, argConditions: argConditions)
             ruleStore?.addRule(rule, origin: "approval-panel:always-allow")
             current.respond(
                 Decision(
-                    verdict: .allow, reason: "Always allow: \(current.payload.toolName): \(pattern)"
+                    // rule.name carries the arg-condition suffix, so a scoped
+                    // allow reads back to the agent as scoped, not blanket.
+                    verdict: .allow, reason: "Always allow: \(rule.name)"
                 ))
 
         case .alwaysPromptPattern(let pattern, let isRegex):
