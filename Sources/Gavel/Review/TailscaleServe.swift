@@ -7,8 +7,11 @@ import Foundation
 /// authenticated tailnet peers. A dedicated HTTPS port keeps the mapping
 /// from clobbering any serve config the user runs on 443.
 ///
-/// No caching: status + registration re-run per review so a `tailscale
-/// serve reset` or daemon flap between commits can't leave stale links.
+/// Discovery + registration re-run per link with a short (60s) result
+/// cache: fresh enough that a `tailscale serve reset` or daemon flap can't
+/// leave stale links for long, but a burst of approvals (every one now
+/// carries a full-command link) doesn't fork two CLI probes each — and a
+/// down tailscale (10s command deadline) can't add 10s to every approval.
 ///
 /// A Mac can run SEVERAL independent backends at once: the Tailscale.app
 /// system extension plus any number of homebrew tailscaleds with custom
@@ -92,6 +95,33 @@ enum TailscaleServe {
             "/usr/local/bin/tailscale",
             "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
         ].filter { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    private static var cachedBase: (url: String?, at: Date)?
+    private static let cacheLock = NSLock()
+    static let cacheTTL: TimeInterval = 60
+
+    /// Cached front-end for `reviewBaseURL()` — successes AND failures both
+    /// hold for `cacheTTL` so per-approval links stay cheap either way.
+    static func cachedReviewBaseURL(now: Date = Date()) -> String? {
+        cacheLock.lock()
+        if let cached = cachedBase, now.timeIntervalSince(cached.at) < cacheTTL {
+            cacheLock.unlock()
+            return cached.url
+        }
+        cacheLock.unlock()
+        let url = reviewBaseURL()
+        cacheLock.lock()
+        cachedBase = (url, now)
+        cacheLock.unlock()
+        return url
+    }
+
+    /// Test seam — drop the cache so stubs take effect immediately.
+    static func resetCache() {
+        cacheLock.lock()
+        cachedBase = nil
+        cacheLock.unlock()
     }
 
     /// Base URL for review links (e.g. "https://host.tailnet.ts.net:8443"),

@@ -197,15 +197,63 @@ final class ApprovalCoordinator: ObservableObject {
             guard source == .telegram || source == .web else { return }
             DispatchQueue.main.async { self?.dismissPending(id: pendingId, pid: session.pid) }
         }
-        let text = withheld != nil
-            ? RemoteApprovalBridge.withheldBody(payload: payload, session: session)
-            : RemoteApprovalBridge.summaryBody(payload: payload, session: session, triggerReason: pending.triggerReason)
         let isCommit = payload.toolName == "Bash" && (payload.command?.contains("commit") ?? false)
         // Review link even on credential-withheld commits: the page never
         // shows the command, secret hunks are withheld on-page, and a
         // withheld commit is exactly when phone-side verification matters.
         let reviewURL = isCommit ? makeReviewLink(payload: payload, session: session, resolvable: resolvable) : nil
-        bridge.notify(resolvable: resolvable, text: text, pid: session.pid, toolName: payload.toolName, withheld: withheld != nil, allowSession: allowSession, offerCommentClean: isCommit && withheld == nil, leaseDomain: leaseDomain, allowSite: allowSite, reviewURL: reviewURL)
+        // Full-command link on EVERY mirrored approval — Telegram keeps the
+        // redacted/truncated summary, full fidelity lives on the tailnet page.
+        let commandURL = makeCommandLink(payload: payload, session: session, resolvable: resolvable, triggerReason: pending.triggerReason, withheldInline: withheld != nil)
+        let text = withheld != nil
+            ? RemoteApprovalBridge.withheldBody(payload: payload, session: session, hasCommandLink: commandURL != nil)
+            : RemoteApprovalBridge.summaryBody(payload: payload, session: session, triggerReason: pending.triggerReason, hasCommandLink: commandURL != nil)
+        bridge.notify(resolvable: resolvable, text: text, pid: session.pid, toolName: payload.toolName, withheld: withheld != nil, allowSession: allowSession, offerCommentClean: isCommit && withheld == nil, leaseDomain: leaseDomain, allowSite: allowSite, reviewURL: reviewURL, commandURL: commandURL)
+    }
+
+    /// Register the full, unredacted command with the review server and
+    /// return its tailnet URL. Failures are soft — nil just means the
+    /// Telegram card goes out with the redacted inline text only.
+    private func makeCommandLink(payload: PreToolUsePayload, session: Session, resolvable: ResolvableApproval, triggerReason: String?, withheldInline: Bool) -> String? {
+        do {
+            try DiffReviewServer.shared.start()
+        } catch {
+            gavelLog("[review] server start failed: \(error.localizedDescription)")
+            return nil
+        }
+        guard let base = TailscaleServe.cachedReviewBaseURL() else { return nil }
+
+        let primary = payload.command ?? payload.filePath
+        // Everything except the primary text becomes an args row, so MCP
+        // calls (no command/filePath) still show their full input.
+        let primaryKeys: Set<String> = payload.command != nil ? ["command"] : (payload.filePath != nil ? ["file_path", "path"] : [])
+        let args = payload.toolInput
+            .filter { !primaryKeys.contains($0.key) }
+            .map { (name: $0.key, value: Self.displayString($0.value)) }
+            .sorted { $0.name < $1.name }
+
+        let label = session.label.isEmpty ? "PID \(session.pid)" : session.label
+        let content = CommandContent(
+            sessionLabel: label,
+            toolName: payload.toolName,
+            cwd: payload.cwd ?? session.cwd,
+            command: primary,
+            args: args,
+            triggerReason: triggerReason,
+            withheldInline: withheldInline)
+        let nonce = DiffReviewServer.shared.register(command: content, resolvable: resolvable)
+        gavelLog("[review] command link created pid=\(session.pid) tool=\(payload.toolName) nonce=\(nonce.prefix(8))…")
+        return "\(base)/review/\(nonce)"
+    }
+
+    /// Full-fidelity display of a tool arg: strings verbatim, everything
+    /// else (numbers, bools, nested dicts/arrays) as compact JSON.
+    static func displayString(_ value: AnyCodable) -> String {
+        if let s = value.stringValue { return s }
+        if let data = try? JSONEncoder().encode(value), let json = String(data: data, encoding: .utf8) {
+            return json
+        }
+        return "\(value.value)"
     }
 
     /// Snapshot the pending commit's diff, register it with the review
@@ -232,7 +280,7 @@ final class ApprovalCoordinator: ObservableObject {
             gavelLog("[review] server start failed: \(error.localizedDescription)")
             return nil
         }
-        guard let base = TailscaleServe.reviewBaseURL() else { return nil }
+        guard let base = TailscaleServe.cachedReviewBaseURL() else { return nil }
         let content = ReviewContent(
             repoName: URL(fileURLWithPath: cwd).lastPathComponent,
             commitMessage: captured.commitMessage,

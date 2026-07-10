@@ -44,6 +44,11 @@ final class RemoteApprovalBridge {
     private var coalescedCount = 0
     private var lastCoalesceNotice: Date?
 
+    /// Proposal inbox for phone adjudication. Tighten-only is enforced at
+    /// submit time in ProposalStore, so an Accept from the phone can only
+    /// ever create a deny/prompt rule — never widen permissions.
+    weak var proposalStore: ProposalStore?
+
     /// Fired when pairing captures a chat id, so the daemon can persist it.
     var onPaired: ((Int64) -> Void)?
     /// Fired when the pinned chat sends `[[/stop-phone]]`, so the daemon can kill phone approval.
@@ -85,7 +90,7 @@ final class RemoteApprovalBridge {
     /// `leaseDomain`/`allowSite` (both required together) add a browsing-lease
     /// button for chrome navigate approvals — the phone twin of the panel's
     /// "Allow Site" (see BrowsingLease).
-    func notify(resolvable: ResolvableApproval, text: String, pid: Int = 0, toolName: String = "", withheld: Bool = false, allowSession: (() -> Void)?, offerCommentClean: Bool = false, leaseDomain: String? = nil, allowSite: (() -> Void)? = nil, reviewURL: String? = nil) {
+    func notify(resolvable: ResolvableApproval, text: String, pid: Int = 0, toolName: String = "", withheld: Bool = false, allowSession: (() -> Void)?, offerCommentClean: Bool = false, leaseDomain: String? = nil, allowSite: (() -> Void)? = nil, reviewURL: String? = nil, commandURL: String? = nil) {
         lock.lock(); let chat = chatId; lock.unlock()
         guard let chat else { return }
 
@@ -113,11 +118,18 @@ final class RemoteApprovalBridge {
         }
 
         var keyboard: [[TelegramButton]] = []
-        // Review link leads the keyboard: on a commit approval the intended
-        // flow is review first, then verdict (on the page or via the buttons).
+        // Link buttons lead the keyboard: the intended flow is review first,
+        // then verdict (on the page or via the buttons below). The command
+        // link is how the FULL text reaches the phone — the inline body stays
+        // redacted/truncated so fidelity never transits Telegram.
+        var linkRow: [TelegramButton] = []
         if let reviewURL {
-            keyboard.append([TelegramButton(text: "🔍 Review diff", url: reviewURL)])
+            linkRow.append(TelegramButton(text: "🔍 Review diff", url: reviewURL))
         }
+        if let commandURL {
+            linkRow.append(TelegramButton(text: withheld ? "🔒 View full command" : "📄 Full command", url: commandURL))
+        }
+        if !linkRow.isEmpty { keyboard.append(linkRow) }
         keyboard.append(
             [TelegramButton(text: "✅ Allow once", callbackData: "a:\(nonce)"),
              TelegramButton(text: "🛑 Deny", callbackData: "d:\(nonce)")])
@@ -155,6 +167,62 @@ final class RemoteApprovalBridge {
         lock.lock(); let chat = chatId; lock.unlock()
         guard let chat else { return }
         transport.sendMessage(chatId: chat, text: text, keyboard: nil, completion: { _ in })
+    }
+
+    /// Mirror a new rule proposal to the phone with Accept/Reject buttons.
+    /// The Monitor inbox stays the source of truth: a proposal that never
+    /// reaches the phone (flood control, phone off) is still adjudicable there,
+    /// and a button tap on an already-adjudicated proposal is a no-op.
+    func notifyProposal(_ proposal: RuleProposal) {
+        lock.lock(); let chat = chatId; lock.unlock()
+        guard let chat else { return }
+        guard consumeSendToken() else {
+            remoteLog?("proposal coalesced id=\(proposal.id) — flood control, Monitor-fallback")
+            return
+        }
+        let verdictLabel = proposal.verdict == .block ? "DENY" : "ASK"
+        var lines = [
+            "📐 Claude proposed a rule — inert until accepted",
+            "\(verdictLabel) \(proposal.toolName): \(proposal.isRegex ? "/" : "")\(proposal.pattern)\(proposal.isRegex ? "/" : "")",
+            proposal.reason,
+        ]
+        if let example = proposal.example, !example.isEmpty {
+            lines.append("e.g. \(SecretRedactor.redact(example))")
+        }
+        lines.append("from session \(proposal.sessionPid)")
+        let keyboard = [[
+            TelegramButton(text: "✅ Accept rule", callbackData: "pa:\(proposal.id.uuidString)"),
+            TelegramButton(text: "❌ Reject", callbackData: "pj:\(proposal.id.uuidString)"),
+        ]]
+        transport.sendMessage(chatId: chat, text: lines.joined(separator: "\n"), keyboard: keyboard) { [weak self] result in
+            if case .success(let mid) = result {
+                self?.remoteLog?("proposal sent id=\(proposal.id) mid=\(mid)")
+            }
+        }
+    }
+
+    /// Handle an Accept/Reject tap on a proposal card. Runs through the same
+    /// audited ProposalStore path as the Monitor buttons (accepted-via=telegram).
+    private func adjudicateProposal(action: String, idText: String, callback: TelegramCallback, chat: Int64) {
+        guard let store = proposalStore, let id = UUID(uuidString: idText) else {
+            transport.answerCallbackQuery(id: callback.id, text: "Unavailable", completion: nil)
+            return
+        }
+        if action == "pa" {
+            if let rule = store.accept(id: id, via: "telegram") {
+                remoteLog?("proposal accepted id=\(id) via=telegram")
+                transport.answerCallbackQuery(id: callback.id, text: "Rule added", completion: nil)
+                transport.editMessageText(chatId: chat, messageId: callback.messageId, text: "✅ Rule accepted from phone: \(rule.name)", completion: nil)
+            } else {
+                transport.answerCallbackQuery(id: callback.id, text: "Already handled", completion: nil)
+                transport.editMessageText(chatId: chat, messageId: callback.messageId, text: "↪️ Proposal already handled (Monitor or expired)", completion: nil)
+            }
+        } else {
+            store.reject(id: id, via: "telegram")
+            remoteLog?("proposal rejected id=\(id) via=telegram")
+            transport.answerCallbackQuery(id: callback.id, text: "Rejected", completion: nil)
+            transport.editMessageText(chatId: chat, messageId: callback.messageId, text: "❌ Proposal rejected from phone", completion: nil)
+        }
     }
 
     // MARK: - Inbound poll loop
@@ -255,6 +323,13 @@ final class RemoteApprovalBridge {
         }
         let action = String(parts[0])
         let nonce = String(parts[1])
+
+        // Proposal adjudication rides the same callback channel but has no
+        // pending-approval correlation — route before the nonce lookup.
+        if action == "pa" || action == "pj" {
+            adjudicateProposal(action: action, idText: nonce, callback: callback, chat: pinned)
+            return
+        }
 
         lock.lock(); let corr = byNonce[nonce]; lock.unlock()
         guard let corr else {
@@ -419,7 +494,7 @@ final class RemoteApprovalBridge {
     }
 
     /// Build the redacted, control-stripped message body for an approval — full command, capped near Telegram's limit.
-    static func summaryBody(payload: PreToolUsePayload, session: Session, triggerReason: String?) -> String {
+    static func summaryBody(payload: PreToolUsePayload, session: Session, triggerReason: String?, hasCommandLink: Bool = false) -> String {
         let label = session.label.isEmpty ? "PID \(session.pid)" : session.label
         var lines = ["Gavel approval — \(sanitizeForDisplay(label))", "Tool: \(payload.toolName)"]
         if let cwd = session.cwd {
@@ -430,7 +505,8 @@ final class RemoteApprovalBridge {
         if !raw.isEmpty {
             let cleaned = sanitizeForDisplay(SecretRedactor.redact(raw))
             if cleaned.count > GavelConstants.telegramBodyMaxChars {
-                lines.append(String(cleaned.prefix(GavelConstants.telegramBodyMaxChars)) + "… (truncated — full on Mac)")
+                lines.append(String(cleaned.prefix(GavelConstants.telegramBodyMaxChars))
+                    + (hasCommandLink ? "… (truncated — full at the link)" : "… (truncated — full on Mac)"))
             } else {
                 lines.append(cleaned)
             }
@@ -440,14 +516,16 @@ final class RemoteApprovalBridge {
     }
 
     /// Metadata-only body for a credential-gated approval — names the session so it can be verified in Claude, never the command.
-    static func withheldBody(payload: PreToolUsePayload, session: Session) -> String {
+    static func withheldBody(payload: PreToolUsePayload, session: Session, hasCommandLink: Bool = false) -> String {
         let label = session.label.isEmpty ? "PID \(session.pid)" : session.label
         var lines = ["🔒 Gavel — command withheld", "Session: \(sanitizeForDisplay(label))", "Tool: \(payload.toolName)"]
         if let cwd = session.cwd {
             let tail = cwd.split(separator: "/").suffix(2).joined(separator: "/")
             if !tail.isEmpty { lines.append("cwd: …/\(tail)") }
         }
-        lines.append("Sensitive content detected — command not shown. Verify it in the Claude session, then Allow or Deny below.")
+        lines.append(hasCommandLink
+            ? "Sensitive content detected — command not shown here. Open the full-command link (tailnet-only) to review it, then Allow or Deny."
+            : "Sensitive content detected — command not shown. Verify it in the Claude session, then Allow or Deny below.")
         return lines.joined(separator: "\n")
     }
 
