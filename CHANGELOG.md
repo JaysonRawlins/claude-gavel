@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.44.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.43.2...v1.44.0) (2026-07-11)
+
+
+### Features
+
+* **approval:** pattern-based allows on the command page for non-MCP tools ([#208](https://github.com/JaysonRawlins/claude-gavel/issues/208)) ([0bcb799](https://github.com/JaysonRawlins/claude-gavel/commit/0bcb799dbff1041fdfcf64dc56ca77aea894b865))
+* **approval:** tappable pattern chips on the command page ([#210](https://github.com/JaysonRawlins/claude-gavel/issues/210)) ([d5b9df7](https://github.com/JaysonRawlins/claude-gavel/commit/d5b9df7af0105f4072b8d6e870374f7c19ae1510))
+
 ## [1.43.2](https://github.com/JaysonRawlins/claude-gavel/compare/v1.43.1...v1.43.2) (2026-07-11)
 
 
