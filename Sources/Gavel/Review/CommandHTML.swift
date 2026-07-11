@@ -127,9 +127,12 @@ enum CommandHTML {
         return """
         <section class="block">
         <h2>Always allow, scoped to</h2>
-        <p class="scopehint">Creates a persistent allow rule for \(DiffHTML.esc(content.toolName)), limited to args fully matching these regexes. Absent args never match — future calls outside the scope still prompt.</p>
+        <p class="scopehint">Creates an allow rule for \(DiffHTML.esc(content.toolName)) limited to args fully matching these regexes. Absent args never match — future calls outside the scope still prompt. Session rules expire when the session ends; Always rules persist.</p>
         \(rows)
-        <button id="scopedbtn" class="scoped" disabled onclick="submitScoped()">Always Allow (scoped)</button>
+        <div class="scopedbtns">
+        <button id="scopedsessionbtn" class="scoped session" disabled onclick="submitScoped('allow_session_scoped')">Allow for session (scoped)</button>
+        <button id="scopedbtn" class="scoped" disabled onclick="submitScoped('allow_scoped')">Always Allow (scoped)</button>
+        </div>
         </section>
         """
     }
@@ -173,9 +176,10 @@ enum CommandHTML {
     .scoperow .pat { flex: 1; font-family: ui-monospace, monospace; font-size: 12.5px;
                      padding: 6px 8px; border-radius: 8px; border: 1px solid #0003;
                      background: inherit; color: inherit; min-width: 0; }
-    .scoped { display: block; margin: 10px 12px 12px; width: calc(100% - 24px);
-              padding: 12px; border-radius: 10px; border: none; font-size: 15px;
+    .scopedbtns { display: flex; gap: 10px; margin: 10px 12px 12px; }
+    .scoped { flex: 1; padding: 12px; border-radius: 10px; border: none; font-size: 14px;
               font-weight: 600; background: #0969da; color: #fff; }
+    .scoped.session { background: #6639ba; }
     footer { position: fixed; bottom: 0; left: 0; right: 0; background: #fffffff2;
              backdrop-filter: blur(10px); border-top: 1px solid #0002; padding: 10px 0
              calc(10px + env(safe-area-inset-bottom)); }
@@ -201,18 +205,19 @@ enum CommandHTML {
     private static let js = """
     function scopeChanged() {
       const any = document.querySelectorAll('.scopecheck:checked').length > 0;
-      const btn = document.getElementById('scopedbtn');
-      if (btn) btn.disabled = !any;
+      document.querySelectorAll('.scoped').forEach(function (b) { b.disabled = !any; });
     }
-    function submitScoped() {
+    function submitScoped(verdict) {
       const conditions = {};
       document.querySelectorAll('.scopecheck:checked').forEach(function (c) {
         const pat = document.getElementById('pat-' + c.dataset.arg);
         if (pat && pat.value.trim()) conditions[c.dataset.arg] = pat.value.trim();
       });
       if (Object.keys(conditions).length === 0) { alert('Tick at least one argument to scope the rule.'); return; }
-      post({ verdict: 'allow_scoped', note: noteValue(), conditions: conditions },
-           '✅ Scoped allow rule created — command proceeding.');
+      post({ verdict: verdict, note: noteValue(), conditions: conditions },
+           verdict === 'allow_session_scoped'
+             ? '✅ Scoped session allow created (expires with the session) — command proceeding.'
+             : '✅ Scoped allow rule created — command proceeding.');
     }
     function submitVerdict(verdict) {
       post({ verdict: verdict, note: noteValue() },

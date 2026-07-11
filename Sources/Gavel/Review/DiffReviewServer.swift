@@ -51,6 +51,9 @@ final class DiffReviewServer {
         /// command pages whose approval may author a durable allow — its
         /// absence makes verdict "allow_scoped" a 400.
         let createScopedAllow: (([String: String]) -> String)?
+        /// Session-lifetime twin: appends a scoped SessionRule (dies with the
+        /// session) and returns a description. Gated identically.
+        let createScopedSessionAllow: (([String: String]) -> String)?
         let createdAt = Date()
         /// Set (under the server lock) once any source resolves the approval.
         var resolvedBy: ResolvableApproval.Source?
@@ -61,11 +64,12 @@ final class DiffReviewServer {
         /// set this, so it can't be back-filled once the race is over.
         var viewedAt: Date?
 
-        init(nonce: String, content: PageContent, resolvable: ResolvableApproval, createScopedAllow: (([String: String]) -> String)? = nil) {
+        init(nonce: String, content: PageContent, resolvable: ResolvableApproval, createScopedAllow: (([String: String]) -> String)? = nil, createScopedSessionAllow: (([String: String]) -> String)? = nil) {
             self.nonce = nonce
             self.content = content
             self.resolvable = resolvable
             self.createScopedAllow = createScopedAllow
+            self.createScopedSessionAllow = createScopedSessionAllow
         }
     }
 
@@ -149,11 +153,11 @@ final class DiffReviewServer {
     /// has to transit Telegram. `createScopedAllow` (when the approval may
     /// author a durable allow) turns submitted arg conditions into a
     /// persistent rule and returns its name.
-    func register(command: CommandContent, resolvable: ResolvableApproval, createScopedAllow: (([String: String]) -> String)? = nil) -> String {
-        register(page: .command(command), resolvable: resolvable, reviewedNoun: "the full command", createScopedAllow: createScopedAllow)
+    func register(command: CommandContent, resolvable: ResolvableApproval, createScopedAllow: (([String: String]) -> String)? = nil, createScopedSessionAllow: (([String: String]) -> String)? = nil) -> String {
+        register(page: .command(command), resolvable: resolvable, reviewedNoun: "the full command", createScopedAllow: createScopedAllow, createScopedSessionAllow: createScopedSessionAllow)
     }
 
-    private func register(page: PageContent, resolvable: ResolvableApproval, reviewedNoun: String, createScopedAllow: (([String: String]) -> String)? = nil) -> String {
+    private func register(page: PageContent, resolvable: ResolvableApproval, reviewedNoun: String, createScopedAllow: (([String: String]) -> String)? = nil, createScopedSessionAllow: (([String: String]) -> String)? = nil) -> String {
         pruneStale()
 
         var bytes = [UInt8](repeating: 0, count: 16)
@@ -163,7 +167,7 @@ final class DiffReviewServer {
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
 
-        let session = ReviewSession(nonce: nonce, content: page, resolvable: resolvable, createScopedAllow: createScopedAllow)
+        let session = ReviewSession(nonce: nonce, content: page, resolvable: resolvable, createScopedAllow: createScopedAllow, createScopedSessionAllow: createScopedSessionAllow)
         lock.lock()
         sessions[nonce] = session
         lock.unlock()
@@ -306,11 +310,13 @@ final class DiffReviewServer {
             }
 
             let decision: Decision?
-            if submission.verdict == "allow_scoped" {
-                // Durable-allow authoring: only pages registered with a
-                // createScopedAllow callback (MCP + not Allow-once-only) may
-                // do this, and every condition regex must be present + valid.
-                guard let create = session.createScopedAllow,
+            if submission.verdict == "allow_scoped" || submission.verdict == "allow_session_scoped" {
+                // Scoped-allow authoring (persistent or session-lifetime):
+                // only pages registered with the matching callback (MCP + not
+                // Allow-once-only) may do this, and every condition regex
+                // must be present + valid.
+                let sessionScoped = submission.verdict == "allow_session_scoped"
+                guard let create = sessionScoped ? session.createScopedSessionAllow : session.createScopedAllow,
                       let conditions = Self.cleanedConditions(submission.conditions) else {
                     send(connection, status: 400, body: "bad request")
                     return
@@ -319,11 +325,13 @@ final class DiffReviewServer {
                 // panel's Always Allow: if another responder wins the next
                 // instant, the explicitly-requested rule still persists.
                 let ruleName = create(conditions)
-                gavelLog("[review] scoped allow rule authored nonce=\(session.nonce.prefix(8))… args=\(conditions.keys.sorted().joined(separator: ","))")
+                gavelLog("[review] scoped \(sessionScoped ? "session" : "persistent") allow authored nonce=\(session.nonce.prefix(8))… args=\(conditions.keys.sorted().joined(separator: ","))")
                 let note = submission.note.flatMap { $0.isEmpty ? nil : $0 }
                 decision = Decision(
                     verdict: .allow,
-                    reason: "Approved from command review page — always allow: \(ruleName)",
+                    reason: sessionScoped
+                        ? "Approved from command review page — session allow (scoped): \(ruleName)"
+                        : "Approved from command review page — always allow: \(ruleName)",
                     additionalContext: note.map { "Approver note from review page: \($0)" })
             } else {
                 decision = Self.decision(for: submission)

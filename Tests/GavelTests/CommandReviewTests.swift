@@ -466,6 +466,85 @@ final class CommandReviewTests: XCTestCase {
         XCTAssertFalse(created, "stale submissions must not author rules")
     }
 
+    // MARK: - Session-scoped allow from the command page
+
+    func testAllowSessionScopedCreatesSessionRuleAndResolves() throws {
+        var decision: Decision?
+        var received: [String: String]?
+        let resolvable = ResolvableApproval { decision = $0 }
+        let nonce = server.register(
+            command: scopableSlackContent(), resolvable: resolvable,
+            createScopedSessionAllow: { conditions in
+                received = conditions
+                return "mcp__Slack__read_history [channel=/general/]"
+            })
+
+        let body = #"{"verdict":"allow_session_scoped","conditions":{"channel":"general"}}"#
+        let res = try request("/review/\(nonce)/verdict", method: "POST", body: body)
+        XCTAssertEqual(res.status, 200)
+
+        XCTAssertEqual(received, ["channel": "general"])
+        let d = try XCTUnwrap(decision)
+        XCTAssertEqual(d.verdict, .allow)
+        XCTAssertEqual(d.reason?.contains("session allow (scoped)"), true)
+    }
+
+    func testAllowSessionScopedWithoutCallbackIs400() throws {
+        // A page with only the persistent callback still 400s the session verb.
+        let resolvable = ResolvableApproval { _ in }
+        let nonce = server.register(
+            command: scopableSlackContent(), resolvable: resolvable,
+            createScopedAllow: { _ in "rule" })
+
+        let res = try request("/review/\(nonce)/verdict", method: "POST", body: #"{"verdict":"allow_session_scoped","conditions":{"channel":"x"}}"#)
+        XCTAssertEqual(res.status, 400)
+        XCTAssertFalse(resolvable.isResolved)
+    }
+
+    func testSessionRuleArgConditionsScopeMatching() {
+        let session = Session(pid: 1)
+        session.sessionRules.append(SessionRule(
+            toolName: "mcp__Slack__read_history", pattern: "*",
+            verdict: .allow, argConditions: ["channel": "general", "workspace": "defiance"]))
+
+        func input(channel: String, workspace: String = "defiance") -> [String: AnyCodable] {
+            ["channel": AnyCodable(channel), "workspace": AnyCodable(workspace)]
+        }
+        XCTAssertNotNil(session.matchesSessionRule(
+            toolName: "mcp__Slack__read_history", command: nil, filePath: nil,
+            toolInput: input(channel: "general")))
+        // Out-of-scope channel, wrong workspace, and absent args all fall through.
+        XCTAssertNil(session.matchesSessionRule(
+            toolName: "mcp__Slack__read_history", command: nil, filePath: nil,
+            toolInput: input(channel: "random")))
+        XCTAssertNil(session.matchesSessionRule(
+            toolName: "mcp__Slack__read_history", command: nil, filePath: nil,
+            toolInput: input(channel: "general", workspace: "macedon")))
+        XCTAssertNil(session.matchesSessionRule(
+            toolName: "mcp__Slack__read_history", command: nil, filePath: nil,
+            toolInput: ["channel": AnyCodable("general")]))
+        XCTAssertNil(session.matchesSessionRule(
+            toolName: "mcp__Slack__read_history", command: nil, filePath: nil))
+    }
+
+    func testSessionRuleAnchoringAndDenyStripMatchPersistentSemantics() {
+        // Anchoring: "C123" must not substring-match "C1234".
+        let anchored = SessionRule(
+            toolName: "mcp__T__t", pattern: "*", verdict: .allow, argConditions: ["c": "C123"])
+        XCTAssertTrue(anchored.matches(toolName: "mcp__T__t", command: nil, filePath: nil, toolInput: ["c": AnyCodable("C123")]))
+        XCTAssertFalse(anchored.matches(toolName: "mcp__T__t", command: nil, filePath: nil, toolInput: ["c": AnyCodable("C1234")]))
+
+        // Conditions on a session DENY would narrow it — init drops them.
+        let deny = SessionRule(
+            toolName: "mcp__T__t", pattern: "*", verdict: .block, argConditions: ["c": "C123"])
+        XCTAssertNil(deny.argConditions)
+        XCTAssertTrue(deny.matches(toolName: "mcp__T__t", command: nil, filePath: nil, toolInput: ["c": AnyCodable("other")]))
+
+        // Backward compat: nil conditions ignore toolInput entirely.
+        let plain = SessionRule(toolName: "mcp__T__t", pattern: "*")
+        XCTAssertTrue(plain.matches(toolName: "mcp__T__t", command: nil, filePath: nil, toolInput: ["c": AnyCodable("anything")]))
+    }
+
     /// End-to-end: the rule authored from the page actually scopes future
     /// matching — in-scope calls allow, out-of-scope calls fall through.
     func testScopedRuleFromPageScopesFutureEvaluation() throws {

@@ -254,6 +254,20 @@ final class ApprovalCoordinator: ObservableObject {
             }
             return rule.name
         }
+        // Session-lifetime variant: same scoping, but the rule lives in
+        // session.sessionRules and dies with the session — for "let this
+        // watcher read this channel today" without a persistent grant.
+        let createScopedSessionAllow: (([String: String]) -> String)? = !offersScopedAllow ? nil : { conditions in
+            let rule = SessionRule(
+                toolName: payload.toolName, pattern: "*",
+                verdict: .allow, argConditions: conditions)
+            DispatchQueue.main.async {
+                session.sessionRules.append(rule)
+            }
+            let scope = conditions.sorted { $0.key < $1.key }
+                .map { "\($0.key)=/\($0.value)/" }.joined(separator: ", ")
+            return "\(payload.toolName) [\(scope)]"
+        }
 
         let label = session.label.isEmpty ? "PID \(session.pid)" : session.label
         let content = CommandContent(
@@ -265,7 +279,7 @@ final class ApprovalCoordinator: ObservableObject {
             triggerReason: triggerReason,
             withheldInline: withheldInline,
             offersScopedAllow: offersScopedAllow)
-        let nonce = DiffReviewServer.shared.register(command: content, resolvable: resolvable, createScopedAllow: createScopedAllow)
+        let nonce = DiffReviewServer.shared.register(command: content, resolvable: resolvable, createScopedAllow: createScopedAllow, createScopedSessionAllow: createScopedSessionAllow)
         gavelLog("[review] command link created pid=\(session.pid) tool=\(payload.toolName) scopedAllow=\(offersScopedAllow) nonce=\(nonce.prefix(8))…")
         return "\(base)/review/\(nonce)"
     }
