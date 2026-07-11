@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.43.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.42.0...v1.43.0) (2026-07-11)
+
+
+### Features
+
+* **approval:** full-command review page + rule adjudication from Telegram ([#201](https://github.com/JaysonRawlins/claude-gavel/issues/201)) ([620d6e0](https://github.com/JaysonRawlins/claude-gavel/commit/620d6e016daf779fe2196bb05f71fe9d977db349))
+* **approval:** scoped Always Allow authoring on the command review page ([#203](https://github.com/JaysonRawlins/claude-gavel/issues/203)) ([669f68b](https://github.com/JaysonRawlins/claude-gavel/commit/669f68ba9b89fa93a1e51f61c2e30647abd020f1))
+* **matcher:** per-argument scoping for MCP allow rules ([#200](https://github.com/JaysonRawlins/claude-gavel/issues/200)) ([676920e](https://github.com/JaysonRawlins/claude-gavel/commit/676920eb7a5a9ee5a2fc7ea0ecfcc1ac498fa382))
+
 ## [1.42.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.41.2...v1.42.0) (2026-07-10)
 
 
