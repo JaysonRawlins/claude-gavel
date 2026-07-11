@@ -239,9 +239,10 @@ final class ApprovalCoordinator: ObservableObject {
             }
             .sorted { lhs, rhs in lhs.name < rhs.name }
 
-        // Scoped-allow authoring mirrors the Mac panel's gating: MCP calls
-        // with at least one scalar arg, never on Allow-once-only paths.
-        let offersScopedAllow = !nonSuppressible && args.contains(where: \.scopable)
+        // Scoped-allow authoring mirrors the Mac panel's gating: MCP calls,
+        // never on Allow-once-only paths. No scalar args is fine — the page
+        // has free-form condition rows for args the call omitted.
+        let offersScopedAllow = !nonSuppressible && isMCP
         let createScopedAllow: (([String: String]) -> String)? = !offersScopedAllow ? nil : { [weak self] conditions in
             let rule = PersistentRule(
                 toolName: payload.toolName, pattern: "*", isRegex: false,
