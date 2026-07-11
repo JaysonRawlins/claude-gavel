@@ -568,6 +568,38 @@ final class CommandReviewTests: XCTestCase {
         XCTAssertFalse(created)
     }
 
+    func testPatternChipsWidenFromLeadingTokens() {
+        let chips = CommandHTML.patternChips(
+            command: "python3 -c 'print(\"hello\")'",
+            suggested: "python3 -c 'print(\"hello\")'")
+        XCTAssertEqual(chips.first, "python3 *")
+        XCTAssertTrue(chips.contains("python3 -c *"))
+        // Exact call is offered last, never duplicated.
+        XCTAssertEqual(chips.last, "python3 -c 'print(\"hello\")'")
+        XCTAssertEqual(chips.count, Set(chips).count)
+
+        // No command (file tools) → just the suggested glob.
+        XCTAssertEqual(CommandHTML.patternChips(command: nil, suggested: "Sources/Gavel/*"), ["Sources/Gavel/*"])
+        // Wildcard-bearing tokens don't produce nonsense chips.
+        let starry = CommandHTML.patternChips(command: "ls * /tmp", suggested: "ls * /tmp")
+        XCTAssertFalse(starry.contains("ls * *"))
+        // Prefixes that split inside a quoted string are skipped.
+        let quoted = CommandHTML.patternChips(
+            command: "python3 -c 'print(\"hi there\")' --flag",
+            suggested: "python3 -c 'print(\"hi there\")' --flag")
+        XCTAssertFalse(quoted.contains { $0.filter { c in c == "'" }.count % 2 == 1 })
+    }
+
+    func testPatternChipsRenderedOnBashPage() throws {
+        let nonce = server.register(
+            command: makeCommand(command: "python3 -c 'print(1)'", suggestedPattern: "python3 -c 'print(1)'"),
+            resolvable: ResolvableApproval { _ in },
+            createPatternAllow: { _ in "rule" })
+        let page = try request("/review/\(nonce)")
+        XCTAssertTrue(page.body.contains("data-pat=\"python3 *\""))
+        XCTAssertTrue(page.body.contains("data-pat=\"python3 -c *\""))
+    }
+
     // MARK: - Session-scoped allow from the command page
 
     func testAllowSessionScopedCreatesSessionRuleAndResolves() throws {
