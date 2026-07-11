@@ -47,6 +47,11 @@ final class ProposalStore {
     /// Fired on the main thread after any mutation, with a snapshot of pending proposals.
     var onChange: (([RuleProposal]) -> Void)?
 
+    /// Fired (main thread) once per successfully queued proposal — the hook
+    /// for mirroring it to the phone. Delivery is best-effort; the inbox
+    /// here stays the source of truth either way.
+    var onSubmitted: ((RuleProposal) -> Void)?
+
     /// Set at wiring time; used for dedupe against existing rules and for accept.
     weak var ruleStore: RuleStore?
 
@@ -132,6 +137,9 @@ final class ProposalStore {
         lock.unlock()
 
         notifyChanged()
+        DispatchQueue.main.async { [weak self] in
+            self?.onSubmitted?(proposal)
+        }
         return .queued(proposal.id)
     }
 

@@ -27,9 +27,15 @@ final class DiffReviewServer {
 
     static let shared = DiffReviewServer()
 
+    /// What a registered nonce serves: a commit diff or a full-command page.
+    enum PageContent {
+        case diff(ReviewContent)
+        case command(CommandContent)
+    }
+
     final class ReviewSession {
         let nonce: String
-        let content: ReviewContent
+        let content: PageContent
         let resolvable: ResolvableApproval
         let createdAt = Date()
         /// Set (under the server lock) once any source resolves the approval.
@@ -41,7 +47,7 @@ final class DiffReviewServer {
         /// set this, so it can't be back-filled once the race is over.
         var viewedAt: Date?
 
-        init(nonce: String, content: ReviewContent, resolvable: ResolvableApproval) {
+        init(nonce: String, content: PageContent, resolvable: ResolvableApproval) {
             self.nonce = nonce
             self.content = content
             self.resolvable = resolvable
@@ -116,10 +122,21 @@ final class DiffReviewServer {
 
     // MARK: - Registration
 
-    /// Registers a review for a pending approval and returns its nonce.
+    /// Registers a commit-diff review for a pending approval and returns its nonce.
     /// The review dies with the approval: any resolution (mac / telegram /
     /// timeout / web) flips it to the "already resolved" page.
     func register(content: ReviewContent, resolvable: ResolvableApproval) -> String {
+        register(page: .diff(content), resolvable: resolvable, reviewedNoun: "the diff")
+    }
+
+    /// Registers a full-command page for a pending approval — the phone-side
+    /// twin of the Mac panel's command view, so the unredacted command never
+    /// has to transit Telegram.
+    func register(command: CommandContent, resolvable: ResolvableApproval) -> String {
+        register(page: .command(command), resolvable: resolvable, reviewedNoun: "the full command")
+    }
+
+    private func register(page: PageContent, resolvable: ResolvableApproval, reviewedNoun: String) -> String {
         pruneStale()
 
         var bytes = [UInt8](repeating: 0, count: 16)
@@ -129,7 +146,7 @@ final class DiffReviewServer {
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
 
-        let session = ReviewSession(nonce: nonce, content: content, resolvable: resolvable)
+        let session = ReviewSession(nonce: nonce, content: page, resolvable: resolvable)
         lock.lock()
         sessions[nonce] = session
         lock.unlock()
@@ -154,8 +171,8 @@ final class DiffReviewServer {
             // Standalone form when there's no note; appended line otherwise.
             let hasNote = !(decision.additionalContext?.isEmpty ?? true)
             return decision.appendingContext(hasNote
-                ? "User reviewed the diff before approving."
-                : "User approved this via Gavel — user reviewed the diff before approving")
+                ? "User reviewed \(reviewedNoun) before approving."
+                : "User approved this via Gavel — user reviewed \(reviewedNoun) before approving")
         }
         return nonce
     }
@@ -236,8 +253,15 @@ final class DiffReviewServer {
             if firstView {
                 gavelLog("[review] page viewed nonce=\(session.nonce.prefix(8))…")
             }
-            let page = resolvedBy.map { DiffHTML.resolvedPage(by: label($0)) }
-                ?? DiffHTML.page(content: session.content)
+            let page: String
+            if let resolvedBy {
+                page = DiffHTML.resolvedPage(by: label(resolvedBy))
+            } else {
+                switch session.content {
+                case .diff(let content): page = DiffHTML.page(content: content)
+                case .command(let content): page = CommandHTML.page(content: content)
+                }
+            }
             send(connection, status: 200, body: page, contentType: "text/html; charset=utf-8")
             return
         }
@@ -328,6 +352,17 @@ final class DiffReviewServer {
             reason += comments.isEmpty ? ":" : " (\(comments.count) comment\(comments.count == 1 ? "" : "s")):"
             reason += "\n" + (lines.isEmpty ? "See the review page — no comment text was attached." : lines.joined(separator: "\n"))
             return Decision(verdict: .block, reason: reason)
+        // Full-command page verbs — same wire route, allow/deny semantics.
+        case "allow":
+            let note = submission.note.flatMap { $0.isEmpty ? nil : $0 }
+            return Decision(
+                verdict: .allow, reason: "Approved from command review page",
+                additionalContext: note.map { "Approver note from review page: \($0)" })
+        case "deny":
+            let note = submission.note.flatMap { $0.isEmpty ? nil : $0 }
+            return Decision(
+                verdict: .block,
+                reason: "Denied from command review page" + (note.map { " — \($0)" } ?? ""))
         default:
             return nil
         }

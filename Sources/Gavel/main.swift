@@ -121,6 +121,10 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
         sessionManager.onPhoneStopped = { [weak bridge] affected in
             bridge?.sendNotice("🛑 Phone approval OFF — \(affected) session(s) disabled, Default Phone off.")
         }
+        bridge.proposalStore = proposalStore
+        proposalStore.onSubmitted = { [weak bridge] proposal in
+            bridge?.notifyProposal(proposal)
+        }
         approvalCoordinator.remoteBridge = bridge
         remoteBridge = bridge
         bridge.start()
@@ -129,7 +133,7 @@ class GavelAppDelegate: NSObject, NSApplicationDelegate {
     @objc private func configureTelegram() {
         let alert = NSAlert()
         alert.messageText = "Configure Telegram Remote Approval"
-        alert.informativeText = "Paste your bot token from @BotFather. After saving, open your bot in Telegram and send /start to pair this chat. Remote approval must also be enabled per session in the Sessions tab. Command text is sent to Telegram's servers; for payloads with detected credentials the command is withheld and only metadata plus the approval buttons are sent."
+        alert.informativeText = "Paste your bot token from @BotFather. After saving, open your bot in Telegram and send /start to pair this chat. Remote approval must also be enabled per session in the Sessions tab. Only a redacted, truncated summary is sent to Telegram's servers — the full command is served on a tailnet-only page linked from each card, and for payloads with detected credentials even the summary is withheld."
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
         field.placeholderString = "123456789:ABCdef..."
         alert.accessoryView = field
