@@ -875,6 +875,26 @@ struct RulesView: View {
     @State private var editIsRegex: Bool = false
     @State private var editVerdict: DecisionVerdict = .block
     @State private var editExplanation: String = ""
+    @State private var newArgConditions: [ArgConditionDraft] = []
+    @State private var editArgConditions: [ArgConditionDraft] = []
+
+    /// Editable arg-condition row (arg name → regex) for the add/edit forms.
+    struct ArgConditionDraft: Identifiable {
+        let id = UUID()
+        var name: String = ""
+        var pattern: String = ""
+    }
+
+    /// Compact drafts to the dict form the model stores; blank rows drop out.
+    private static func conditionsDict(_ drafts: [ArgConditionDraft]) -> [String: String]? {
+        var dict: [String: String] = [:]
+        for draft in drafts {
+            let name = draft.name.trimmingCharacters(in: .whitespaces)
+            let pattern = draft.pattern.trimmingCharacters(in: .whitespaces)
+            if !name.isEmpty && !pattern.isEmpty { dict[name] = pattern }
+        }
+        return dict.isEmpty ? nil : dict
+    }
 
     private let toolOptions = ["*", "Bash", "Edit", "MultiEdit", "Write", "Read", "Glob", "Grep", "Agent"]
 
@@ -1101,6 +1121,12 @@ struct RulesView: View {
                 .disabled(newPattern.isEmpty)
             }
 
+            // Arg conditions — narrow an allow rule to specific argument values
+            // (MCP tools). Allow-only: on deny/prompt they'd weaken the guard.
+            if newVerdict == .allow {
+                argConditionEditor($newArgConditions)
+            }
+
             // Explanation field for deny rules — Claude sees this when blocked
             if newVerdict == .block {
                 TextEditor(text: $newExplanation)
@@ -1139,11 +1165,48 @@ struct RulesView: View {
             pattern: sanitized,
             isRegex: newIsRegex,
             verdict: newVerdict,
-            explanation: explText
+            explanation: explText,
+            argConditions: Self.conditionsDict(newArgConditions)
         )
         viewModel.addRule(rule)
         newPattern = ""
         newExplanation = ""
+        newArgConditions = []
+    }
+
+    /// Rows of "arg = /regex/" conditions for allow rules. Regexes are
+    /// full-string anchored at match time; an absent arg fails closed.
+    private func argConditionEditor(_ drafts: Binding<[ArgConditionDraft]>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text("Arg conditions (allow only when every arg fully matches its regex; absent arg = no match)")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Button(action: { drafts.wrappedValue.append(ArgConditionDraft()) }) {
+                    Image(systemName: "plus.circle")
+                }
+                .buttonStyle(.plain)
+                .help("Add an argument condition (e.g. channel = C0123ABC|C0456DEF)")
+            }
+            ForEach(drafts) { $draft in
+                HStack(spacing: 6) {
+                    TextField("arg name", text: $draft.name)
+                        .font(.system(.caption, design: .monospaced))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 140)
+                    Text("=").foregroundColor(.secondary)
+                    Text("/").font(.system(.caption, design: .monospaced)).foregroundColor(.orange)
+                    TextField("regex", text: $draft.pattern)
+                        .font(.system(.caption, design: .monospaced))
+                        .textFieldStyle(.roundedBorder)
+                    Text("/").font(.system(.caption, design: .monospaced)).foregroundColor(.orange)
+                    Button(action: { drafts.wrappedValue.removeAll { $0.id == draft.id } }) {
+                        Image(systemName: "minus.circle")
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
     }
 
     // MARK: - Import/Export
@@ -1290,6 +1353,15 @@ struct RulesView: View {
                         }
                     }
 
+                    if let conditions = rule.argConditions, !conditions.isEmpty {
+                        Text(conditions.sorted { $0.key < $1.key }
+                            .map { "\($0.key) = /\($0.value)/" }
+                            .joined(separator: " · "))
+                            .font(.caption2)
+                            .foregroundColor(.teal)
+                            .lineLimit(1)
+                    }
+
                     if let explanation = rule.explanation, !explanation.isEmpty {
                         Text(explanation)
                             .font(.caption2)
@@ -1345,6 +1417,10 @@ struct RulesView: View {
                             .tint(.orange)
                     }
 
+                    if editVerdict == .allow {
+                        argConditionEditor($editArgConditions)
+                    }
+
                     HStack(spacing: 8) {
                         Picker("", selection: $editVerdict) {
                             Text("Deny").tag(DecisionVerdict.block)
@@ -1388,6 +1464,9 @@ struct RulesView: View {
         editIsRegex = rule.isRegex
         editVerdict = rule.verdict
         editExplanation = rule.explanation ?? ""
+        editArgConditions = (rule.argConditions ?? [:])
+            .sorted { $0.key < $1.key }
+            .map { ArgConditionDraft(name: $0.key, pattern: $0.value) }
     }
 
     private func saveEdit(_ rule: PersistentRule) {
@@ -1396,7 +1475,8 @@ struct RulesView: View {
             pattern: editPattern,
             isRegex: editIsRegex,
             verdict: editVerdict,
-            explanation: editExplanation.isEmpty ? nil : editExplanation
+            explanation: editExplanation.isEmpty ? nil : editExplanation,
+            argConditions: Self.conditionsDict(editArgConditions)
         )
         editingRuleId = nil
     }

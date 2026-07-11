@@ -1063,4 +1063,159 @@ final class PatternMatcherTests: XCTestCase {
         let expanded = PatternMatcher.expandInlineVariables(cmd)
         XCTAssertTrue(expanded.contains("curl -d"))
     }
+
+    // MARK: - Arg-scoped allow rules (argConditions)
+
+    private func slackReadInput(channel: String = "C0AAA", workspace: String = "defiance", limit: Int = 50) -> [String: AnyCodable] {
+        ["channel": AnyCodable(channel), "workspace": AnyCodable(workspace), "limit": AnyCodable(limit)]
+    }
+
+    /// The realistic authored shape: wildcard tool, glob pattern on the MCP
+    /// tool name, conditions pinning channel + workspace.
+    private func scopedSlackAllow(conditions: [String: String]? = [
+        "channel": "C0AAA|C0BBB", "workspace": "defiance"
+    ]) -> PersistentRule {
+        PersistentRule(
+            toolName: "*", pattern: "mcp__Slack__read_history", isRegex: false,
+            verdict: .allow, argConditions: conditions)
+    }
+
+    func testNilArgConditionsBackwardCompatible() {
+        var rule = scopedSlackAllow(conditions: nil)
+        XCTAssertNil(rule.argConditions)
+        // Name-only allow matches regardless of args — today's behavior.
+        XCTAssertTrue(rule.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil))
+        XCTAssertTrue(rule.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: slackReadInput(channel: "C9ZZZ")))
+    }
+
+    func testArgConditionsInAllowlistMatches() {
+        var rule = scopedSlackAllow()
+        XCTAssertTrue(rule.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: slackReadInput(channel: "C0AAA")))
+        XCTAssertTrue(rule.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: slackReadInput(channel: "C0BBB")))
+    }
+
+    func testArgConditionsOutOfAllowlistRejected() {
+        var rule = scopedSlackAllow()
+        XCTAssertFalse(rule.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: slackReadInput(channel: "C9ZZZ")))
+    }
+
+    func testArgConditionsAllMustMatch() {
+        var rule = scopedSlackAllow()
+        // channel in allowlist but wrong workspace → reject
+        XCTAssertFalse(rule.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: slackReadInput(workspace: "macedon")))
+    }
+
+    func testArgConditionAbsentArgFailsClosed() {
+        var rule = scopedSlackAllow()
+        // No toolInput at all → no match
+        XCTAssertFalse(rule.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil))
+        // workspace key missing → no match
+        XCTAssertFalse(rule.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: ["channel": AnyCodable("C0AAA")]))
+    }
+
+    func testArgConditionNonScalarArgFailsClosed() {
+        var rule = scopedSlackAllow(conditions: ["channel": ".*"])
+        let input: [String: AnyCodable] = ["channel": AnyCodable(["C0AAA": AnyCodable("x")])]
+        XCTAssertFalse(rule.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: input))
+    }
+
+    func testArgConditionRegexIsFullAnchored() {
+        // "C0AAA" must not substring-match a longer channel ID
+        var rule = scopedSlackAllow(conditions: ["channel": "C0AAA"])
+        XCTAssertFalse(rule.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: slackReadInput(channel: "C0AAA-extra")))
+        XCTAssertFalse(rule.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: slackReadInput(channel: "xC0AAA")))
+        XCTAssertTrue(rule.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: slackReadInput(channel: "C0AAA")))
+    }
+
+    func testArgConditionAnchoringNotBypassedByNewline() {
+        // \A...\z anchors (not ^...$) — a value with a trailing newline or an
+        // embedded allowlisted line must not slip through
+        var rule = scopedSlackAllow(conditions: ["channel": "C0AAA"])
+        XCTAssertFalse(rule.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: slackReadInput(channel: "C0AAA\nC9ZZZ")))
+        XCTAssertFalse(rule.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: slackReadInput(channel: "C0AAA\n")))
+    }
+
+    func testArgConditionMatchesIntArg() {
+        var rule = scopedSlackAllow(conditions: ["limit": "50"])
+        XCTAssertTrue(rule.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: slackReadInput(limit: 50)))
+        XCTAssertFalse(rule.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: slackReadInput(limit: 500)))
+    }
+
+    func testArgConditionInvalidRegexFailsClosed() {
+        var rule = scopedSlackAllow(conditions: ["channel": "C0AAA("])
+        XCTAssertFalse(rule.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: slackReadInput()))
+    }
+
+    func testArgConditionsStrippedOnDenyAndPromptVerdicts() {
+        // Conditions on a deny/prompt would NARROW the guard (a loosening) —
+        // the model must drop them so the deny stays as broad as authored.
+        let deny = PersistentRule(
+            toolName: "*", pattern: "mcp__Slack__read_history", isRegex: false,
+            verdict: .block, argConditions: ["channel": "C0AAA"])
+        XCTAssertNil(deny.argConditions)
+        let prompt = PersistentRule(
+            toolName: "*", pattern: "mcp__Slack__read_history", isRegex: false,
+            verdict: .prompt, argConditions: ["channel": "C0AAA"])
+        XCTAssertNil(prompt.argConditions)
+        // And the deny still fires on any channel
+        var d = deny
+        XCTAssertTrue(d.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: slackReadInput(channel: "C9ZZZ")))
+    }
+
+    func testArgConditionsBlankEntriesDropped() {
+        let rule = PersistentRule(
+            toolName: "*", pattern: "mcp__Slack__read_history", isRegex: false,
+            verdict: .allow, argConditions: ["": "x", "channel": "  ", "workspace": "defiance"])
+        XCTAssertEqual(rule.argConditions, ["workspace": "defiance"])
+    }
+
+    func testArgConditionsEncodeDecodeRoundTrip() throws {
+        let rule = scopedSlackAllow()
+        let data = try JSONEncoder().encode(rule)
+        var decoded = try JSONDecoder().decode(PersistentRule.self, from: data)
+        XCTAssertEqual(decoded.argConditions, rule.argConditions)
+        XCTAssertFalse(decoded.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: slackReadInput(channel: "C9ZZZ")))
+        XCTAssertTrue(decoded.matches(toolName: "mcp__Slack__read_history", command: nil, filePath: nil, toolInput: slackReadInput(channel: "C0AAA")))
+    }
+
+    func testDecoderStripsConditionsOnNonAllowJSON() throws {
+        // Hand-crafted JSON (e.g. an imported rules file) with conditions on a
+        // deny — decoder drops them so a deny can't be narrowed from outside the UI.
+        let json = """
+        {"id":"\(UUID().uuidString)","name":"x","toolName":"*","pattern":"mcp__Slack__send_message",
+         "isRegex":false,"verdict":"block","createdAt":700000000,
+         "argConditions":{"channel":"C0AAA"}}
+        """
+        let decoded = try JSONDecoder().decode(PersistentRule.self, from: Data(json.utf8))
+        XCTAssertNil(decoded.argConditions)
+    }
+
+    func testOldRulesJSONWithoutConditionsDecodes() throws {
+        let json = """
+        {"id":"\(UUID().uuidString)","name":"x","toolName":"*","pattern":"mcp__Slack__read_history",
+         "isRegex":false,"verdict":"allow","createdAt":700000000}
+        """
+        let decoded = try JSONDecoder().decode(PersistentRule.self, from: Data(json.utf8))
+        XCTAssertNil(decoded.argConditions)
+    }
+
+    func testEvaluateAllowEndToEndScopedMCP() {
+        let path = NSTemporaryDirectory() + "gavel-argscope-test-\(UUID().uuidString)/rules.json"
+        defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+        let store = RuleStore(configPath: path)
+        store.addRule(scopedSlackAllow(), origin: "test")
+
+        func payload(_ input: [String: AnyCodable]) -> PreToolUsePayload {
+            PreToolUsePayload(toolName: "mcp__Slack__read_history", toolInput: input)
+        }
+
+        // In-allowlist read → allow decision
+        XCTAssertNotNil(store.evaluateAllow(payload: payload(slackReadInput(channel: "C0BBB"))))
+        // Out-of-allowlist channel → falls through (nil) → would prompt
+        XCTAssertNil(store.evaluateAllow(payload: payload(slackReadInput(channel: "C9ZZZ"))))
+        // Agent omits the arg entirely → fail closed → would prompt
+        XCTAssertNil(store.evaluateAllow(payload: payload(["workspace": AnyCodable("defiance")])))
+        // Different MCP tool with matching args → name guard rejects
+        XCTAssertNil(store.evaluateAllow(payload: PreToolUsePayload(toolName: "mcp__Slack__search_messages", toolInput: slackReadInput())))
+    }
 }

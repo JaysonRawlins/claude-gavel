@@ -68,6 +68,11 @@ struct ApprovalPanelView: View {
     @State private var editedCommand: String = ""
     @State private var editedFields: [String: String] = [:]
     @State private var isRegexMode: Bool = false
+    /// Args ticked to scope an Always Allow to the call's argument values
+    /// (MCP calls only). Patterns are editable regexes, prefilled with the
+    /// escaped current value; unticked args don't constrain the rule.
+    @State private var scopedArgs: Set<String> = []
+    @State private var scopedArgPatterns: [String: String] = [:]
     /// Minimized to a compact bar so the user can read the code/diff behind it.
     @State private var isCollapsed: Bool = false
 
@@ -217,7 +222,28 @@ struct ApprovalPanelView: View {
             let autoOn = a.session.isAutoApproveEnabled || a.session.isAutoApproveActive
             noteState.reset(seededText: seeded, defaultSend: autoOn)
             isRegexMode = false
+            scopedArgs = []
+            scopedArgPatterns = Dictionary(uniqueKeysWithValues: scopableArgs(a).map {
+                ($0.name, NSRegularExpression.escapedPattern(for: $0.value))
+            })
         }
+    }
+
+    /// Scalar args of a pending MCP call, offered as Always Allow scope rows.
+    private func scopableArgs(_ approval: ApprovalCoordinator.PendingApproval) -> [(name: String, value: String)] {
+        guard approval.payload.toolName.hasPrefix("mcp__") else { return [] }
+        return approval.payload.toolInput
+            .compactMap { key, val in PersistentRule.scalarString(val).map { (name: key, value: $0) } }
+            .sorted { $0.name < $1.name }
+    }
+
+    private var selectedArgConditions: [String: String]? {
+        let conditions = scopedArgs.reduce(into: [String: String]()) { acc, arg in
+            if let p = scopedArgPatterns[arg], !p.trimmingCharacters(in: .whitespaces).isEmpty {
+                acc[arg] = p
+            }
+        }
+        return conditions.isEmpty ? nil : conditions
     }
 
     // MARK: - Header
@@ -499,6 +525,48 @@ struct ApprovalPanelView: View {
         .padding(.vertical, 6)
     }
 
+    // MARK: - Arg Scoping (MCP Always Allow)
+
+    @ViewBuilder
+    private func argScopeSection(_ args: [(name: String, value: String)]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Scope Always Allow to argument values (regex, must fully match — absent arg won't match)")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            ForEach(args, id: \.name) { arg in
+                HStack(spacing: 6) {
+                    Toggle(isOn: Binding(
+                        get: { scopedArgs.contains(arg.name) },
+                        set: { on in
+                            if on { scopedArgs.insert(arg.name) } else { scopedArgs.remove(arg.name) }
+                        }
+                    )) {
+                        Text(arg.name)
+                            .font(.system(.caption, design: .monospaced))
+                    }
+                    .toggleStyle(.checkbox)
+                    .frame(width: 140, alignment: .leading)
+
+                    Text("=")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundColor(.secondary)
+
+                    TextField("regex", text: Binding(
+                        get: { scopedArgPatterns[arg.name] ?? "" },
+                        set: { scopedArgPatterns[arg.name] = $0 }
+                    ))
+                    .font(.system(.caption, design: .monospaced))
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(!scopedArgs.contains(arg.name))
+                    .opacity(scopedArgs.contains(arg.name) ? 1 : 0.5)
+                }
+            }
+        }
+        .padding(6)
+        .background(Color.blue.opacity(0.05))
+        .cornerRadius(6)
+    }
+
     // MARK: - Action Bar
 
     @ViewBuilder
@@ -551,6 +619,16 @@ struct ApprovalPanelView: View {
             // Live pattern tester
             patternTester(approval)
 
+            // Arg-scope rows: narrow an Always Allow to specific MCP argument
+            // values (e.g. only this channel + workspace). Hidden for
+            // Allow-once-only approvals, which get no durable allow at all.
+            if !approval.nonSuppressible {
+                let args = scopableArgs(approval)
+                if !args.isEmpty {
+                    argScopeSection(args)
+                }
+            }
+
             // Persistent + session rules row
             HStack(spacing: 6) {
                 Button(action: {
@@ -565,9 +643,9 @@ struct ApprovalPanelView: View {
                 // Durable-allow controls are hidden for Allow-once-only (guardrail-mutation) paths.
                 if !approval.nonSuppressible {
                     Button(action: {
-                        coordinator.handleAction(.alwaysAllowPattern(pattern: sessionPattern, isRegex: isRegexMode), on: sessionPanel)
+                        coordinator.handleAction(.alwaysAllowPattern(pattern: sessionPattern, isRegex: isRegexMode, argConditions: selectedArgConditions), on: sessionPanel)
                     }) {
-                        Label("Always Allow", systemImage: "shield.checkered")
+                        Label(selectedArgConditions == nil ? "Always Allow" : "Always Allow (scoped)", systemImage: "shield.checkered")
                     }
                     .buttonStyle(.bordered)
                     .tint(.blue)

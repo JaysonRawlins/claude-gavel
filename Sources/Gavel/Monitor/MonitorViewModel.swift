@@ -141,8 +141,8 @@ final class MonitorViewModel: ObservableObject {
         approvalCoordinator.ruleStore?.removeRule(id: id)
     }
 
-    func updateRule(id: UUID, pattern: String, isRegex: Bool, verdict: DecisionVerdict, explanation: String?) {
-        approvalCoordinator.ruleStore?.updateRule(id: id, pattern: pattern, isRegex: isRegex, verdict: verdict, explanation: explanation)
+    func updateRule(id: UUID, pattern: String, isRegex: Bool, verdict: DecisionVerdict, explanation: String?, argConditions: [String: String]? = nil) {
+        approvalCoordinator.ruleStore?.updateRule(id: id, pattern: pattern, isRegex: isRegex, verdict: verdict, explanation: explanation, argConditions: argConditions)
     }
 
     func setRuleDisabled(id: UUID, isDisabled: Bool) {
