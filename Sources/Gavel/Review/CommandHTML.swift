@@ -153,10 +153,17 @@ enum CommandHTML {
     /// Allow. Glob semantics match SessionRule/PersistentRule: * is the only
     /// wildcard, and Bash compound commands must match EVERY segment.
     private static func patternAllowSection(_ content: CommandContent, suggested: String) -> String {
-        """
+        // Tappable generalizations — dogfooding showed the exact-call prefill
+        // gets submitted unedited (phone keyboards make inserting a `*`
+        // painful), which is just a glorified allow-once. One tap widens.
+        let chipRow = patternChips(command: content.command, suggested: suggested).map { chip in
+            "<button class=\"chip\" data-pat=\"\(DiffHTML.escAttr(chip))\" onclick=\"setPatternFrom(this)\">\(DiffHTML.esc(chip.count > 40 ? String(chip.prefix(40)) + "…" : chip))</button>"
+        }.joined()
+        return """
         <section class="block">
         <h2>Allow by pattern</h2>
-        <p class="scopehint">Glob for \(DiffHTML.esc(content.toolName)) (* matches anything; a compound Bash command must match every segment). Edit before granting — the prefill is this exact call.</p>
+        <p class="scopehint">Glob for \(DiffHTML.esc(content.toolName)) (* matches anything; a compound Bash command must match every segment). Tap a suggestion or edit — the default is this exact call only.</p>
+        <div class="chips">\(chipRow)</div>
         <div class="scoperow">
         <input class="pat" id="allowpattern" value="\(DiffHTML.escAttr(suggested))" autocapitalize="off" autocorrect="off">
         </div>
@@ -166,6 +173,29 @@ enum CommandHTML {
         </div>
         </section>
         """
+    }
+
+    /// Widening chips from the command's leading tokens: `python3 *`,
+    /// `python3 -c *`, first-three-tokens `*`. Deduped, exact-call last.
+    /// A prefix that splits inside a quoted string (odd quote count) or
+    /// already carries a wildcard is skipped — it reads broken and matches
+    /// nothing sensible.
+    static func patternChips(command: String?, suggested: String) -> [String] {
+        var chips: [String] = []
+        if let command, !command.isEmpty {
+            let firstLine = command.split(separator: "\n").first.map(String.init) ?? command
+            let tokens = firstLine.split(separator: " ").map(String.init)
+            for depth in [1, 2, 3] where tokens.count > depth {
+                let prefix = tokens.prefix(depth).joined(separator: " ")
+                guard !prefix.contains("*"),
+                      prefix.filter({ $0 == "'" }).count.isMultiple(of: 2),
+                      prefix.filter({ $0 == "\"" }).count.isMultiple(of: 2) else { continue }
+                chips.append(prefix + " *")
+            }
+        }
+        if !chips.contains(suggested) { chips.append(suggested) }
+        var seen = Set<String>()
+        return chips.filter { seen.insert($0).inserted }
     }
 
     private static func banner(_ escapedText: String) -> String {
@@ -211,6 +241,11 @@ enum CommandHTML {
     .addcond { display: block; margin: 6px 12px 4px; padding: 6px 10px; font-size: 13px;
                border-radius: 8px; border: 1px dashed #0004; background: transparent;
                color: inherit; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 12px 6px; }
+    .chip { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Roboto Mono', monospace;
+            font-size: 13px; padding: 6px 10px; border-radius: 14px;
+            border: 1px solid #0969da55; background: #ddf4ff66; color: inherit;
+            max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .scoperow .argname { flex: 0 0 34%; font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Roboto Mono', monospace;
                          font-size: 16px; padding: 6px 8px; border-radius: 8px;
                          border: 1px solid #0003; background: inherit; color: inherit; min-width: 0; }
@@ -239,6 +274,7 @@ enum CommandHTML {
       .scoperow .pat { border-color: #fff3; }
       .scoperow .argname { border-color: #fff3; }
       .addcond { border-color: #fff4; }
+      .chip { border-color: #58a6ff66; background: #10233a; }
     }
     """
 
@@ -277,6 +313,10 @@ enum CommandHTML {
            verdict === 'allow_session_scoped'
              ? '✅ Scoped session allow created (expires with the session) — command proceeding.'
              : '✅ Scoped allow rule created — command proceeding.');
+    }
+    function setPatternFrom(btn) {
+      const input = document.getElementById('allowpattern');
+      if (input) { input.value = btn.dataset.pat; }
     }
     function submitPattern(verdict) {
       const pat = document.getElementById('allowpattern');
