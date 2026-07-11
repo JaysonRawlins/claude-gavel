@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.43.2](https://github.com/JaysonRawlins/claude-gavel/compare/v1.43.1...v1.43.2) (2026-07-11)
+
+
+### Bug Fixes
+
+* **approval:** show every MCP arg on the card + free-form scope conditions ([#206](https://github.com/JaysonRawlins/claude-gavel/issues/206)) ([b2b0534](https://github.com/JaysonRawlins/claude-gavel/commit/b2b05341437e905205d431845450844d0f0efddc))
+
 ## [1.43.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.43.0...v1.43.1) (2026-07-11)
 
 
