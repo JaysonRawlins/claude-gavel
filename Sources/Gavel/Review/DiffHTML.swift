@@ -168,7 +168,8 @@ enum DiffHTML {
     private static let css = """
     :root { color-scheme: light dark; }
     * { box-sizing: border-box; margin: 0; }
-    body { font-family: -apple-system, system-ui, sans-serif; font-size: 15px;
+    body { font-family: -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif; font-size: 15px;
+           -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
            background: #f5f5f7; color: #1d1d1f; padding-bottom: 170px; }
     header { padding: 14px 16px 8px; }
     h1 { font-size: 17px; }
@@ -180,14 +181,16 @@ enum DiffHTML {
     .file { background: #fff; margin: 8px 8px; border-radius: 10px; overflow: hidden;
             border: 1px solid #0000001a; }
     summary { padding: 10px 12px; font-weight: 600; font-size: 13px;
-              font-family: ui-monospace, monospace; word-break: break-all; cursor: pointer; }
+              font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Roboto Mono', monospace; word-break: break-all; cursor: pointer; }
     .tag { font-size: 11px; padding: 1px 6px; border-radius: 6px; margin-left: 4px;
-           background: #ddf4ff; color: #0969da; font-family: -apple-system, system-ui; }
+           background: #ddf4ff; color: #0969da; font-family: -apple-system, system-ui;
+           white-space: nowrap; word-break: normal; display: inline-block; }
     .tag.del { background: #ffebe9; color: #cf222e; }
+    .fstats { white-space: nowrap; }
     .hunk { border-top: 1px solid #0000000d; }
-    .hheader { font-family: ui-monospace, monospace; font-size: 11px; opacity: .6;
+    .hheader { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Roboto Mono', monospace; font-size: 11px; opacity: .6;
                padding: 6px 12px; background: #f0f4f8; }
-    .lines { overflow-x: auto; font-family: ui-monospace, monospace; font-size: 12px;
+    .lines { overflow-x: auto; font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Roboto Mono', monospace; font-size: 12px;
              line-height: 1.5; }
     .ln { display: flex; white-space: pre; }
     .ln .no { flex: 0 0 38px; text-align: right; padding-right: 8px; opacity: .4;
@@ -200,7 +203,7 @@ enum DiffHTML {
     .cbtn { margin: 8px 12px; font-size: 12px; padding: 4px 10px; border-radius: 8px;
             border: 1px solid #0002; background: transparent; }
     textarea { width: calc(100% - 24px); margin: 0 12px 10px; padding: 8px;
-               border-radius: 8px; border: 1px solid #0003; font-size: 15px;
+               border-radius: 8px; border: 1px solid #0003; font-size: 16px;
                font-family: inherit; min-height: 60px; background: inherit; color: inherit; }
     .hidden { display: none; }
     .empty { padding: 24px; text-align: center; opacity: .7; }
