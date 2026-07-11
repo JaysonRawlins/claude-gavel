@@ -507,7 +507,10 @@ final class RemoteApprovalBridge {
             let tail = cwd.split(separator: "/").suffix(2).joined(separator: "/")
             if !tail.isEmpty { lines.append("cwd: …/\(tail)") }
         }
-        let raw = payload.command ?? payload.filePath ?? firstStringInput(payload) ?? ""
+        // Bash/file tools show their primary text; MCP calls show EVERY arg
+        // as name: value lines — a single arbitrary first-string used to hide
+        // e.g. `workspace` behind `text`, making cards undecidable inline.
+        let raw = payload.command ?? payload.filePath ?? allArgsSummary(payload) ?? ""
         if !raw.isEmpty {
             let cleaned = sanitizeForDisplay(SecretRedactor.redact(raw))
             if cleaned.count > GavelConstants.telegramBodyMaxChars {
@@ -535,9 +538,31 @@ final class RemoteApprovalBridge {
         return lines.joined(separator: "\n")
     }
 
-    private static func firstStringInput(_ payload: PreToolUsePayload) -> String? {
-        for (_, v) in payload.toolInput { if let s = v.stringValue { return s } }
-        return nil
+    /// All tool args as sorted "name: value" lines. Long values (message
+    /// bodies) are clipped per-line so short args like channel/workspace
+    /// can't be pushed past the overall body cap by a big text field.
+    private static func allArgsSummary(_ payload: PreToolUsePayload) -> String? {
+        let lines = payload.toolInput
+            .compactMap { key, value -> (String, String)? in
+                guard let text = argDisplayValue(value) else { return nil }
+                return (key, text)
+            }
+            .sorted { $0.0 < $1.0 }
+            .map { name, text -> String in
+                let clipped = text.count > 400 ? String(text.prefix(400)) + "…" : text
+                return "\(name): \(clipped)"
+            }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
+    private static func argDisplayValue(_ value: AnyCodable) -> String? {
+        switch value.value {
+        case let s as String: return s.isEmpty ? nil : s
+        case let b as Bool: return b ? "true" : "false"
+        case let i as Int: return String(i)
+        case let d as Double: return String(d)
+        default: return nil
+        }
     }
 
     private static func sanitizeForDisplay(_ text: String) -> String {

@@ -232,6 +232,42 @@ final class CommandReviewTests: XCTestCase {
         XCTAssertEqual(linkRow.map(\.text), ["🔍 Review diff", "📄 Full command"])
     }
 
+    func testSummaryBodyListsAllMCPArgs() {
+        // The old body showed ONE arbitrary first-string arg — a send_message
+        // card could show `text` and hide channel/workspace entirely.
+        let payload = PreToolUsePayload(toolName: "mcp__Slack__send_message", toolInput: [
+            "channel": AnyCodable("Jayson Rawlins"),
+            "workspace": AnyCodable("defiance"),
+            "limit": AnyCodable(50),
+            "text": AnyCodable(String(repeating: "long message body ", count: 60)),
+        ])
+        let body = RemoteApprovalBridge.summaryBody(payload: payload, session: Session(pid: 1), triggerReason: nil)
+
+        XCTAssertTrue(body.contains("channel: Jayson Rawlins"))
+        XCTAssertTrue(body.contains("workspace: defiance"))
+        XCTAssertTrue(body.contains("limit: 50"))
+        // Long values clip per-line so they can't drown the short args.
+        let textLine = body.split(separator: "\n").first { $0.hasPrefix("text: ") }
+        XCTAssertNotNil(textLine)
+        XCTAssertLessThan(textLine!.count, 420)
+        XCTAssertTrue(textLine!.hasSuffix("…"))
+    }
+
+    func testCommandPageOffersCustomConditionRows() throws {
+        let offered = server.register(command: scopableSlackContent(), resolvable: ResolvableApproval { _ in }, createScopedAllow: { _ in "rule" })
+        let page = try request("/review/\(offered)")
+        XCTAssertTrue(page.body.contains("customrows"))
+        XCTAssertTrue(page.body.contains("condition on another arg"))
+
+        // Non-MCP pages (no scoped section) don't offer the affordance.
+        // (The page JS mentions the customrows id unconditionally, so assert
+        // on the button markup, which only the scoped section renders.)
+        let plain = server.register(command: makeCommand(), resolvable: ResolvableApproval { _ in })
+        let plainPage = try request("/review/\(plain)")
+        XCTAssertFalse(plainPage.body.contains("condition on another arg"))
+        XCTAssertFalse(plainPage.body.contains("<div id=\"customrows\">"))
+    }
+
     func testSummaryBodyTruncationPointsAtLink() {
         let long = String(repeating: "x", count: GavelConstants.telegramBodyMaxChars + 100)
         let payload = PreToolUsePayload(toolName: "Bash", toolInput: ["command": AnyCodable(long)])

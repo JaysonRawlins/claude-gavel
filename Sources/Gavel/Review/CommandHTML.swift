@@ -129,6 +129,9 @@ enum CommandHTML {
         <h2>Always allow, scoped to</h2>
         <p class="scopehint">Creates an allow rule for \(DiffHTML.esc(content.toolName)) limited to args fully matching these regexes. Absent args never match — future calls outside the scope still prompt. Session rules expire when the session ends; Always rules persist.</p>
         \(rows)
+        <div id="customrows"></div>
+        <button class="addcond" onclick="addCustomRow()">+ condition on another arg</button>
+        <p class="scopehint">For an arg this call omitted (e.g. an optional workspace). Heads-up: calls that omit a conditioned arg never match the rule — they'll still prompt.</p>
         <div class="scopedbtns">
         <button id="scopedsessionbtn" class="scoped session" disabled onclick="submitScoped('allow_session_scoped')">Allow for session (scoped)</button>
         <button id="scopedbtn" class="scoped" disabled onclick="submitScoped('allow_scoped')">Always Allow (scoped)</button>
@@ -177,6 +180,12 @@ enum CommandHTML {
     .scoperow .pat { flex: 1; font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Roboto Mono', monospace; font-size: 16px;
                      padding: 6px 8px; border-radius: 8px; border: 1px solid #0003;
                      background: inherit; color: inherit; min-width: 0; }
+    .addcond { display: block; margin: 6px 12px 4px; padding: 6px 10px; font-size: 13px;
+               border-radius: 8px; border: 1px dashed #0004; background: transparent;
+               color: inherit; }
+    .scoperow .argname { flex: 0 0 34%; font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Roboto Mono', monospace;
+                         font-size: 16px; padding: 6px 8px; border-radius: 8px;
+                         border: 1px solid #0003; background: inherit; color: inherit; min-width: 0; }
     .scopedbtns { display: flex; gap: 10px; margin: 10px 12px 12px; }
     .scoped { flex: 1; padding: 12px; border-radius: 10px; border: none; font-size: 14px;
               font-weight: 600; background: #0969da; color: #fff; }
@@ -200,21 +209,42 @@ enum CommandHTML {
       footer { background: #161618f2; border-color: #fff2; }
       textarea { border-color: #fff3; }
       .scoperow .pat { border-color: #fff3; }
+      .scoperow .argname { border-color: #fff3; }
+      .addcond { border-color: #fff4; }
     }
     """
 
     private static let js = """
+    function customConditions() {
+      const out = {};
+      document.querySelectorAll('#customrows .scoperow').forEach(function (row) {
+        const name = row.querySelector('.argname').value.trim();
+        const pat = row.querySelector('.pat').value.trim();
+        if (name && pat) out[name] = pat;
+      });
+      return out;
+    }
     function scopeChanged() {
-      const any = document.querySelectorAll('.scopecheck:checked').length > 0;
+      const any = document.querySelectorAll('.scopecheck:checked').length > 0
+        || Object.keys(customConditions()).length > 0;
       document.querySelectorAll('.scoped').forEach(function (b) { b.disabled = !any; });
     }
+    function addCustomRow() {
+      const row = document.createElement('div');
+      row.className = 'scoperow';
+      row.innerHTML = '<input class="argname" placeholder="arg name" autocapitalize="off" autocorrect="off">'
+        + '<input class="pat" placeholder="regex" autocapitalize="off" autocorrect="off">';
+      row.querySelectorAll('input').forEach(function (i) { i.addEventListener('input', scopeChanged); });
+      document.getElementById('customrows').appendChild(row);
+      row.querySelector('.argname').focus();
+    }
     function submitScoped(verdict) {
-      const conditions = {};
+      const conditions = customConditions();
       document.querySelectorAll('.scopecheck:checked').forEach(function (c) {
         const pat = document.getElementById('pat-' + c.dataset.arg);
         if (pat && pat.value.trim()) conditions[c.dataset.arg] = pat.value.trim();
       });
-      if (Object.keys(conditions).length === 0) { alert('Tick at least one argument to scope the rule.'); return; }
+      if (Object.keys(conditions).length === 0) { alert('Tick or add at least one argument to scope the rule.'); return; }
       post({ verdict: verdict, note: noteValue(), conditions: conditions },
            verdict === 'allow_session_scoped'
              ? '✅ Scoped session allow created (expires with the session) — command proceeding.'
