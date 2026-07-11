@@ -6,6 +6,13 @@ import Foundation
 /// Telegram: the inline card stays redacted/truncated, and fidelity lives
 /// here — served loopback-only, reachable exclusively over the tailnet
 /// (same security model as the diff review page).
+struct CommandArg {
+    let name: String
+    let value: String
+    /// Scalar args of an MCP call can anchor a scoped Always Allow row.
+    let scopable: Bool
+}
+
 struct CommandContent {
     let sessionLabel: String
     let toolName: String
@@ -13,11 +20,28 @@ struct CommandContent {
     /// The primary text (Bash command / file path), when the tool has one.
     let command: String?
     /// Remaining tool args rendered as name → value rows (MCP calls live here).
-    let args: [(name: String, value: String)]
+    let args: [CommandArg]
     let triggerReason: String?
     /// True when the credential gate withheld the command from the Telegram
     /// card — the page shows it anyway (tailnet-only), with a banner saying why.
     let withheldInline: Bool
+    /// True when this approval may author a scoped Always Allow from the page
+    /// (MCP call with scalar args, not Allow-once-only). Must match whether a
+    /// createScopedAllow callback was registered with the server.
+    let offersScopedAllow: Bool
+
+    init(sessionLabel: String, toolName: String, cwd: String?, command: String?,
+         args: [CommandArg], triggerReason: String?, withheldInline: Bool,
+         offersScopedAllow: Bool = false) {
+        self.sessionLabel = sessionLabel
+        self.toolName = toolName
+        self.cwd = cwd
+        self.command = command
+        self.args = args
+        self.triggerReason = triggerReason
+        self.withheldInline = withheldInline
+        self.offersScopedAllow = offersScopedAllow
+    }
 }
 
 /// Server-side renderer for the mobile full-command page. Fully
@@ -47,6 +71,9 @@ enum CommandHTML {
                 "<div class=\"arg\"><div class=\"aname\">\(DiffHTML.esc(arg.name))</div><pre>\(DiffHTML.esc(arg.value))</pre></div>"
             }.joined()
             body += "<section class=\"block\"><h2>Arguments</h2>\(rows)</section>"
+        }
+        if content.offersScopedAllow {
+            body += scopedAllowSection(content)
         }
         if body.isEmpty {
             body = "<p class=\"empty\">No command text or arguments on this call.</p>"
@@ -83,6 +110,30 @@ enum CommandHTML {
         """
     }
 
+    /// Scoped Always Allow authoring — the phone twin of the Mac panel's
+    /// per-arg rows. Checked args become argConditions on a persistent allow
+    /// rule (regex, full match, absent arg fails closed), prefilled with the
+    /// escaped literal value of THIS call.
+    private static func scopedAllowSection(_ content: CommandContent) -> String {
+        let rows = content.args.filter(\.scopable).map { arg in
+            let escaped = DiffHTML.escAttr(NSRegularExpression.escapedPattern(for: arg.value))
+            return """
+            <div class="scoperow">
+            <label><input type="checkbox" class="scopecheck" data-arg="\(DiffHTML.escAttr(arg.name))" onchange="scopeChanged()"> \(DiffHTML.esc(arg.name))</label>
+            <input class="pat" id="pat-\(DiffHTML.escAttr(arg.name))" value="\(escaped)" autocapitalize="off" autocorrect="off">
+            </div>
+            """
+        }.joined()
+        return """
+        <section class="block">
+        <h2>Always allow, scoped to</h2>
+        <p class="scopehint">Creates a persistent allow rule for \(DiffHTML.esc(content.toolName)), limited to args fully matching these regexes. Absent args never match — future calls outside the scope still prompt.</p>
+        \(rows)
+        <button id="scopedbtn" class="scoped" disabled onclick="submitScoped()">Always Allow (scoped)</button>
+        </section>
+        """
+    }
+
     private static func banner(_ escapedText: String) -> String {
         "<div class=\"banner\">\(escapedText)</div>"
     }
@@ -115,6 +166,16 @@ enum CommandHTML {
     .aname { font-family: ui-monospace, monospace; font-size: 11px; font-weight: 700;
              opacity: .65; padding: 8px 12px 0; }
     .empty { padding: 24px; text-align: center; opacity: .7; }
+    .scopehint { font-size: 12px; opacity: .7; padding: 0 12px 6px; }
+    .scoperow { display: flex; align-items: center; gap: 8px; padding: 4px 12px; }
+    .scoperow label { flex: 0 0 34%; font-family: ui-monospace, monospace;
+                      font-size: 12.5px; word-break: break-all; }
+    .scoperow .pat { flex: 1; font-family: ui-monospace, monospace; font-size: 12.5px;
+                     padding: 6px 8px; border-radius: 8px; border: 1px solid #0003;
+                     background: inherit; color: inherit; min-width: 0; }
+    .scoped { display: block; margin: 10px 12px 12px; width: calc(100% - 24px);
+              padding: 12px; border-radius: 10px; border: none; font-size: 15px;
+              font-weight: 600; background: #0969da; color: #fff; }
     footer { position: fixed; bottom: 0; left: 0; right: 0; background: #fffffff2;
              backdrop-filter: blur(10px); border-top: 1px solid #0002; padding: 10px 0
              calc(10px + env(safe-area-inset-bottom)); }
@@ -133,20 +194,42 @@ enum CommandHTML {
       .banner { background: #3a3117; border-color: #d4a72c44; }
       footer { background: #161618f2; border-color: #fff2; }
       textarea { border-color: #fff3; }
+      .scoperow .pat { border-color: #fff3; }
     }
     """
 
     private static let js = """
+    function scopeChanged() {
+      const any = document.querySelectorAll('.scopecheck:checked').length > 0;
+      const btn = document.getElementById('scopedbtn');
+      if (btn) btn.disabled = !any;
+    }
+    function submitScoped() {
+      const conditions = {};
+      document.querySelectorAll('.scopecheck:checked').forEach(function (c) {
+        const pat = document.getElementById('pat-' + c.dataset.arg);
+        if (pat && pat.value.trim()) conditions[c.dataset.arg] = pat.value.trim();
+      });
+      if (Object.keys(conditions).length === 0) { alert('Tick at least one argument to scope the rule.'); return; }
+      post({ verdict: 'allow_scoped', note: noteValue(), conditions: conditions },
+           '✅ Scoped allow rule created — command proceeding.');
+    }
     function submitVerdict(verdict) {
-      const note = document.getElementById('note').value.trim();
-      document.querySelectorAll('.btns button').forEach(function (b) { b.disabled = true; });
+      post({ verdict: verdict, note: noteValue() },
+           verdict === 'allow' ? '✅ Allowed — command proceeding.' : '🛑 Denied.');
+    }
+    function noteValue() {
+      return document.getElementById('note').value.trim() || null;
+    }
+    function post(payload, doneMsg) {
+      document.querySelectorAll('.btns button, .scoped').forEach(function (b) { b.disabled = true; });
       fetch(location.pathname + '/verdict', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ verdict: verdict, note: note || null })
+        body: JSON.stringify(payload)
       }).then(function (r) {
         if (r.ok) {
-          finish(verdict === 'allow' ? '✅ Allowed — command proceeding.' : '🛑 Denied.');
+          finish(doneMsg);
         } else if (r.status === 409) {
           finish('Already resolved elsewhere (Mac panel or Telegram).');
         } else {
@@ -158,7 +241,8 @@ enum CommandHTML {
       document.body.innerHTML = '<header><h1>' + msg + '</h1><p class="msg">You can close this tab.</p></header>';
     }
     function fail(msg) {
-      document.querySelectorAll('.btns button').forEach(function (b) { b.disabled = false; });
+      document.querySelectorAll('.btns button, .scoped').forEach(function (b) { b.disabled = false; });
+      scopeChanged();
       alert(msg);
     }
     """

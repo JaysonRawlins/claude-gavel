@@ -203,25 +203,31 @@ final class RemoteApprovalBridge {
 
     /// Handle an Accept/Reject tap on a proposal card. Runs through the same
     /// audited ProposalStore path as the Monitor buttons (accepted-via=telegram).
+    /// Adjudication hops to main: RuleStore/ProposalStore mutations are
+    /// main-thread throughout the app (Monitor buttons, panel actions), and
+    /// this callback arrives on the transport's queue.
     private func adjudicateProposal(action: String, idText: String, callback: TelegramCallback, chat: Int64) {
         guard let store = proposalStore, let id = UUID(uuidString: idText) else {
             transport.answerCallbackQuery(id: callback.id, text: "Unavailable", completion: nil)
             return
         }
-        if action == "pa" {
-            if let rule = store.accept(id: id, via: "telegram") {
-                remoteLog?("proposal accepted id=\(id) via=telegram")
-                transport.answerCallbackQuery(id: callback.id, text: "Rule added", completion: nil)
-                transport.editMessageText(chatId: chat, messageId: callback.messageId, text: "✅ Rule accepted from phone: \(rule.name)", completion: nil)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if action == "pa" {
+                if let rule = store.accept(id: id, via: "telegram") {
+                    self.remoteLog?("proposal accepted id=\(id) via=telegram")
+                    self.transport.answerCallbackQuery(id: callback.id, text: "Rule added", completion: nil)
+                    self.transport.editMessageText(chatId: chat, messageId: callback.messageId, text: "✅ Rule accepted from phone: \(rule.name)", completion: nil)
+                } else {
+                    self.transport.answerCallbackQuery(id: callback.id, text: "Already handled", completion: nil)
+                    self.transport.editMessageText(chatId: chat, messageId: callback.messageId, text: "↪️ Proposal already handled (Monitor or expired)", completion: nil)
+                }
             } else {
-                transport.answerCallbackQuery(id: callback.id, text: "Already handled", completion: nil)
-                transport.editMessageText(chatId: chat, messageId: callback.messageId, text: "↪️ Proposal already handled (Monitor or expired)", completion: nil)
+                store.reject(id: id, via: "telegram")
+                self.remoteLog?("proposal rejected id=\(id) via=telegram")
+                self.transport.answerCallbackQuery(id: callback.id, text: "Rejected", completion: nil)
+                self.transport.editMessageText(chatId: chat, messageId: callback.messageId, text: "❌ Proposal rejected from phone", completion: nil)
             }
-        } else {
-            store.reject(id: id, via: "telegram")
-            remoteLog?("proposal rejected id=\(id) via=telegram")
-            transport.answerCallbackQuery(id: callback.id, text: "Rejected", completion: nil)
-            transport.editMessageText(chatId: chat, messageId: callback.messageId, text: "❌ Proposal rejected from phone", completion: nil)
         }
     }
 

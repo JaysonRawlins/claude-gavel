@@ -204,7 +204,7 @@ final class ApprovalCoordinator: ObservableObject {
         let reviewURL = isCommit ? makeReviewLink(payload: payload, session: session, resolvable: resolvable) : nil
         // Full-command link on EVERY mirrored approval — Telegram keeps the
         // redacted/truncated summary, full fidelity lives on the tailnet page.
-        let commandURL = makeCommandLink(payload: payload, session: session, resolvable: resolvable, triggerReason: pending.triggerReason, withheldInline: withheld != nil)
+        let commandURL = makeCommandLink(payload: payload, session: session, resolvable: resolvable, triggerReason: pending.triggerReason, withheldInline: withheld != nil, nonSuppressible: pending.nonSuppressible)
         let text = withheld != nil
             ? RemoteApprovalBridge.withheldBody(payload: payload, session: session, hasCommandLink: commandURL != nil)
             : RemoteApprovalBridge.summaryBody(payload: payload, session: session, triggerReason: pending.triggerReason, hasCommandLink: commandURL != nil)
@@ -214,7 +214,7 @@ final class ApprovalCoordinator: ObservableObject {
     /// Register the full, unredacted command with the review server and
     /// return its tailnet URL. Failures are soft — nil just means the
     /// Telegram card goes out with the redacted inline text only.
-    private func makeCommandLink(payload: PreToolUsePayload, session: Session, resolvable: ResolvableApproval, triggerReason: String?, withheldInline: Bool) -> String? {
+    private func makeCommandLink(payload: PreToolUsePayload, session: Session, resolvable: ResolvableApproval, triggerReason: String?, withheldInline: Bool, nonSuppressible: Bool) -> String? {
         do {
             try DiffReviewServer.shared.start()
         } catch {
@@ -225,12 +225,35 @@ final class ApprovalCoordinator: ObservableObject {
 
         let primary = payload.command ?? payload.filePath
         // Everything except the primary text becomes an args row, so MCP
-        // calls (no command/filePath) still show their full input.
+        // calls (no command/filePath) still show their full input. Scalar
+        // args of MCP calls can anchor a scoped Always Allow on the page.
+        let isMCP = payload.toolName.hasPrefix("mcp__")
         let primaryKeys: Set<String> = payload.command != nil ? ["command"] : (payload.filePath != nil ? ["file_path", "path"] : [])
         let args = payload.toolInput
-            .filter { !primaryKeys.contains($0.key) }
-            .map { (name: $0.key, value: Self.displayString($0.value)) }
-            .sorted { $0.name < $1.name }
+            .filter { argName, _ in !primaryKeys.contains(argName) }
+            .map { argName, argValue in
+                CommandArg(
+                    name: argName,
+                    value: Self.displayString(argValue),
+                    scopable: isMCP && PersistentRule.scalarString(argValue) != nil)
+            }
+            .sorted { lhs, rhs in lhs.name < rhs.name }
+
+        // Scoped-allow authoring mirrors the Mac panel's gating: MCP calls
+        // with at least one scalar arg, never on Allow-once-only paths.
+        let offersScopedAllow = !nonSuppressible && args.contains(where: \.scopable)
+        let createScopedAllow: (([String: String]) -> String)? = !offersScopedAllow ? nil : { [weak self] conditions in
+            let rule = PersistentRule(
+                toolName: payload.toolName, pattern: "*", isRegex: false,
+                verdict: .allow, argConditions: conditions)
+            // Rule mutations happen on main (house pattern for RuleStore) —
+            // the page's decision allows THIS call regardless, so the rule
+            // landing a tick later loses nothing.
+            DispatchQueue.main.async {
+                self?.ruleStore?.addRule(rule, origin: "command-page:always-allow-scoped")
+            }
+            return rule.name
+        }
 
         let label = session.label.isEmpty ? "PID \(session.pid)" : session.label
         let content = CommandContent(
@@ -240,9 +263,10 @@ final class ApprovalCoordinator: ObservableObject {
             command: primary,
             args: args,
             triggerReason: triggerReason,
-            withheldInline: withheldInline)
-        let nonce = DiffReviewServer.shared.register(command: content, resolvable: resolvable)
-        gavelLog("[review] command link created pid=\(session.pid) tool=\(payload.toolName) nonce=\(nonce.prefix(8))…")
+            withheldInline: withheldInline,
+            offersScopedAllow: offersScopedAllow)
+        let nonce = DiffReviewServer.shared.register(command: content, resolvable: resolvable, createScopedAllow: createScopedAllow)
+        gavelLog("[review] command link created pid=\(session.pid) tool=\(payload.toolName) scopedAllow=\(offersScopedAllow) nonce=\(nonce.prefix(8))…")
         return "\(base)/review/\(nonce)"
     }
 
