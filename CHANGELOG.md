@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.43.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.43.0...v1.43.1) (2026-07-11)
+
+
+### Bug Fixes
+
+* **approval:** mobile font rendering on the review pages ([#204](https://github.com/JaysonRawlins/claude-gavel/issues/204)) ([cf633ca](https://github.com/JaysonRawlins/claude-gavel/commit/cf633ca1c99988d902e78622aa183b7f72e6351d))
+
 ## [1.43.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.42.0...v1.43.0) (2026-07-11)
 
 
