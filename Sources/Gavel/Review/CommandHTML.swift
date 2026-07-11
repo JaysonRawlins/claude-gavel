@@ -148,10 +148,11 @@ enum CommandHTML {
     private static let css = """
     :root { color-scheme: light dark; }
     * { box-sizing: border-box; margin: 0; }
-    body { font-family: -apple-system, system-ui, sans-serif; font-size: 15px;
+    body { font-family: -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif; font-size: 15px;
+           -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
            background: #f5f5f7; color: #1d1d1f; padding-bottom: 170px; }
     header { padding: 14px 16px 8px; }
-    h1 { font-size: 17px; font-family: ui-monospace, monospace; word-break: break-all; }
+    h1 { font-size: 17px; font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Roboto Mono', monospace; word-break: break-all; }
     h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
          opacity: .6; padding: 10px 12px 4px; }
     .msg { font-style: italic; opacity: .8; margin-top: 4px; }
@@ -161,19 +162,19 @@ enum CommandHTML {
               padding: 8px 12px; border-radius: 8px; font-size: 13px; }
     .block { background: #fff; margin: 8px 8px; border-radius: 10px; overflow: hidden;
              border: 1px solid #0000001a; }
-    pre { font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.5;
+    pre { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Roboto Mono', monospace; font-size: 12.5px; line-height: 1.5;
           padding: 8px 12px 12px; overflow-x: auto; white-space: pre-wrap;
           word-break: break-word; }
     .arg { border-top: 1px solid #0000000d; }
     .arg:first-of-type { border-top: none; }
-    .aname { font-family: ui-monospace, monospace; font-size: 11px; font-weight: 700;
+    .aname { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Roboto Mono', monospace; font-size: 11px; font-weight: 700;
              opacity: .65; padding: 8px 12px 0; }
     .empty { padding: 24px; text-align: center; opacity: .7; }
     .scopehint { font-size: 12px; opacity: .7; padding: 0 12px 6px; }
     .scoperow { display: flex; align-items: center; gap: 8px; padding: 4px 12px; }
-    .scoperow label { flex: 0 0 34%; font-family: ui-monospace, monospace;
+    .scoperow label { flex: 0 0 34%; font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Roboto Mono', monospace;
                       font-size: 12.5px; word-break: break-all; }
-    .scoperow .pat { flex: 1; font-family: ui-monospace, monospace; font-size: 12.5px;
+    .scoperow .pat { flex: 1; font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Roboto Mono', monospace; font-size: 16px;
                      padding: 6px 8px; border-radius: 8px; border: 1px solid #0003;
                      background: inherit; color: inherit; min-width: 0; }
     .scopedbtns { display: flex; gap: 10px; margin: 10px 12px 12px; }
@@ -184,7 +185,7 @@ enum CommandHTML {
              backdrop-filter: blur(10px); border-top: 1px solid #0002; padding: 10px 0
              calc(10px + env(safe-area-inset-bottom)); }
     textarea { width: calc(100% - 24px); margin: 0 12px 8px; padding: 8px;
-               border-radius: 8px; border: 1px solid #0003; font-size: 15px;
+               border-radius: 8px; border: 1px solid #0003; font-size: 16px;
                font-family: inherit; min-height: 44px; background: inherit; color: inherit; }
     .btns { display: flex; gap: 10px; padding: 0 12px; }
     .btns button { flex: 1; padding: 12px; border-radius: 10px; border: none;
