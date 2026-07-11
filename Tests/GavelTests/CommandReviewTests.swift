@@ -26,7 +26,8 @@ final class CommandReviewTests: XCTestCase {
         command: String? = "aws s3 cp s3://bucket/very-long-key /tmp/x --profile Prod-123",
         args: [CommandArg] = [],
         withheldInline: Bool = false,
-        offersScopedAllow: Bool = false
+        offersScopedAllow: Bool = false,
+        suggestedPattern: String? = nil
     ) -> CommandContent {
         CommandContent(
             sessionLabel: "argscope",
@@ -36,7 +37,8 @@ final class CommandReviewTests: XCTestCase {
             args: args,
             triggerReason: "Default rule: something fired",
             withheldInline: withheldInline,
-            offersScopedAllow: offersScopedAllow)
+            offersScopedAllow: offersScopedAllow,
+            suggestedPattern: suggestedPattern)
     }
 
     /// Pump the main queue — proposal adjudication and rule authoring hop to
@@ -500,6 +502,70 @@ final class CommandReviewTests: XCTestCase {
         let res = try request("/review/\(nonce)/verdict", method: "POST", body: #"{"verdict":"allow_scoped","conditions":{"channel":"general"}}"#)
         XCTAssertEqual(res.status, 409)
         XCTAssertFalse(created, "stale submissions must not author rules")
+    }
+
+    // MARK: - Pattern allows from the command page (non-MCP tools)
+
+    func testBashPageShowsPatternSectionAndMCPDoesNot() throws {
+        let bash = server.register(
+            command: makeCommand(suggestedPattern: "aws s3 cp *"),
+            resolvable: ResolvableApproval { _ in },
+            createPatternAllow: { _ in "rule" })
+        let bashPage = try request("/review/\(bash)")
+        XCTAssertTrue(bashPage.body.contains("Allow by pattern"))
+        XCTAssertTrue(bashPage.body.contains("aws s3 cp *"))
+
+        let mcp = server.register(command: scopableSlackContent(), resolvable: ResolvableApproval { _ in }, createScopedAllow: { _ in "rule" })
+        let mcpPage = try request("/review/\(mcp)")
+        XCTAssertFalse(mcpPage.body.contains("Allow by pattern"))
+    }
+
+    func testPatternAllowCreatesRuleAndResolves() throws {
+        var decision: Decision?
+        var received: String?
+        let resolvable = ResolvableApproval { decision = $0 }
+        let nonce = server.register(
+            command: makeCommand(suggestedPattern: "aws s3 cp *"),
+            resolvable: resolvable,
+            createPatternAllow: { pattern in received = pattern; return "Bash: aws s3 cp *" })
+
+        let res = try request("/review/\(nonce)/verdict", method: "POST", body: #"{"verdict":"allow_pattern","pattern":"aws s3 cp *","note":"routine sync"}"#)
+        XCTAssertEqual(res.status, 200)
+
+        XCTAssertEqual(received, "aws s3 cp *")
+        let d = try XCTUnwrap(decision)
+        XCTAssertEqual(d.verdict, .allow)
+        XCTAssertEqual(d.reason?.contains("always allow: Bash: aws s3 cp *"), true)
+        XCTAssertEqual(d.additionalContext?.contains("routine sync"), true)
+    }
+
+    func testSessionPatternAllowResolvesWithSessionWording() throws {
+        var decision: Decision?
+        let resolvable = ResolvableApproval { decision = $0 }
+        let nonce = server.register(
+            command: makeCommand(suggestedPattern: "swift build*"),
+            resolvable: resolvable,
+            createSessionPatternAllow: { pattern in "Bash: \(pattern)" })
+
+        let res = try request("/review/\(nonce)/verdict", method: "POST", body: #"{"verdict":"allow_session_pattern","pattern":"swift build*"}"#)
+        XCTAssertEqual(res.status, 200)
+        XCTAssertEqual(decision?.reason?.contains("session allow (pattern)"), true)
+    }
+
+    func testPatternVerdictsRejectedWithoutCallbackOrPattern() throws {
+        var created = false
+        let resolvable = ResolvableApproval { _ in }
+        // MCP page: no pattern callbacks registered.
+        let mcp = server.register(command: scopableSlackContent(), resolvable: resolvable, createScopedAllow: { _ in created = true; return "r" })
+        XCTAssertEqual(try request("/review/\(mcp)/verdict", method: "POST", body: #"{"verdict":"allow_pattern","pattern":"*"}"#).status, 400)
+
+        // Bash page: empty/missing pattern.
+        let bash = server.register(
+            command: makeCommand(suggestedPattern: "x*"), resolvable: ResolvableApproval { _ in },
+            createPatternAllow: { _ in created = true; return "r" })
+        XCTAssertEqual(try request("/review/\(bash)/verdict", method: "POST", body: #"{"verdict":"allow_pattern","pattern":"  "}"#).status, 400)
+        XCTAssertEqual(try request("/review/\(bash)/verdict", method: "POST", body: #"{"verdict":"allow_pattern"}"#).status, 400)
+        XCTAssertFalse(created)
     }
 
     // MARK: - Session-scoped allow from the command page

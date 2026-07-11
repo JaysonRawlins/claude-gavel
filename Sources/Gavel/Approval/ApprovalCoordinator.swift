@@ -270,6 +270,27 @@ final class ApprovalCoordinator: ObservableObject {
             return "\(payload.toolName) [\(scope)]"
         }
 
+        // Pattern-based allows for non-MCP tools (Bash, file tools) — the
+        // page twin of the panel's pattern field + Always/Session Allow.
+        let suggestedPattern: String? = (nonSuppressible || isMCP) ? nil
+            : SessionRule.suggestPattern(toolName: payload.toolName, command: payload.command, filePath: payload.filePath)
+        let createPatternAllow: ((String) -> String)? = suggestedPattern == nil ? nil : { [weak self] pattern in
+            let rule = PersistentRule(
+                toolName: payload.toolName, pattern: Self.sanitizeDashes(pattern),
+                isRegex: false, verdict: .allow)
+            DispatchQueue.main.async {
+                self?.ruleStore?.addRule(rule, origin: "command-page:always-allow-pattern")
+            }
+            return rule.name
+        }
+        let createSessionPatternAllow: ((String) -> String)? = suggestedPattern == nil ? nil : { pattern in
+            let rule = SessionRule(toolName: payload.toolName, pattern: pattern)
+            DispatchQueue.main.async {
+                session.sessionRules.append(rule)
+            }
+            return "\(payload.toolName): \(pattern)"
+        }
+
         let label = session.label.isEmpty ? "PID \(session.pid)" : session.label
         let content = CommandContent(
             sessionLabel: label,
@@ -279,8 +300,9 @@ final class ApprovalCoordinator: ObservableObject {
             args: args,
             triggerReason: triggerReason,
             withheldInline: withheldInline,
-            offersScopedAllow: offersScopedAllow)
-        let nonce = DiffReviewServer.shared.register(command: content, resolvable: resolvable, createScopedAllow: createScopedAllow, createScopedSessionAllow: createScopedSessionAllow)
+            offersScopedAllow: offersScopedAllow,
+            suggestedPattern: suggestedPattern)
+        let nonce = DiffReviewServer.shared.register(command: content, resolvable: resolvable, createScopedAllow: createScopedAllow, createScopedSessionAllow: createScopedSessionAllow, createPatternAllow: createPatternAllow, createSessionPatternAllow: createSessionPatternAllow)
         gavelLog("[review] command link created pid=\(session.pid) tool=\(payload.toolName) scopedAllow=\(offersScopedAllow) nonce=\(nonce.prefix(8))…")
         return "\(base)/review/\(nonce)"
     }

@@ -8,12 +8,15 @@ struct ReviewVerdictSubmission: Codable {
     let comments: [ReviewComment]?
     /// arg name → regex for verdict "allow_scoped" (command pages only).
     let conditions: [String: String]?
+    /// Glob for verdict "allow_pattern"/"allow_session_pattern" (non-MCP pages).
+    let pattern: String?
 
-    init(verdict: String, note: String?, comments: [ReviewComment]? = nil, conditions: [String: String]? = nil) {
+    init(verdict: String, note: String?, comments: [ReviewComment]? = nil, conditions: [String: String]? = nil, pattern: String? = nil) {
         self.verdict = verdict
         self.note = note
         self.comments = comments
         self.conditions = conditions
+        self.pattern = pattern
     }
 }
 
@@ -54,6 +57,11 @@ final class DiffReviewServer {
         /// Session-lifetime twin: appends a scoped SessionRule (dies with the
         /// session) and returns a description. Gated identically.
         let createScopedSessionAllow: (([String: String]) -> String)?
+        /// Pattern-based allows for non-MCP pages (Bash/file tools) — the
+        /// page twin of the panel's pattern field. Persistent and session
+        /// variants; absent → verdicts "allow_pattern"/"allow_session_pattern" 400.
+        let createPatternAllow: ((String) -> String)?
+        let createSessionPatternAllow: ((String) -> String)?
         let createdAt = Date()
         /// Set (under the server lock) once any source resolves the approval.
         var resolvedBy: ResolvableApproval.Source?
@@ -64,12 +72,14 @@ final class DiffReviewServer {
         /// set this, so it can't be back-filled once the race is over.
         var viewedAt: Date?
 
-        init(nonce: String, content: PageContent, resolvable: ResolvableApproval, createScopedAllow: (([String: String]) -> String)? = nil, createScopedSessionAllow: (([String: String]) -> String)? = nil) {
+        init(nonce: String, content: PageContent, resolvable: ResolvableApproval, createScopedAllow: (([String: String]) -> String)? = nil, createScopedSessionAllow: (([String: String]) -> String)? = nil, createPatternAllow: ((String) -> String)? = nil, createSessionPatternAllow: ((String) -> String)? = nil) {
             self.nonce = nonce
             self.content = content
             self.resolvable = resolvable
             self.createScopedAllow = createScopedAllow
             self.createScopedSessionAllow = createScopedSessionAllow
+            self.createPatternAllow = createPatternAllow
+            self.createSessionPatternAllow = createSessionPatternAllow
         }
     }
 
@@ -153,11 +163,11 @@ final class DiffReviewServer {
     /// has to transit Telegram. `createScopedAllow` (when the approval may
     /// author a durable allow) turns submitted arg conditions into a
     /// persistent rule and returns its name.
-    func register(command: CommandContent, resolvable: ResolvableApproval, createScopedAllow: (([String: String]) -> String)? = nil, createScopedSessionAllow: (([String: String]) -> String)? = nil) -> String {
-        register(page: .command(command), resolvable: resolvable, reviewedNoun: "the full command", createScopedAllow: createScopedAllow, createScopedSessionAllow: createScopedSessionAllow)
+    func register(command: CommandContent, resolvable: ResolvableApproval, createScopedAllow: (([String: String]) -> String)? = nil, createScopedSessionAllow: (([String: String]) -> String)? = nil, createPatternAllow: ((String) -> String)? = nil, createSessionPatternAllow: ((String) -> String)? = nil) -> String {
+        register(page: .command(command), resolvable: resolvable, reviewedNoun: "the full command", createScopedAllow: createScopedAllow, createScopedSessionAllow: createScopedSessionAllow, createPatternAllow: createPatternAllow, createSessionPatternAllow: createSessionPatternAllow)
     }
 
-    private func register(page: PageContent, resolvable: ResolvableApproval, reviewedNoun: String, createScopedAllow: (([String: String]) -> String)? = nil, createScopedSessionAllow: (([String: String]) -> String)? = nil) -> String {
+    private func register(page: PageContent, resolvable: ResolvableApproval, reviewedNoun: String, createScopedAllow: (([String: String]) -> String)? = nil, createScopedSessionAllow: (([String: String]) -> String)? = nil, createPatternAllow: ((String) -> String)? = nil, createSessionPatternAllow: ((String) -> String)? = nil) -> String {
         pruneStale()
 
         var bytes = [UInt8](repeating: 0, count: 16)
@@ -167,7 +177,7 @@ final class DiffReviewServer {
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
 
-        let session = ReviewSession(nonce: nonce, content: page, resolvable: resolvable, createScopedAllow: createScopedAllow, createScopedSessionAllow: createScopedSessionAllow)
+        let session = ReviewSession(nonce: nonce, content: page, resolvable: resolvable, createScopedAllow: createScopedAllow, createScopedSessionAllow: createScopedSessionAllow, createPatternAllow: createPatternAllow, createSessionPatternAllow: createSessionPatternAllow)
         lock.lock()
         sessions[nonce] = session
         lock.unlock()
@@ -331,6 +341,27 @@ final class DiffReviewServer {
                     verdict: .allow,
                     reason: sessionScoped
                         ? "Approved from command review page — session allow (scoped): \(ruleName)"
+                        : "Approved from command review page — always allow: \(ruleName)",
+                    additionalContext: note.map { "Approver note from review page: \($0)" })
+            } else if submission.verdict == "allow_pattern" || submission.verdict == "allow_session_pattern" {
+                // Pattern-based allow authoring (non-MCP pages) — same gating
+                // shape as the scoped verbs: callback presence is the
+                // capability, pattern must be non-empty and glob-compilable.
+                let sessionPattern = submission.verdict == "allow_session_pattern"
+                let pattern = submission.pattern?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard let create = sessionPattern ? session.createSessionPatternAllow : session.createPatternAllow,
+                      !pattern.isEmpty,
+                      PersistentRule.compilePattern(pattern, isRegex: false) != nil else {
+                    send(connection, status: 400, body: "bad request")
+                    return
+                }
+                let ruleName = create(pattern)
+                gavelLog("[review] pattern \(sessionPattern ? "session" : "persistent") allow authored nonce=\(session.nonce.prefix(8))…")
+                let note = submission.note.flatMap { $0.isEmpty ? nil : $0 }
+                decision = Decision(
+                    verdict: .allow,
+                    reason: sessionPattern
+                        ? "Approved from command review page — session allow (pattern): \(ruleName)"
                         : "Approved from command review page — always allow: \(ruleName)",
                     additionalContext: note.map { "Approver note from review page: \($0)" })
             } else {

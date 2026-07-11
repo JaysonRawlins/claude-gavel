@@ -26,13 +26,17 @@ struct CommandContent {
     /// card — the page shows it anyway (tailnet-only), with a banner saying why.
     let withheldInline: Bool
     /// True when this approval may author a scoped Always Allow from the page
-    /// (MCP call with scalar args, not Allow-once-only). Must match whether a
+    /// (MCP call, not Allow-once-only). Must match whether a
     /// createScopedAllow callback was registered with the server.
     let offersScopedAllow: Bool
+    /// Prefill for the pattern-allow section (non-MCP tools: Bash, file
+    /// tools). Nil hides the section — set only when the matching pattern
+    /// callbacks were registered with the server.
+    let suggestedPattern: String?
 
     init(sessionLabel: String, toolName: String, cwd: String?, command: String?,
          args: [CommandArg], triggerReason: String?, withheldInline: Bool,
-         offersScopedAllow: Bool = false) {
+         offersScopedAllow: Bool = false, suggestedPattern: String? = nil) {
         self.sessionLabel = sessionLabel
         self.toolName = toolName
         self.cwd = cwd
@@ -41,6 +45,7 @@ struct CommandContent {
         self.triggerReason = triggerReason
         self.withheldInline = withheldInline
         self.offersScopedAllow = offersScopedAllow
+        self.suggestedPattern = suggestedPattern
     }
 }
 
@@ -74,6 +79,9 @@ enum CommandHTML {
         }
         if content.offersScopedAllow {
             body += scopedAllowSection(content)
+        }
+        if let suggested = content.suggestedPattern {
+            body += patternAllowSection(content, suggested: suggested)
         }
         if body.isEmpty {
             body = "<p class=\"empty\">No command text or arguments on this call.</p>"
@@ -135,6 +143,26 @@ enum CommandHTML {
         <div class="scopedbtns">
         <button id="scopedsessionbtn" class="scoped session" disabled onclick="submitScoped('allow_session_scoped')">Allow for session (scoped)</button>
         <button id="scopedbtn" class="scoped" disabled onclick="submitScoped('allow_scoped')">Always Allow (scoped)</button>
+        </div>
+        </section>
+        """
+    }
+
+    /// Pattern-based allow authoring for non-MCP tools (Bash, file tools) —
+    /// the phone twin of the Mac panel's pattern field + Always/Session
+    /// Allow. Glob semantics match SessionRule/PersistentRule: * is the only
+    /// wildcard, and Bash compound commands must match EVERY segment.
+    private static func patternAllowSection(_ content: CommandContent, suggested: String) -> String {
+        """
+        <section class="block">
+        <h2>Allow by pattern</h2>
+        <p class="scopehint">Glob for \(DiffHTML.esc(content.toolName)) (* matches anything; a compound Bash command must match every segment). Edit before granting — the prefill is this exact call.</p>
+        <div class="scoperow">
+        <input class="pat" id="allowpattern" value="\(DiffHTML.escAttr(suggested))" autocapitalize="off" autocorrect="off">
+        </div>
+        <div class="scopedbtns">
+        <button class="scoped session" onclick="submitPattern('allow_session_pattern')">Allow for session (pattern)</button>
+        <button class="scoped" onclick="submitPattern('allow_pattern')">Always Allow (pattern)</button>
         </div>
         </section>
         """
@@ -249,6 +277,15 @@ enum CommandHTML {
            verdict === 'allow_session_scoped'
              ? '✅ Scoped session allow created (expires with the session) — command proceeding.'
              : '✅ Scoped allow rule created — command proceeding.');
+    }
+    function submitPattern(verdict) {
+      const pat = document.getElementById('allowpattern');
+      const pattern = pat ? pat.value.trim() : '';
+      if (!pattern) { alert('Pattern is empty.'); return; }
+      post({ verdict: verdict, note: noteValue(), pattern: pattern },
+           verdict === 'allow_session_pattern'
+             ? '✅ Session pattern allow created (expires with the session) — command proceeding.'
+             : '✅ Always-allow pattern rule created — command proceeding.');
     }
     function submitVerdict(verdict) {
       post({ verdict: verdict, note: noteValue() },
