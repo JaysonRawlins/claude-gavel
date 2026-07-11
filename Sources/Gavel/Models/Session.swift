@@ -173,13 +173,13 @@ final class Session: ObservableObject, Identifiable {
     }
 
     /// Check if a tool call matches any session allow rule.
-    func matchesSessionRule(toolName: String, command: String?, filePath: String?) -> SessionRule? {
-        sessionRules.first { $0.verdict == .allow && $0.matches(toolName: toolName, command: command, filePath: filePath) }
+    func matchesSessionRule(toolName: String, command: String?, filePath: String?, toolInput: [String: AnyCodable]? = nil) -> SessionRule? {
+        sessionRules.first { $0.verdict == .allow && $0.matches(toolName: toolName, command: command, filePath: filePath, toolInput: toolInput) }
     }
 
     /// Check if a tool call matches any session deny rule.
-    func matchesSessionDeny(toolName: String, command: String?, filePath: String?) -> SessionRule? {
-        sessionRules.first { $0.verdict == .block && $0.matches(toolName: toolName, command: command, filePath: filePath) }
+    func matchesSessionDeny(toolName: String, command: String?, filePath: String?, toolInput: [String: AnyCodable]? = nil) -> SessionRule? {
+        sessionRules.first { $0.verdict == .block && $0.matches(toolName: toolName, command: command, filePath: filePath, toolInput: toolInput) }
     }
 }
 
@@ -196,19 +196,26 @@ struct SessionRule: Identifiable {
     let pattern: String
     let verdict: DecisionVerdict
     let explanation: String?
+    /// Per-argument conditions (arg name → regex), same semantics as
+    /// PersistentRule.argConditions: full-match anchored, every condition
+    /// must pass, absent arg fails closed. Allow rules only — conditions on
+    /// a session deny would narrow it (a loosening), so the init drops them.
+    let argConditions: [String: String]?
 
-    init(toolName: String, pattern: String, verdict: DecisionVerdict = .allow, explanation: String? = nil) {
+    init(toolName: String, pattern: String, verdict: DecisionVerdict = .allow, explanation: String? = nil, argConditions: [String: String]? = nil) {
         self.toolName = toolName
         self.pattern = pattern
         self.verdict = verdict
         self.explanation = explanation
+        self.argConditions = (verdict == .allow && argConditions?.isEmpty == false) ? argConditions : nil
     }
 
     /// Match using simple glob-style wildcards (* only).
     /// For Bash commands, splits on command separators (&&, ||, ;, |) and
     /// requires EVERY segment to match — prevents poisoning via chained commands.
-    func matches(toolName: String, command: String?, filePath: String?) -> Bool {
+    func matches(toolName: String, command: String?, filePath: String?, toolInput: [String: AnyCodable]? = nil) -> Bool {
         guard self.toolName == toolName || self.toolName == "*" else { return false }
+        guard ArgConditionMatcher.satisfied(argConditions, by: toolInput) else { return false }
 
         let raw: String
         switch toolName {

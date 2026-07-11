@@ -24,8 +24,9 @@ final class CommandReviewTests: XCTestCase {
 
     private func makeCommand(
         command: String? = "aws s3 cp s3://bucket/very-long-key /tmp/x --profile Prod-123",
-        args: [(name: String, value: String)] = [],
-        withheldInline: Bool = false
+        args: [CommandArg] = [],
+        withheldInline: Bool = false,
+        offersScopedAllow: Bool = false
     ) -> CommandContent {
         CommandContent(
             sessionLabel: "argscope",
@@ -34,7 +35,16 @@ final class CommandReviewTests: XCTestCase {
             command: command,
             args: args,
             triggerReason: "Default rule: something fired",
-            withheldInline: withheldInline)
+            withheldInline: withheldInline,
+            offersScopedAllow: offersScopedAllow)
+    }
+
+    /// Pump the main queue — proposal adjudication and rule authoring hop to
+    /// main before mutating stores.
+    private func drainMain() {
+        let e = expectation(description: "main drain")
+        DispatchQueue.main.async { e.fulfill() }
+        wait(for: [e], timeout: 2)
     }
 
     private struct HTTPResult {
@@ -83,8 +93,8 @@ final class CommandReviewTests: XCTestCase {
     func testCommandPageRendersMCPArgs() throws {
         let resolvable = ResolvableApproval { _ in }
         let content = makeCommand(command: nil, args: [
-            (name: "channel", value: "general"),
-            (name: "workspace", value: "defiance"),
+            CommandArg(name: "channel", value: "general", scopable: true),
+            CommandArg(name: "workspace", value: "defiance", scopable: true),
         ])
         let nonce = server.register(command: content, resolvable: resolvable)
 
@@ -290,6 +300,7 @@ final class CommandReviewTests: XCTestCase {
         let id = submitProposal(proposals)
 
         bridge.handle(proposalCallback(action: "pa", id: id))
+        drainMain()
 
         XCTAssertTrue(ruleStore.rules.contains { $0.pattern == "rm\\s+-rf\\s+/" && $0.verdict == .block })
         XCTAssertTrue(proposals.proposals.isEmpty)
@@ -304,6 +315,7 @@ final class CommandReviewTests: XCTestCase {
         let id = submitProposal(proposals)
 
         bridge.handle(proposalCallback(action: "pj", id: id))
+        drainMain()
 
         XCTAssertFalse(ruleStore.rules.contains { $0.pattern == "rm\\s+-rf\\s+/" })
         XCTAssertTrue(proposals.proposals.isEmpty)
@@ -320,6 +332,7 @@ final class CommandReviewTests: XCTestCase {
         proposals.reject(id: id, via: "monitor")
         let rulesBefore = ruleStore.rules.count
         bridge.handle(proposalCallback(action: "pa", id: id))
+        drainMain()
 
         XCTAssertEqual(ruleStore.rules.count, rulesBefore)
         XCTAssertEqual(fake.answers.last?.text, "Already handled")
@@ -337,9 +350,235 @@ final class CommandReviewTests: XCTestCase {
             callback: TelegramCallback(id: "cb2", fromId: 666, chatId: 666, messageId: 5, data: "pa:\(id.uuidString)"),
             message: nil)
         bridge.handle(stranger)
+        drainMain()
 
         XCTAssertFalse(ruleStore.rules.contains { $0.pattern == "rm\\s+-rf\\s+/" })
         XCTAssertEqual(proposals.proposals.count, 1)
         XCTAssertEqual(fake.answers.last?.text, "Not authorized")
+    }
+
+    // MARK: - Scoped Always Allow from the command page
+
+    private func scopableSlackContent() -> CommandContent {
+        makeCommand(command: nil, args: [
+            CommandArg(name: "channel", value: "general", scopable: true),
+            CommandArg(name: "limit", value: "50", scopable: true),
+            CommandArg(name: "filters", value: "{\"a\":1}", scopable: false),
+        ], offersScopedAllow: true)
+    }
+
+    func testScopeSectionRenderedOnlyWhenOffered() throws {
+        let offered = server.register(command: scopableSlackContent(), resolvable: ResolvableApproval { _ in }, createScopedAllow: { _ in "rule" })
+        let offeredPage = try request("/review/\(offered)")
+        XCTAssertTrue(offeredPage.body.contains("Always allow, scoped to"))
+        // Scopable args get rows; non-scalar args don't.
+        XCTAssertTrue(offeredPage.body.contains("pat-channel"))
+        XCTAssertTrue(offeredPage.body.contains("pat-limit"))
+        XCTAssertFalse(offeredPage.body.contains("pat-filters"))
+
+        let plain = server.register(command: makeCommand(), resolvable: ResolvableApproval { _ in })
+        let plainPage = try request("/review/\(plain)")
+        XCTAssertFalse(plainPage.body.contains("Always allow, scoped to"))
+    }
+
+    func testScopeRowPrefillsEscapedRegex() throws {
+        let content = makeCommand(command: nil, args: [
+            CommandArg(name: "query", value: "a.b+c", scopable: true),
+        ], offersScopedAllow: true)
+        let nonce = server.register(command: content, resolvable: ResolvableApproval { _ in }, createScopedAllow: { _ in "rule" })
+        let page = try request("/review/\(nonce)")
+        // Literal value must arrive regex-escaped so "a.b+c" can't match "axbbc".
+        XCTAssertTrue(page.body.contains("a\\.b\\+c"))
+    }
+
+    func testAllowScopedCreatesRuleAndResolvesAllow() throws {
+        var decision: Decision?
+        var received: [String: String]?
+        let resolvable = ResolvableApproval { decision = $0 }
+        let nonce = server.register(
+            command: scopableSlackContent(), resolvable: resolvable,
+            createScopedAllow: { conditions in
+                received = conditions
+                return "mcp__Slack__read_history: * [channel=/general/]"
+            })
+
+        let body = #"{"verdict":"allow_scoped","note":"watcher scope","conditions":{"channel":"general","workspace":"defiance"}}"#
+        let res = try request("/review/\(nonce)/verdict", method: "POST", body: body)
+        XCTAssertEqual(res.status, 200)
+
+        XCTAssertEqual(received, ["channel": "general", "workspace": "defiance"])
+        let d = try XCTUnwrap(decision)
+        XCTAssertEqual(d.verdict, .allow)
+        XCTAssertEqual(d.reason?.contains("always allow: mcp__Slack__read_history"), true)
+        XCTAssertEqual(d.additionalContext?.contains("watcher scope"), true)
+    }
+
+    func testAllowScopedWithoutCallbackIs400() throws {
+        var decision: Decision?
+        let resolvable = ResolvableApproval { decision = $0 }
+        let nonce = server.register(command: makeCommand(), resolvable: resolvable)
+
+        let res = try request("/review/\(nonce)/verdict", method: "POST", body: #"{"verdict":"allow_scoped","conditions":{"channel":"x"}}"#)
+        XCTAssertEqual(res.status, 400)
+        XCTAssertNil(decision)
+        XCTAssertFalse(resolvable.isResolved)
+    }
+
+    func testAllowScopedWithEmptyConditionsIs400() throws {
+        var created = false
+        let resolvable = ResolvableApproval { _ in }
+        let nonce = server.register(
+            command: scopableSlackContent(), resolvable: resolvable,
+            createScopedAllow: { _ in created = true; return "rule" })
+
+        for body in [#"{"verdict":"allow_scoped"}"#,
+                     #"{"verdict":"allow_scoped","conditions":{}}"#,
+                     #"{"verdict":"allow_scoped","conditions":{" ":"x","channel":"  "}}"#] {
+            let res = try request("/review/\(nonce)/verdict", method: "POST", body: body)
+            XCTAssertEqual(res.status, 400, "body: \(body)")
+        }
+        XCTAssertFalse(created)
+        XCTAssertFalse(resolvable.isResolved)
+    }
+
+    func testAllowScopedWithInvalidRegexIs400() throws {
+        var created = false
+        let resolvable = ResolvableApproval { _ in }
+        let nonce = server.register(
+            command: scopableSlackContent(), resolvable: resolvable,
+            createScopedAllow: { _ in created = true; return "rule" })
+
+        let res = try request("/review/\(nonce)/verdict", method: "POST", body: #"{"verdict":"allow_scoped","conditions":{"channel":"gen("}}"#)
+        XCTAssertEqual(res.status, 400)
+        XCTAssertFalse(created)
+    }
+
+    func testAllowScopedOnResolvedApprovalIs409WithoutRule() throws {
+        var created = false
+        let resolvable = ResolvableApproval { _ in }
+        let nonce = server.register(
+            command: scopableSlackContent(), resolvable: resolvable,
+            createScopedAllow: { _ in created = true; return "rule" })
+
+        _ = resolvable.resolve(Decision(verdict: .allow, reason: "Mac won"), from: .mac)
+        let res = try request("/review/\(nonce)/verdict", method: "POST", body: #"{"verdict":"allow_scoped","conditions":{"channel":"general"}}"#)
+        XCTAssertEqual(res.status, 409)
+        XCTAssertFalse(created, "stale submissions must not author rules")
+    }
+
+    // MARK: - Session-scoped allow from the command page
+
+    func testAllowSessionScopedCreatesSessionRuleAndResolves() throws {
+        var decision: Decision?
+        var received: [String: String]?
+        let resolvable = ResolvableApproval { decision = $0 }
+        let nonce = server.register(
+            command: scopableSlackContent(), resolvable: resolvable,
+            createScopedSessionAllow: { conditions in
+                received = conditions
+                return "mcp__Slack__read_history [channel=/general/]"
+            })
+
+        let body = #"{"verdict":"allow_session_scoped","conditions":{"channel":"general"}}"#
+        let res = try request("/review/\(nonce)/verdict", method: "POST", body: body)
+        XCTAssertEqual(res.status, 200)
+
+        XCTAssertEqual(received, ["channel": "general"])
+        let d = try XCTUnwrap(decision)
+        XCTAssertEqual(d.verdict, .allow)
+        XCTAssertEqual(d.reason?.contains("session allow (scoped)"), true)
+    }
+
+    func testAllowSessionScopedWithoutCallbackIs400() throws {
+        // A page with only the persistent callback still 400s the session verb.
+        let resolvable = ResolvableApproval { _ in }
+        let nonce = server.register(
+            command: scopableSlackContent(), resolvable: resolvable,
+            createScopedAllow: { _ in "rule" })
+
+        let res = try request("/review/\(nonce)/verdict", method: "POST", body: #"{"verdict":"allow_session_scoped","conditions":{"channel":"x"}}"#)
+        XCTAssertEqual(res.status, 400)
+        XCTAssertFalse(resolvable.isResolved)
+    }
+
+    func testSessionRuleArgConditionsScopeMatching() {
+        let session = Session(pid: 1)
+        session.sessionRules.append(SessionRule(
+            toolName: "mcp__Slack__read_history", pattern: "*",
+            verdict: .allow, argConditions: ["channel": "general", "workspace": "defiance"]))
+
+        func input(channel: String, workspace: String = "defiance") -> [String: AnyCodable] {
+            ["channel": AnyCodable(channel), "workspace": AnyCodable(workspace)]
+        }
+        XCTAssertNotNil(session.matchesSessionRule(
+            toolName: "mcp__Slack__read_history", command: nil, filePath: nil,
+            toolInput: input(channel: "general")))
+        // Out-of-scope channel, wrong workspace, and absent args all fall through.
+        XCTAssertNil(session.matchesSessionRule(
+            toolName: "mcp__Slack__read_history", command: nil, filePath: nil,
+            toolInput: input(channel: "random")))
+        XCTAssertNil(session.matchesSessionRule(
+            toolName: "mcp__Slack__read_history", command: nil, filePath: nil,
+            toolInput: input(channel: "general", workspace: "macedon")))
+        XCTAssertNil(session.matchesSessionRule(
+            toolName: "mcp__Slack__read_history", command: nil, filePath: nil,
+            toolInput: ["channel": AnyCodable("general")]))
+        XCTAssertNil(session.matchesSessionRule(
+            toolName: "mcp__Slack__read_history", command: nil, filePath: nil))
+    }
+
+    func testSessionRuleAnchoringAndDenyStripMatchPersistentSemantics() {
+        // Anchoring: "C123" must not substring-match "C1234".
+        let anchored = SessionRule(
+            toolName: "mcp__T__t", pattern: "*", verdict: .allow, argConditions: ["c": "C123"])
+        XCTAssertTrue(anchored.matches(toolName: "mcp__T__t", command: nil, filePath: nil, toolInput: ["c": AnyCodable("C123")]))
+        XCTAssertFalse(anchored.matches(toolName: "mcp__T__t", command: nil, filePath: nil, toolInput: ["c": AnyCodable("C1234")]))
+
+        // Conditions on a session DENY would narrow it — init drops them.
+        let deny = SessionRule(
+            toolName: "mcp__T__t", pattern: "*", verdict: .block, argConditions: ["c": "C123"])
+        XCTAssertNil(deny.argConditions)
+        XCTAssertTrue(deny.matches(toolName: "mcp__T__t", command: nil, filePath: nil, toolInput: ["c": AnyCodable("other")]))
+
+        // Backward compat: nil conditions ignore toolInput entirely.
+        let plain = SessionRule(toolName: "mcp__T__t", pattern: "*")
+        XCTAssertTrue(plain.matches(toolName: "mcp__T__t", command: nil, filePath: nil, toolInput: ["c": AnyCodable("anything")]))
+    }
+
+    /// End-to-end: the rule authored from the page actually scopes future
+    /// matching — in-scope calls allow, out-of-scope calls fall through.
+    func testScopedRuleFromPageScopesFutureEvaluation() throws {
+        let dir = NSTemporaryDirectory() + "gavel-scopedpage-test-\(UUID().uuidString)"
+        let ruleStore = RuleStore(configPath: dir + "/rules.json")
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+
+        var decision: Decision?
+        let resolvable = ResolvableApproval { decision = $0 }
+        // Mirrors the coordinator's closure: exact tool name, glob "*",
+        // conditions from the page (rule added synchronously here; the
+        // coordinator hops to main for the live store).
+        let nonce = server.register(
+            command: scopableSlackContent(), resolvable: resolvable,
+            createScopedAllow: { conditions in
+                let rule = PersistentRule(
+                    toolName: "mcp__Slack__read_history", pattern: "*", isRegex: false,
+                    verdict: .allow, argConditions: conditions)
+                ruleStore.addRule(rule, origin: "test")
+                return rule.name
+            })
+
+        let body = #"{"verdict":"allow_scoped","conditions":{"channel":"general","workspace":"defiance"}}"#
+        let res = try request("/review/\(nonce)/verdict", method: "POST", body: body)
+        XCTAssertEqual(res.status, 200)
+        XCTAssertEqual(decision?.verdict, .allow)
+
+        func payload(channel: String, workspace: String = "defiance") -> PreToolUsePayload {
+            PreToolUsePayload(toolName: "mcp__Slack__read_history", toolInput: [
+                "channel": AnyCodable(channel), "workspace": AnyCodable(workspace), "limit": AnyCodable(50),
+            ])
+        }
+        XCTAssertNotNil(ruleStore.evaluateAllow(payload: payload(channel: "general")))
+        XCTAssertNil(ruleStore.evaluateAllow(payload: payload(channel: "random")))
+        XCTAssertNil(ruleStore.evaluateAllow(payload: payload(channel: "general", workspace: "macedon")))
     }
 }

@@ -207,7 +207,8 @@ final class HookRouter {
         if let rule = session.matchesSessionDeny(
             toolName: payload.toolName,
             command: payload.command,
-            filePath: payload.filePath
+            filePath: payload.filePath,
+            toolInput: payload.toolInput
         ) {
             session.stats.incrementBlock()
             let reason = "Session deny: \(rule.toolName): \(rule.pattern)"
@@ -236,7 +237,8 @@ final class HookRouter {
                     if let rule = session.matchesSessionRule(
                         toolName: payload.toolName,
                         command: payload.command,
-                        filePath: payload.filePath
+                        filePath: payload.filePath,
+                        toolInput: payload.toolInput
                     ) {
                         session.stats.incrementAllow()
                         emitFeed(.decision(badge: .allow, reason: "Session rule: \(rule.toolName): \(rule.pattern)", pid: session.pid, at: timestamp))
@@ -306,7 +308,8 @@ final class HookRouter {
         if let rule = session.matchesSessionRule(
             toolName: payload.toolName,
             command: payload.command,
-            filePath: payload.filePath
+            filePath: payload.filePath,
+            toolInput: payload.toolInput
         ) {
             session.stats.incrementAllow()
             emitFeed(.decision(badge: .allow, reason: "\(rule.toolName): \(rule.pattern)", pid: session.pid, at: timestamp))

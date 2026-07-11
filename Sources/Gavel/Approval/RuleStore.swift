@@ -830,11 +830,11 @@ struct PersistentRule: Codable, Identifiable {
         }
     }
 
-    /// Anchored `\A(?:pattern)\z` so a condition can't substring-match
+    /// Anchored via ArgConditionMatcher so a condition can't substring-match
     /// (`C123` must not pass `C1234`) — strictly narrower, tighten-only.
     private mutating func compiledArgRegex(arg: String, pattern: String) -> NSRegularExpression? {
         if let cached = _compiledArgRegexes[arg] { return cached }
-        guard let regex = try? NSRegularExpression(pattern: "\\A(?:\(pattern))\\z") else { return nil }
+        guard let regex = ArgConditionMatcher.compileAnchored(pattern) else { return nil }
         _compiledArgRegexes[arg] = regex
         return regex
     }
