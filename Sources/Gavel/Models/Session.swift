@@ -12,6 +12,13 @@ final class Session: ObservableObject, Identifiable {
     let startedAt: Date
     let agent: AgentKind
 
+    /// Kernel-recorded start time of the tracked process, captured at creation.
+    /// This is the session's process IDENTITY for liveness: a live PID whose
+    /// start time no longer matches was reused by a different process. The cwd
+    /// is NOT usable for this — hook payloads report worktree/subagent cwds
+    /// that legitimately diverge from the process's actual cwd.
+    let procStartedAt: Date?
+
     @Published var sessionId: String?
     @Published var cwd: String?
     @Published var model: String?
@@ -156,11 +163,12 @@ final class Session: ObservableObject, Identifiable {
         return remaining > 0 ? remaining : nil
     }
 
-    init(pid: Int, cwd: String? = nil, startedAt: Date? = nil, agent: AgentKind = .claude) {
+    init(pid: Int, cwd: String? = nil, startedAt: Date? = nil, agent: AgentKind = .claude, procStartedAt: Date? = nil) {
         self.pid = pid
         self.startedAt = startedAt ?? Date()
         self.cwd = cwd
         self.agent = agent
+        self.procStartedAt = procStartedAt
     }
 
     func revokeAutoApprove() {

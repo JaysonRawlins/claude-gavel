@@ -8,9 +8,9 @@ final class SessionLifecycleTests: XCTestCase {
     private var tmpHome: URL!
     private var manager: SessionManager!
 
-    /// Stands in a live result for the test runner's own PID; everything else uses the real cwd check.
-    private let liveOnOwnPid: (Int, String?) -> Bool = { pid, cwd in
-        pid == Int(getpid()) ? true : SessionManager.defaultLiveness(pid: pid, cwd: cwd)
+    /// Stands in a live result for the test runner's own PID; everything else uses the real check.
+    private let liveOnOwnPid: (Int, String?, Date?) -> Bool = { pid, cwd, procStart in
+        pid == Int(getpid()) ? true : SessionManager.defaultLiveness(pid: pid, cwd: cwd, procStartedAt: procStart)
     }
 
     /// A PID effectively guaranteed not to exist on macOS. macOS reserves up
@@ -90,31 +90,71 @@ final class SessionLifecycleTests: XCTestCase {
 
     // MARK: - PID reuse
 
-    func testDefaultLivenessRejectsLivePidWithMismatchedCwd() {
+    func testDefaultLivenessMatchesOnProcessStartTimeNotCwd() {
+        let livePid = Int(getpid())
+        let realStart = ProcessTree.startTime(of: Int32(livePid))
+        XCTAssertNotNil(realStart, "Test runner must have a readable start time for this to be meaningful")
+        let driftedCwd = (ProcessTree.cwd(of: Int32(livePid)) ?? "") + "/somewhere-else"
+
+        XCTAssertTrue(
+            SessionManager.defaultLiveness(pid: livePid, cwd: driftedCwd, procStartedAt: realStart),
+            "A live PID with a matching start time is alive even when the recorded cwd drifted (worktree subagents report their worktree as cwd)"
+        )
+        XCTAssertFalse(
+            SessionManager.defaultLiveness(pid: livePid, cwd: driftedCwd, procStartedAt: realStart.map { $0.addingTimeInterval(-3600) }),
+            "A live PID whose start time doesn't match the recorded one was reused — dead"
+        )
+    }
+
+    func testDefaultLivenessFallsBackToCwdWithoutRecordedStartTime() {
         let livePid = Int(getpid())
         let realCwd = ProcessTree.cwd(of: Int32(livePid))
         XCTAssertNotNil(realCwd, "Test runner must have a readable cwd for this to be meaningful")
 
         XCTAssertTrue(
-            SessionManager.defaultLiveness(pid: livePid, cwd: realCwd),
-            "A live PID still in its recorded cwd is alive"
+            SessionManager.defaultLiveness(pid: livePid, cwd: realCwd, procStartedAt: nil),
+            "Legacy sessions (no recorded start time) still validate by cwd"
         )
         XCTAssertFalse(
-            SessionManager.defaultLiveness(pid: livePid, cwd: (realCwd ?? "") + "/somewhere-else"),
-            "A live PID whose cwd drifted from the recorded one was reused — dead"
+            SessionManager.defaultLiveness(pid: livePid, cwd: (realCwd ?? "") + "/somewhere-else", procStartedAt: nil),
+            "Legacy fallback: cwd mismatch without a start time still reads as PID reuse"
         )
     }
 
-    func testCleanupTombstonesPidReusedUnderDifferentCwd() {
+    func testCleanupKeepsLiveSessionWhoseCwdDriftedToWorktree() {
         manager.livenessCheck = SessionManager.defaultLiveness
-        let sid = "uuid-reused-pid"
+        let sid = "uuid-worktree-drift"
+        // session(for:) records the real process start time as identity.
         let session = manager.session(for: Int(getpid()))
         session.sessionId = sid
+        // A worktree-isolated subagent (or EnterWorktree) recorded a cwd the
+        // process isn't actually in. This must NOT read as PID reuse.
         session.cwd = "/tmp/some-other-recorded-path"
 
         manager.cleanupDeadSessions()
 
-        XCTAssertNil(manager.sessions[Int(getpid())], "PID whose cwd no longer matches must leave the live dict")
+        XCTAssertNotNil(manager.sessions[Int(getpid())],
+                        "A live PID with matching start time must survive cwd drift — tombstoning here destroyed per-session state (remote-approval grant, session rules)")
+        XCTAssertNil(manager.deadSessions[sid])
+    }
+
+    func testCleanupTombstonesReusedPid() {
+        let sid = "uuid-reused-pid"
+        let session = manager.session(for: Int(getpid()))
+        session.sessionId = sid
+        let recordedStart = session.procStartedAt
+        XCTAssertNotNil(recordedStart, "session(for:) must capture the process start time as identity")
+
+        // Fake kernel view: the process now at this PID has a DIFFERENT start
+        // time — PID reuse. Also asserts cleanup threads the session's
+        // recorded identity through to the liveness check.
+        manager.livenessCheck = { pid, _, procStart in
+            pid == Int(getpid()) ? procStart != recordedStart : false
+        }
+
+        manager.cleanupDeadSessions()
+
+        XCTAssertNil(manager.sessions[Int(getpid())], "PID whose start time no longer matches must leave the live dict")
         XCTAssertNotNil(manager.deadSessions[sid], "It must tombstone so the row flips to asleep")
     }
 

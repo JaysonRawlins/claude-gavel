@@ -654,7 +654,7 @@ private struct SessionRow: View {
             .help("Read this session's transcript in a scrollable window.")
 
             Button("Sleep") {
-                if viewModel.sessionManager.isProcessAlive(pid: session.pid, cwd: session.cwd) {
+                if viewModel.sessionManager.isProcessAlive(pid: session.pid, cwd: session.cwd, procStartedAt: session.procStartedAt) {
                     kill(Int32(session.pid), SIGINT)
                 } else {
                     viewModel.sessionManager.cleanupDeadSessions()
