@@ -10,8 +10,9 @@ import Foundation
 /// Discovery + registration re-run per link with a short (60s) result
 /// cache: fresh enough that a `tailscale serve reset` or daemon flap can't
 /// leave stale links for long, but a burst of approvals (every one now
-/// carries a full-command link) doesn't fork two CLI probes each — and a
-/// down tailscale (10s command deadline) can't add 10s to every approval.
+/// carries a full-command link) doesn't fork two CLI probes each. A hung
+/// endpoint costs at most one status deadline per backoff window — probes
+/// that time out are skipped until the backoff lapses.
 ///
 /// A Mac can run SEVERAL independent backends at once: the Tailscale.app
 /// system extension plus any number of homebrew tailscaleds with custom
@@ -33,11 +34,16 @@ enum TailscaleServe {
         let hasOnlineIOSPeer: Bool
     }
 
-    /// Hard deadline per CLI invocation. `tailscale serve` BLOCKS
-    /// interactively when Serve isn't enabled on the tailnet (prints an
-    /// enable URL and waits) — without a deadline that would hang the
-    /// approval flow's worker thread.
+    /// Hard deadline for `tailscale serve`, which BLOCKS interactively when
+    /// Serve isn't enabled on the tailnet (prints an enable URL and waits) —
+    /// without a deadline that would hang the approval flow's worker thread.
     static let commandTimeout: TimeInterval = 10
+
+    /// Tighter deadline for `status --json`: a healthy backend answers this
+    /// local IPC read in milliseconds, but a probe can hang outright (seen
+    /// live: default GUI discovery from the launchd daemon context), and a
+    /// hung probe stalls every link that misses the result cache.
+    static let statusTimeout: TimeInterval = 2
 
     /// Test seam — production runs a tailscale CLI, tests stub responses.
     /// Returns (exitStatus, stdout); nil when the binary can't be run or
@@ -66,11 +72,12 @@ enum TailscaleServe {
             task.waitUntilExit()
             exited.signal()
         }
-        if exited.wait(timeout: .now() + commandTimeout) == .timedOut {
+        let deadline = args.contains("serve") ? commandTimeout : statusTimeout
+        if exited.wait(timeout: .now() + deadline) == .timedOut {
             task.terminate()
             _ = exited.wait(timeout: .now() + 2)
             _ = drained.wait(timeout: .now() + 2)
-            gavelLog("[review] tailscale \(args.first ?? "?") timed out after \(Int(commandTimeout))s — killed")
+            gavelLog("[review] tailscale \(args.joined(separator: " ")) timed out after \(Int(deadline))s — killed (\(binary))")
             // Partial stdout still matters: the blocked serve prints the
             // tailnet enable URL before waiting.
             return (124, String(decoding: data, as: UTF8.self))
@@ -101,6 +108,18 @@ enum TailscaleServe {
     private static let cacheLock = NSLock()
     static let cacheTTL: TimeInterval = 60
 
+    /// Endpoints whose status probe timed out, by key — skipped until the
+    /// backoff lapses. A probe that hangs does so deterministically (it's the
+    /// endpoint's environment, not load), so re-probing on every cache
+    /// refresh just re-pays the deadline; a healed endpoint is picked back up
+    /// within the backoff. Guarded by cacheLock.
+    private static var endpointTimeouts: [String: Date] = [:]
+    static let endpointBackoffTTL: TimeInterval = 15 * 60
+
+    static func endpointKey(binary: String, socketPath: String?) -> String {
+        "\(binary)|\(socketPath ?? "default")"
+    }
+
     /// Cached front-end for `reviewBaseURL()` — successes AND failures both
     /// hold for `cacheTTL` so per-approval links stay cheap either way.
     static func cachedReviewBaseURL(now: Date = Date()) -> String? {
@@ -117,10 +136,11 @@ enum TailscaleServe {
         return url
     }
 
-    /// Test seam — drop the cache so stubs take effect immediately.
+    /// Test seam — drop the caches so stubs take effect immediately.
     static func resetCache() {
         cacheLock.lock()
         cachedBase = nil
+        endpointTimeouts = [:]
         cacheLock.unlock()
     }
 
@@ -142,8 +162,23 @@ enum TailscaleServe {
 
         var running: [Backend] = []
         for endpoint in endpoints {
+            let key = endpointKey(binary: endpoint.binary, socketPath: endpoint.socketPath)
+            cacheLock.lock()
+            let lastTimeout = endpointTimeouts[key]
+            cacheLock.unlock()
+            if let lastTimeout, Date().timeIntervalSince(lastTimeout) < endpointBackoffTTL {
+                continue
+            }
             let args = socketArgs(endpoint.socketPath) + ["status", "--json"]
-            guard let result = runner(endpoint.binary, args), result.status == 0,
+            guard let result = runner(endpoint.binary, args) else { continue }
+            if result.status == 124 {
+                cacheLock.lock()
+                endpointTimeouts[key] = Date()
+                cacheLock.unlock()
+                gavelLog("[review] skipping \(key) for \(Int(endpointBackoffTTL / 60)) min after status timeout")
+                continue
+            }
+            guard result.status == 0,
                   let backend = backend(
                       binary: endpoint.binary, socketPath: endpoint.socketPath,
                       statusJSON: Data(result.stdout.utf8)) else { continue }

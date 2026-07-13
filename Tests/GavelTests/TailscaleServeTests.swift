@@ -11,11 +11,13 @@ final class TailscaleServeTests: XCTestCase {
         try XCTSkipIf(TailscaleServe.candidateBinaries().isEmpty, "no tailscale CLI installed")
         savedRunner = TailscaleServe.runner
         savedSockets = TailscaleServe.socketPaths
+        TailscaleServe.resetCache()
     }
 
     override func tearDown() {
         if savedRunner != nil { TailscaleServe.runner = savedRunner }
         if savedSockets != nil { TailscaleServe.socketPaths = savedSockets }
+        TailscaleServe.resetCache()
     }
 
     private func statusJSON(state: String, dns: String?, iosPeerOnline: Bool? = nil) -> String {
@@ -183,6 +185,54 @@ final class TailscaleServeTests: XCTestCase {
         TailscaleServe.socketPaths = { [] }
         TailscaleServe.runner = { _, _ in nil }
         XCTAssertNil(TailscaleServe.reviewBaseURL())
+    }
+
+    // MARK: - Timed-out endpoint backoff
+
+    func testTimedOutStatusProbeBacksOffAndHealthyEndpointStillWins() {
+        TailscaleServe.socketPaths = { ["/var/run/tailscaled-personal.sock"] }
+        var defaultProbes = 0
+        TailscaleServe.runner = { _, args in
+            if args.contains("--json") {
+                if self.socketArg(in: args) != nil {
+                    return (0, self.statusJSON(state: "Running", dns: "personal.tail2.ts.net.", iosPeerOnline: true))
+                }
+                // Hung default-discovery probe, killed at the deadline.
+                defaultProbes += 1
+                return (124, "")
+            }
+            return (0, "")
+        }
+
+        let expected = "https://personal.tail2.ts.net:\(GavelConstants.reviewTailnetHTTPSPort)"
+        XCTAssertEqual(TailscaleServe.reviewBaseURL(), expected)
+        let probesAfterFirst = defaultProbes
+        XCTAssertGreaterThan(probesAfterFirst, 0)
+
+        XCTAssertEqual(TailscaleServe.reviewBaseURL(), expected)
+        XCTAssertEqual(defaultProbes, probesAfterFirst,
+                       "a timed-out endpoint must not be re-probed within the backoff")
+    }
+
+    func testResetCacheClearsEndpointBackoff() {
+        TailscaleServe.socketPaths = { [] }
+        var probes = 0
+        TailscaleServe.runner = { _, args in
+            if args.contains("--json") {
+                probes += 1
+                return (124, "")
+            }
+            return (0, "")
+        }
+
+        XCTAssertNil(TailscaleServe.reviewBaseURL())
+        let probesAfterFirst = probes
+        XCTAssertNil(TailscaleServe.reviewBaseURL())
+        XCTAssertEqual(probes, probesAfterFirst)
+
+        TailscaleServe.resetCache()
+        XCTAssertNil(TailscaleServe.reviewBaseURL())
+        XCTAssertGreaterThan(probes, probesAfterFirst)
     }
 
     // MARK: - Serve-disabled enable URL
