@@ -118,7 +118,7 @@ enum DiffCapture {
     /// `$` are skipped (unresolvable) so the payload-cwd fallback applies.
     static func lastCdTarget(inHead head: String) -> String? {
         var target: String?
-        for rawSegment in head.components(separatedBy: CharacterSet(charactersIn: ";&|")) {
+        for rawSegment in head.components(separatedBy: CharacterSet(charactersIn: ";&|\n")) {
             let segment = rawSegment.trimmingCharacters(in: .whitespaces)
             guard segment.hasPrefix("cd ") || segment.hasPrefix("cd\t") else { continue }
             var arg = String(segment.dropFirst(2)).trimmingCharacters(in: .whitespaces)

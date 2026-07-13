@@ -95,6 +95,27 @@ final class DiffCaptureTests: XCTestCase {
             "/tmp/my repo")
     }
 
+    func testRepoDirHonorsNewlineSeparatedCd() {
+        // Multi-line scripts: the cd segment ends at the newline, not at the
+        // next ;&| — regression for a real command whose cd target swallowed
+        // the following echo/helm lines and made git -C exit 128.
+        XCTAssertEqual(
+            DiffCapture.repoDir(
+                command: """
+                cd /tmp/argocd-applications
+                echo "=== validate render (loki branch) ==="
+                helm template apps ./apps -f envs/prod/values.yaml >/dev/null 2>/tmp/p2b.err; echo "EXIT=$?"; cat /tmp/p2b.err | head
+                echo "=== commit datasource to parked branch ==="
+                git add envs/prod/prometheus-stack-values.yaml
+                git commit -q -m "feat(loki): add Loki datasource to prod Grafana (phase 2)"
+                """,
+                fallback: "/repo"),
+            "/tmp/argocd-applications")
+        XCTAssertEqual(
+            DiffCapture.repoDir(command: "cd /a\ngit commit -m x", fallback: "/repo"),
+            "/a")
+    }
+
     func testRepoDirDashCOverridesCd() {
         XCTAssertEqual(
             DiffCapture.repoDir(command: "cd /a && git -C /b commit -m x", fallback: "/repo"),

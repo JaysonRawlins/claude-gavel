@@ -208,6 +208,13 @@ final class DiffReviewServer {
         return nonce
     }
 
+    /// Loopback URL for a registered page — the Mac-side twin of the tailnet
+    /// link, usable even when tailscale is down. Nil until start() has bound.
+    func localURL(nonce: String) -> String? {
+        guard let port = boundPort else { return nil }
+        return "http://127.0.0.1:\(port)/review/\(nonce)"
+    }
+
     private func session(for nonce: String) -> ReviewSession? {
         lock.lock()
         defer { lock.unlock() }

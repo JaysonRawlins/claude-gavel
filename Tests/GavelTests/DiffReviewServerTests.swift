@@ -82,6 +82,17 @@ final class DiffReviewServerTests: XCTestCase {
         XCTAssertTrue(res.body.contains("scratch-repo"))
     }
 
+    func testLocalURLServesTheRegisteredPage() throws {
+        let resolvable = ResolvableApproval { _ in }
+        let nonce = server.register(content: makeContent(), resolvable: resolvable)
+
+        let localURL = try XCTUnwrap(server.localURL(nonce: nonce))
+        XCTAssertEqual(localURL, "http://127.0.0.1:\(port!)/review/\(nonce)")
+
+        let res = try request("/review/\(nonce)")
+        XCTAssertEqual(res.status, 200)
+    }
+
     func testUnknownNonceIs404() throws {
         let res = try request("/review/does-not-exist")
         XCTAssertEqual(res.status, 404)
