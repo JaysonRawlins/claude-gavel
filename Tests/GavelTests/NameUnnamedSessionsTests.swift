@@ -9,8 +9,8 @@ final class NameUnnamedSessionsTests: XCTestCase {
     private var writtenPaths: [String] = []
     private let deadPid = 1_999_998
 
-    private let liveOnOwnPid: (Int, String?) -> Bool = { pid, cwd in
-        pid == Int(getpid()) ? true : SessionManager.defaultLiveness(pid: pid, cwd: cwd)
+    private let liveOnOwnPid: (Int, String?, Date?) -> Bool = { pid, cwd, procStart in
+        pid == Int(getpid()) ? true : SessionManager.defaultLiveness(pid: pid, cwd: cwd, procStartedAt: procStart)
     }
 
     override func setUp() {

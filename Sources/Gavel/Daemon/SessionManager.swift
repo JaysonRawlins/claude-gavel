@@ -46,7 +46,7 @@ final class SessionManager: ObservableObject {
         homeDir: URL = FileManager.default.homeDirectoryForCurrentUser,
         autoStartTimers: Bool = true,
         autoDiscover: Bool = true,
-        liveness: @escaping (Int, String?) -> Bool = SessionManager.defaultLiveness
+        liveness: @escaping (Int, String?, Date?) -> Bool = SessionManager.defaultLiveness
     ) {
         let base = homeDir.path + "/.claude/gavel"
         self.defaultsPath = base + "/session-defaults.json"
@@ -77,7 +77,8 @@ final class SessionManager: ObservableObject {
             lock.unlock()
             return existing
         }
-        let session = Session(pid: pid, agent: agent)
+        let procStart = ProcessTree.startTime(of: Int32(pid))
+        let session = Session(pid: pid, startedAt: procStart, agent: agent, procStartedAt: procStart)
         session.isAutoApproveEnabled = defaultAutoApprove
         session.isSubAgentInheritEnabled = defaultSubAgentInherit
         session.isPaused = defaultPaused
@@ -271,7 +272,7 @@ final class SessionManager: ObservableObject {
     func clearDeadSessions() {
         lock.lock()
         let strayPids = sessions.compactMap { (pid, session) -> Int? in
-            (!session.isAlive || !isProcessAlive(pid: pid, cwd: session.cwd)) ? pid : nil
+            (!session.isAlive || !isProcessAlive(pid: pid, cwd: session.cwd, procStartedAt: session.procStartedAt)) ? pid : nil
         }
         for pid in strayPids {
             sessions.removeValue(forKey: pid)
@@ -303,6 +304,7 @@ final class SessionManager: ObservableObject {
         let isRemoteApprovalEnabled: Bool?
         let remoteApprovalUntil: Date?
         let tags: [SessionTag]?
+        let procStartedAt: Date?
     }
 
     private struct PersistedState: Codable {
@@ -345,7 +347,8 @@ final class SessionManager: ObservableObject {
             agent: session.agent,
             isRemoteApprovalEnabled: session.remoteApprovalSnapshot.enabled ? true : nil,
             remoteApprovalUntil: session.remoteApprovalSnapshot.until,
-            tags: session.tags.isEmpty ? nil : session.tags.snapshot
+            tags: session.tags.isEmpty ? nil : session.tags.snapshot,
+            procStartedAt: session.procStartedAt
         )
     }
 
@@ -367,7 +370,7 @@ final class SessionManager: ObservableObject {
         }
 
         for snap in live + dead {
-            if isProcessAlive(pid: snap.pid, cwd: snap.cwd) {
+            if isProcessAlive(pid: snap.pid, cwd: snap.cwd, procStartedAt: snap.procStartedAt) {
                 rehydrateLive(snap)
             } else if let sid = snap.sessionId {
                 rehydrateTombstone(snap, sessionId: sid)
@@ -377,7 +380,11 @@ final class SessionManager: ObservableObject {
 
     private func rehydrateLive(_ snap: PersistedSession) {
         let started = ProcessTree.startTime(of: Int32(snap.pid))
-        let session = Session(pid: snap.pid, cwd: snap.cwd, startedAt: started, agent: snap.agent ?? .claude)
+        // Legacy snapshots (pre-procStartedAt) were validated by the cwd
+        // fallback above; adopt the live process's start time as identity.
+        let session = Session(
+            pid: snap.pid, cwd: snap.cwd, startedAt: started, agent: snap.agent ?? .claude,
+            procStartedAt: snap.procStartedAt ?? started)
         session.sessionId = snap.sessionId
         session.isAutoApproveEnabled = snap.isAutoApproveEnabled ?? defaultAutoApprove
         session.isSubAgentInheritEnabled = snap.isSubAgentInheritEnabled ?? defaultSubAgentInherit
@@ -429,7 +436,7 @@ final class SessionManager: ObservableObject {
             let pidInt = Int(pid)
             if sessions[pidInt] != nil { continue }
             let started = ProcessTree.startTime(of: pid)
-            let session = Session(pid: pidInt, cwd: cwd, startedAt: started)
+            let session = Session(pid: pidInt, cwd: cwd, startedAt: started, procStartedAt: started)
             session.isAutoApproveEnabled = defaultAutoApprove
             session.isSubAgentInheritEnabled = defaultSubAgentInherit
             session.isPaused = defaultPaused
@@ -446,16 +453,29 @@ final class SessionManager: ObservableObject {
     }
 
     /// Liveness predicate for a tracked PID; overridable so tests can fake a live session.
-    var livenessCheck: (Int, String?) -> Bool
+    var livenessCheck: (Int, String?, Date?) -> Bool
 
-    func isProcessAlive(pid: Int, cwd: String?) -> Bool {
-        livenessCheck(pid, cwd)
+    func isProcessAlive(pid: Int, cwd: String?, procStartedAt: Date? = nil) -> Bool {
+        livenessCheck(pid, cwd, procStartedAt)
     }
 
-    // Match on cwd, not p_comm: Claude Code reports its version string (e.g. "2.1.158")
-    // as p_comm, so a recycled PID can't be ruled out by process name.
-    static func defaultLiveness(pid: Int, cwd expectedCwd: String?) -> Bool {
+    // PID-reuse detection. Primary signal: kernel process start time — a live
+    // PID whose start time doesn't match the recorded one was recycled.
+    // The cwd comparison survives only as a fallback for sessions without a
+    // recorded start time (legacy persisted files, or proc_pidinfo failure at
+    // creation). It must never be the primary check: hook payloads record
+    // worktree-subagent cwds that legitimately differ from the process's real
+    // cwd, and treating that as death tombstoned live sessions every 5s —
+    // destroying per-session state like the remote-approval grant (the
+    // "subagent approvals never reach Telegram" bug).
+    // p_comm is unusable either way: Claude Code reports its version string
+    // (e.g. "2.1.158") as the process name.
+    static func defaultLiveness(pid: Int, cwd expectedCwd: String?, procStartedAt: Date? = nil) -> Bool {
         guard kill(Int32(pid), 0) == 0 || errno == EPERM else { return false }
+        if let expected = procStartedAt {
+            guard let actual = ProcessTree.startTime(of: Int32(pid)) else { return false }
+            return abs(actual.timeIntervalSince(expected)) < 1.0
+        }
         guard let expectedCwd else { return true }
         guard let actual = ProcessTree.cwd(of: Int32(pid)) else { return false }
         return actual == expectedCwd
@@ -482,8 +502,9 @@ final class SessionManager: ObservableObject {
         for pid in pids {
             lock.lock()
             let cwd = sessions[pid]?.cwd
+            let procStart = sessions[pid]?.procStartedAt
             lock.unlock()
-            guard !isProcessAlive(pid: pid, cwd: cwd) else { continue }
+            guard !isProcessAlive(pid: pid, cwd: cwd, procStartedAt: procStart) else { continue }
             lock.lock()
             guard let session = sessions[pid] else {
                 lock.unlock()

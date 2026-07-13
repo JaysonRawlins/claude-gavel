@@ -37,7 +37,10 @@ final class HookRouter {
         switch event.payload {
         case .preToolUse(let payload):
             if let sid = payload.sessionId { sessionManager.recordSessionId(sid, on: session) }
-            if let cwd = payload.cwd { sessionManager.recordCwd(cwd, on: session) }
+            // Sub-agent payloads can report an isolated worktree as cwd; the
+            // session row, transcript watcher, and review links must keep
+            // tracking the main conversation's directory.
+            if let cwd = payload.cwd, !payload.isSubAgent { sessionManager.recordCwd(cwd, on: session) }
 
             // AskUserQuestion and ExitPlanMode are user interaction tools —
             // don't intercept, let Claude's built-in UI handle them
