@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.44.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.44.0...v1.44.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* **session:** key liveness on process start time so subagent cwd drift can't tombstone live sessions ([#211](https://github.com/JaysonRawlins/claude-gavel/issues/211)) ([9330d93](https://github.com/JaysonRawlins/claude-gavel/commit/9330d9341196ad501f3b462f08212d5cda58df0b))
+
 ## [1.44.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.43.2...v1.44.0) (2026-07-11)
 
 
