@@ -33,10 +33,15 @@ struct CommandContent {
     /// tools). Nil hides the section — set only when the matching pattern
     /// callbacks were registered with the server.
     let suggestedPattern: String?
+    /// Relative path ("/review/<nonce>") to the pending commit's diff review
+    /// page, when one was captured. Relative on purpose: the same link works
+    /// whether the page was reached via the tailnet hostname or loopback.
+    let reviewPath: String?
 
     init(sessionLabel: String, toolName: String, cwd: String?, command: String?,
          args: [CommandArg], triggerReason: String?, withheldInline: Bool,
-         offersScopedAllow: Bool = false, suggestedPattern: String? = nil) {
+         offersScopedAllow: Bool = false, suggestedPattern: String? = nil,
+         reviewPath: String? = nil) {
         self.sessionLabel = sessionLabel
         self.toolName = toolName
         self.cwd = cwd
@@ -46,6 +51,7 @@ struct CommandContent {
         self.withheldInline = withheldInline
         self.offersScopedAllow = offersScopedAllow
         self.suggestedPattern = suggestedPattern
+        self.reviewPath = reviewPath
     }
 }
 
@@ -68,6 +74,9 @@ enum CommandHTML {
         }
 
         var body = ""
+        if let reviewPath = content.reviewPath {
+            body += "<a class=\"reviewlink\" href=\"\(DiffHTML.escAttr(reviewPath))\">🔍 Review the pending commit's diff</a>"
+        }
         if let command = content.command, !command.isEmpty {
             body += "<section class=\"block\"><h2>Command</h2><pre>\(DiffHTML.esc(command))</pre></section>"
         }
@@ -231,6 +240,9 @@ enum CommandHTML {
     .aname { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Roboto Mono', monospace; font-size: 11px; font-weight: 700;
              opacity: .65; padding: 8px 12px 0; }
     .empty { padding: 24px; text-align: center; opacity: .7; }
+    .reviewlink { display: block; margin: 8px 8px 0; padding: 12px; border-radius: 10px;
+                  text-align: center; font-weight: 600; text-decoration: none;
+                  background: #ddf4ff66; border: 1px solid #0969da55; color: inherit; }
     .scopehint { font-size: 12px; opacity: .7; padding: 0 12px 6px; }
     .scoperow { display: flex; align-items: center; gap: 8px; padding: 4px 12px; }
     .scoperow label { flex: 0 0 34%; font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Roboto Mono', monospace;
@@ -275,6 +287,7 @@ enum CommandHTML {
       .scoperow .argname { border-color: #fff3; }
       .addcond { border-color: #fff4; }
       .chip { border-color: #58a6ff66; background: #10233a; }
+      .reviewlink { border-color: #58a6ff66; background: #10233a; }
     }
     """
 

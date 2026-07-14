@@ -63,6 +63,19 @@ enum DiffCapture {
         )
     }
 
+    /// True when the command actually invokes `git … commit` — same shell
+    /// segment, quotes stripped. A bare "commit" substring shows up in grep
+    /// patterns, echo text, and commit-message mentions often enough that
+    /// every such command would otherwise pay a speculative git diff. The
+    /// lookahead rejects config keys like `-c commit.gpgsign=false`.
+    static func isGitCommit(_ command: String?) -> Bool {
+        guard let command else { return false }
+        let stripped = strippingQuotedSpans(command)
+        return stripped.range(
+            of: #"\bgit\b[^;&|\n]*\bcommit\b(?![.\w-])"#,
+            options: .regularExpression) != nil
+    }
+
     /// True when a `git add` segment precedes the commit in the same
     /// command ("git add -A && git commit …"): at approval time the add
     /// hasn't run, so the staged diff is empty and HEAD-relative capture
@@ -118,7 +131,7 @@ enum DiffCapture {
     /// `$` are skipped (unresolvable) so the payload-cwd fallback applies.
     static func lastCdTarget(inHead head: String) -> String? {
         var target: String?
-        for rawSegment in head.components(separatedBy: CharacterSet(charactersIn: ";&|")) {
+        for rawSegment in head.components(separatedBy: CharacterSet(charactersIn: ";&|\n")) {
             let segment = rawSegment.trimmingCharacters(in: .whitespaces)
             guard segment.hasPrefix("cd ") || segment.hasPrefix("cd\t") else { continue }
             var arg = String(segment.dropFirst(2)).trimmingCharacters(in: .whitespaces)

@@ -61,6 +61,10 @@ final class ApprovalCoordinator: ObservableObject {
         let triggeringRuleIsRegex: Bool
         /// Allow-once only: the coordinator refuses session/persistent-allow actions for this approval.
         let nonSuppressible: Bool
+        /// URL path token of this commit's diff review page, shared by the
+        /// panel, Telegram, and the command page. Nil unless a commit's diff
+        /// was captured.
+        let reviewNonce: String?
         let resolvable: ResolvableApproval
         let respond: (Decision) -> Void
     }
@@ -117,6 +121,10 @@ final class ApprovalCoordinator: ObservableObject {
         }
 
         let firingRule = triggeringRuleId.flatMap { ruleStore?.rule(for: $0) }
+        // Registered here (not in the remote mirror) so local-only sessions
+        // get a review page too. Local git work only — no tailscale lookup.
+        let isCommit = payload.toolName == "Bash" && DiffCapture.isGitCommit(payload.command)
+        let reviewNonce = isCommit ? registerDiffReview(payload: payload, session: session, resolvable: resolvable) : nil
         let pending = PendingApproval(
             payload: payload,
             session: session,
@@ -128,6 +136,7 @@ final class ApprovalCoordinator: ObservableObject {
             triggeringRulePattern: firingRule?.pattern,
             triggeringRuleIsRegex: firingRule?.isRegex ?? false,
             nonSuppressible: nonSuppressible,
+            reviewNonce: reviewNonce,
             resolvable: resolvable
         ) { decision in
             resolvable.resolve(decision, from: .mac)
@@ -197,24 +206,26 @@ final class ApprovalCoordinator: ObservableObject {
             guard source == .telegram || source == .web else { return }
             DispatchQueue.main.async { self?.dismissPending(id: pendingId, pid: session.pid) }
         }
-        let isCommit = payload.toolName == "Bash" && (payload.command?.contains("commit") ?? false)
+        let isCommit = payload.toolName == "Bash" && DiffCapture.isGitCommit(payload.command)
         // Review link even on credential-withheld commits: the page never
         // shows the command, secret hunks are withheld on-page, and a
         // withheld commit is exactly when phone-side verification matters.
-        let reviewURL = isCommit ? makeReviewLink(payload: payload, session: session, resolvable: resolvable) : nil
+        let tailnetReviewURL = pending.reviewNonce.flatMap { nonce in
+            TailscaleServe.cachedReviewBaseURL().map { "\($0)/review/\(nonce)" }
+        }
         // Full-command link on EVERY mirrored approval — Telegram keeps the
         // redacted/truncated summary, full fidelity lives on the tailnet page.
-        let commandURL = makeCommandLink(payload: payload, session: session, resolvable: resolvable, triggerReason: pending.triggerReason, withheldInline: withheld != nil, nonSuppressible: pending.nonSuppressible)
+        let commandURL = makeCommandLink(payload: payload, session: session, resolvable: resolvable, triggerReason: pending.triggerReason, withheldInline: withheld != nil, nonSuppressible: pending.nonSuppressible, reviewNonce: pending.reviewNonce)
         let text = withheld != nil
             ? RemoteApprovalBridge.withheldBody(payload: payload, session: session, hasCommandLink: commandURL != nil)
             : RemoteApprovalBridge.summaryBody(payload: payload, session: session, triggerReason: pending.triggerReason, hasCommandLink: commandURL != nil)
-        bridge.notify(resolvable: resolvable, text: text, pid: session.pid, toolName: payload.toolName, withheld: withheld != nil, allowSession: allowSession, offerCommentClean: isCommit && withheld == nil, leaseDomain: leaseDomain, allowSite: allowSite, reviewURL: reviewURL, commandURL: commandURL)
+        bridge.notify(resolvable: resolvable, text: text, pid: session.pid, toolName: payload.toolName, withheld: withheld != nil, allowSession: allowSession, offerCommentClean: isCommit && withheld == nil, leaseDomain: leaseDomain, allowSite: allowSite, reviewURL: tailnetReviewURL, commandURL: commandURL)
     }
 
     /// Register the full, unredacted command with the review server and
     /// return its tailnet URL. Failures are soft — nil just means the
     /// Telegram card goes out with the redacted inline text only.
-    private func makeCommandLink(payload: PreToolUsePayload, session: Session, resolvable: ResolvableApproval, triggerReason: String?, withheldInline: Bool, nonSuppressible: Bool) -> String? {
+    private func makeCommandLink(payload: PreToolUsePayload, session: Session, resolvable: ResolvableApproval, triggerReason: String?, withheldInline: Bool, nonSuppressible: Bool, reviewNonce: String? = nil) -> String? {
         do {
             try DiffReviewServer.shared.start()
         } catch {
@@ -301,7 +312,10 @@ final class ApprovalCoordinator: ObservableObject {
             triggerReason: triggerReason,
             withheldInline: withheldInline,
             offersScopedAllow: offersScopedAllow,
-            suggestedPattern: suggestedPattern)
+            suggestedPattern: suggestedPattern,
+            // Relative so the link works from whichever host serves the page
+            // (tailnet hostname or loopback).
+            reviewPath: reviewNonce.map { "/review/\($0)" })
         let nonce = DiffReviewServer.shared.register(command: content, resolvable: resolvable, createScopedAllow: createScopedAllow, createScopedSessionAllow: createScopedSessionAllow, createPatternAllow: createPatternAllow, createSessionPatternAllow: createSessionPatternAllow)
         gavelLog("[review] command link created pid=\(session.pid) tool=\(payload.toolName) scopedAllow=\(offersScopedAllow) nonce=\(nonce.prefix(8))…")
         return "\(base)/review/\(nonce)"
@@ -318,9 +332,9 @@ final class ApprovalCoordinator: ObservableObject {
     }
 
     /// Snapshot the pending commit's diff, register it with the review
-    /// server, and return the tailnet review URL. Every failure is soft —
-    /// a nil just means the Telegram message goes out without a link.
-    private func makeReviewLink(payload: PreToolUsePayload, session: Session, resolvable: ResolvableApproval) -> String? {
+    /// server, and return the page nonce. Every failure is soft — a nil just
+    /// means no review affordance anywhere (panel, Telegram, command page).
+    private func registerDiffReview(payload: PreToolUsePayload, session: Session, resolvable: ResolvableApproval) -> String? {
         guard let fallbackCwd = payload.cwd ?? session.cwd, let command = payload.command else {
             gavelLog("[review] no cwd/command on commit approval — no review link")
             return nil
@@ -341,7 +355,6 @@ final class ApprovalCoordinator: ObservableObject {
             gavelLog("[review] server start failed: \(error.localizedDescription)")
             return nil
         }
-        guard let base = TailscaleServe.cachedReviewBaseURL() else { return nil }
         let content = ReviewContent(
             repoName: URL(fileURLWithPath: cwd).lastPathComponent,
             commitMessage: captured.commitMessage,
@@ -351,7 +364,7 @@ final class ApprovalCoordinator: ObservableObject {
             untrackedOmitted: captured.untrackedOmitted)
         let nonce = DiffReviewServer.shared.register(content: content, resolvable: resolvable)
         gavelLog("[review] link created pid=\(session.pid) files=\(content.files.count) nonce=\(nonce.prefix(8))…")
-        return "\(base)/review/\(nonce)"
+        return nonce
     }
 
     /// Remove a pending approval resolved remotely from its session panel.

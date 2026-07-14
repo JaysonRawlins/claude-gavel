@@ -20,6 +20,31 @@ final class DiffCaptureTests: XCTestCase {
         XCTAssertFalse(DiffCapture.commitUsesAllFlag("git commit -m 'add -a support later'"))
     }
 
+    // MARK: - Commit detection
+
+    func testIsGitCommitMatchesRealInvocations() {
+        XCTAssertTrue(DiffCapture.isGitCommit("git commit -m x"))
+        XCTAssertTrue(DiffCapture.isGitCommit("git add -A && git commit -m x"))
+        XCTAssertTrue(DiffCapture.isGitCommit("cd /repo\ngit commit -q -m 'multi line'"))
+        XCTAssertTrue(DiffCapture.isGitCommit("git -C /repo commit -m x"))
+        XCTAssertTrue(DiffCapture.isGitCommit("git -c user.email=t@t commit -q -m init"))
+        XCTAssertTrue(DiffCapture.isGitCommit("git commit --amend"))
+    }
+
+    func testIsGitCommitRejectsIncidentalMentions() {
+        XCTAssertFalse(DiffCapture.isGitCommit(nil))
+        // The word alone — grep patterns, logs, prose.
+        XCTAssertFalse(DiffCapture.isGitCommit("grep commit ~/.claude/gavel/gavel.log | tail -5"))
+        // Quoted mentions, even next to a real git invocation.
+        XCTAssertFalse(DiffCapture.isGitCommit(#"echo "git commit is next""#))
+        XCTAssertFalse(DiffCapture.isGitCommit(#"git log --grep "commit message""#))
+        // git and commit in different shell segments.
+        XCTAssertFalse(DiffCapture.isGitCommit("git push && echo commit done"))
+        XCTAssertFalse(DiffCapture.isGitCommit("git status\nsed -n 1p commit-log.txt"))
+        // Config keys are not the commit subcommand.
+        XCTAssertFalse(DiffCapture.isGitCommit("git -c commit.gpgsign=false push"))
+    }
+
     // MARK: - Stage-before-commit compounds
 
     func testDetectsAddBeforeCommit() {
@@ -93,6 +118,27 @@ final class DiffCaptureTests: XCTestCase {
         XCTAssertEqual(
             DiffCapture.repoDir(command: #"cd "/tmp/my repo" && git commit -m x"#, fallback: "/repo"),
             "/tmp/my repo")
+    }
+
+    func testRepoDirHonorsNewlineSeparatedCd() {
+        // Multi-line scripts: the cd segment ends at the newline, not at the
+        // next ;&| — regression for a real command whose cd target swallowed
+        // the following echo/helm lines and made git -C exit 128.
+        XCTAssertEqual(
+            DiffCapture.repoDir(
+                command: """
+                cd /tmp/argocd-applications
+                echo "=== validate render (loki branch) ==="
+                helm template apps ./apps -f envs/prod/values.yaml >/dev/null 2>/tmp/p2b.err; echo "EXIT=$?"; cat /tmp/p2b.err | head
+                echo "=== commit datasource to parked branch ==="
+                git add envs/prod/prometheus-stack-values.yaml
+                git commit -q -m "feat(loki): add Loki datasource to prod Grafana (phase 2)"
+                """,
+                fallback: "/repo"),
+            "/tmp/argocd-applications")
+        XCTAssertEqual(
+            DiffCapture.repoDir(command: "cd /a\ngit commit -m x", fallback: "/repo"),
+            "/a")
     }
 
     func testRepoDirDashCOverridesCd() {

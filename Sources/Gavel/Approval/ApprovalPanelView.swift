@@ -272,6 +272,17 @@ struct ApprovalPanelView: View {
 
             Spacer()
 
+            if let reviewURL = approval.reviewNonce
+                .flatMap({ DiffReviewServer.shared.localURL(nonce: $0) })
+                .flatMap(URL.init(string:)) {
+                Button(action: { NSWorkspace.shared.open(reviewURL) }) {
+                    Label("Review diff", systemImage: "magnifyingglass")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .help("Open the pending commit's diff in your browser — same page as the phone's Review diff link")
+            }
+
             if sessionPanel.queueCount > 0 {
                 Text("+\(sessionPanel.queueCount) queued")
                     .font(.caption)

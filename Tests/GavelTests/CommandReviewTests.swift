@@ -27,7 +27,8 @@ final class CommandReviewTests: XCTestCase {
         args: [CommandArg] = [],
         withheldInline: Bool = false,
         offersScopedAllow: Bool = false,
-        suggestedPattern: String? = nil
+        suggestedPattern: String? = nil,
+        reviewPath: String? = nil
     ) -> CommandContent {
         CommandContent(
             sessionLabel: "argscope",
@@ -38,7 +39,8 @@ final class CommandReviewTests: XCTestCase {
             triggerReason: "Default rule: something fired",
             withheldInline: withheldInline,
             offersScopedAllow: offersScopedAllow,
-            suggestedPattern: suggestedPattern)
+            suggestedPattern: suggestedPattern,
+            reviewPath: reviewPath)
     }
 
     /// Pump the main queue — proposal adjudication and rule authoring hop to
@@ -116,6 +118,26 @@ final class CommandReviewTests: XCTestCase {
         let res = try request("/review/\(nonce)")
         XCTAssertFalse(res.body.contains("<script>alert(1)</script>"))
         XCTAssertTrue(res.body.contains("&lt;script&gt;alert(1)&lt;/script&gt;"))
+    }
+
+    func testCommandPageLinksToDiffReviewWhenRegistered() throws {
+        let resolvable = ResolvableApproval { _ in }
+        let nonce = server.register(
+            command: makeCommand(reviewPath: "/review/diffnonce123"), resolvable: resolvable)
+
+        let res = try request("/review/\(nonce)")
+        // Relative href so the click-through works from tailnet AND loopback.
+        XCTAssertTrue(res.body.contains("href=\"/review/diffnonce123\""))
+        XCTAssertTrue(res.body.contains("Review the pending commit"))
+    }
+
+    func testCommandPageOmitsDiffLinkWithoutCapture() throws {
+        let resolvable = ResolvableApproval { _ in }
+        let nonce = server.register(command: makeCommand(), resolvable: resolvable)
+
+        let res = try request("/review/\(nonce)")
+        XCTAssertFalse(res.body.contains("class=\"reviewlink\""))
+        XCTAssertFalse(res.body.contains("Review the pending commit"))
     }
 
     func testWithheldBannerShownOnPage() throws {
