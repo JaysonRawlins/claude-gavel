@@ -123,7 +123,7 @@ final class ApprovalCoordinator: ObservableObject {
         let firingRule = triggeringRuleId.flatMap { ruleStore?.rule(for: $0) }
         // Registered here (not in the remote mirror) so local-only sessions
         // get a review page too. Local git work only — no tailscale lookup.
-        let isCommit = payload.toolName == "Bash" && (payload.command?.contains("commit") ?? false)
+        let isCommit = payload.toolName == "Bash" && DiffCapture.isGitCommit(payload.command)
         let reviewNonce = isCommit ? registerDiffReview(payload: payload, session: session, resolvable: resolvable) : nil
         let pending = PendingApproval(
             payload: payload,
@@ -206,7 +206,7 @@ final class ApprovalCoordinator: ObservableObject {
             guard source == .telegram || source == .web else { return }
             DispatchQueue.main.async { self?.dismissPending(id: pendingId, pid: session.pid) }
         }
-        let isCommit = payload.toolName == "Bash" && (payload.command?.contains("commit") ?? false)
+        let isCommit = payload.toolName == "Bash" && DiffCapture.isGitCommit(payload.command)
         // Review link even on credential-withheld commits: the page never
         // shows the command, secret hunks are withheld on-page, and a
         // withheld commit is exactly when phone-side verification matters.

@@ -20,6 +20,31 @@ final class DiffCaptureTests: XCTestCase {
         XCTAssertFalse(DiffCapture.commitUsesAllFlag("git commit -m 'add -a support later'"))
     }
 
+    // MARK: - Commit detection
+
+    func testIsGitCommitMatchesRealInvocations() {
+        XCTAssertTrue(DiffCapture.isGitCommit("git commit -m x"))
+        XCTAssertTrue(DiffCapture.isGitCommit("git add -A && git commit -m x"))
+        XCTAssertTrue(DiffCapture.isGitCommit("cd /repo\ngit commit -q -m 'multi line'"))
+        XCTAssertTrue(DiffCapture.isGitCommit("git -C /repo commit -m x"))
+        XCTAssertTrue(DiffCapture.isGitCommit("git -c user.email=t@t commit -q -m init"))
+        XCTAssertTrue(DiffCapture.isGitCommit("git commit --amend"))
+    }
+
+    func testIsGitCommitRejectsIncidentalMentions() {
+        XCTAssertFalse(DiffCapture.isGitCommit(nil))
+        // The word alone — grep patterns, logs, prose.
+        XCTAssertFalse(DiffCapture.isGitCommit("grep commit ~/.claude/gavel/gavel.log | tail -5"))
+        // Quoted mentions, even next to a real git invocation.
+        XCTAssertFalse(DiffCapture.isGitCommit(#"echo "git commit is next""#))
+        XCTAssertFalse(DiffCapture.isGitCommit(#"git log --grep "commit message""#))
+        // git and commit in different shell segments.
+        XCTAssertFalse(DiffCapture.isGitCommit("git push && echo commit done"))
+        XCTAssertFalse(DiffCapture.isGitCommit("git status\nsed -n 1p commit-log.txt"))
+        // Config keys are not the commit subcommand.
+        XCTAssertFalse(DiffCapture.isGitCommit("git -c commit.gpgsign=false push"))
+    }
+
     // MARK: - Stage-before-commit compounds
 
     func testDetectsAddBeforeCommit() {
