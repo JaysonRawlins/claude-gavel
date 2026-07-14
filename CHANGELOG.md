@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.45.0](https://github.com/JaysonRawlins/claude-gavel/compare/v1.44.1...v1.45.0) (2026-07-14)
+
+
+### Features
+
+* **approval:** diff review everywhere — Mac panel button, command-page link, multi-line cd fix ([#213](https://github.com/JaysonRawlins/claude-gavel/issues/213)) ([573494f](https://github.com/JaysonRawlins/claude-gavel/commit/573494f1544173d14e30e9b8dfc4d5eba88ea5ee))
+
+
+### Bug Fixes
+
+* **review:** stop hung tailscale probes stalling approval links ([#214](https://github.com/JaysonRawlins/claude-gavel/issues/214)) ([4bf243b](https://github.com/JaysonRawlins/claude-gavel/commit/4bf243b219d5db20f3aef4f25c131708155bbf61))
+
 ## [1.44.1](https://github.com/JaysonRawlins/claude-gavel/compare/v1.44.0...v1.44.1) (2026-07-13)
 
 
